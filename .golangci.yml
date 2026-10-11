@@ -1,0 +1,87 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+version: "2"
+
+run:
+  timeout: 5m
+  build-tags:
+    - sim
+
+linters:
+  default: standard
+  enable:
+    - depguard
+    - errorlint
+    - gosec
+    - misspell
+    - nolintlint
+    - unconvert
+  settings:
+    gosec:
+      excludes:
+        - G115 # integer conversions are bounds-checked by hand in the codecs
+    depguard:
+      rules:
+        # Nothing in mixcore talks HTTP or to a cloud (invariant: the LAN path never depends on the internet).
+        no-http:
+          files: ["$all"]
+          deny:
+            - pkg: net/http
+              desc: "mixcore must not depend on HTTP or the cloud; MixLink (link/) will be the only exception"
+        model-is-pure:
+          files: ["**/model/*.go"]
+          deny:
+            - pkg: github.com/mixproto/mixcore
+              desc: "model imports nothing from mixcore"
+        driver-contract:
+          files: ["**/driver/*.go"]
+          deny:
+            - pkg: github.com/mixproto/mixcore/console
+              desc: "driver imports only model and meters"
+            - pkg: github.com/mixproto/mixcore/api
+              desc: "driver imports only model and meters"
+            - pkg: github.com/mixproto/mixcore/sim
+              desc: "driver imports only model and meters"
+            - pkg: github.com/mixproto/mixcore/internal
+              desc: "driver imports only model and meters"
+            - pkg: github.com/mixproto/mixcore/driver/
+              desc: "the contract never imports a family"
+        families:
+          files: ["**/driver/*/*.go", "!$test"]
+          deny:
+            - pkg: github.com/mixproto/mixcore/console
+              desc: "a driver never knows its supervisor"
+            - pkg: github.com/mixproto/mixcore/api
+              desc: "a driver never knows the app API"
+            - pkg: github.com/mixproto/mixcore/sim
+              desc: "only tests may use the simulator"
+        simulator-is-independent:
+          files: ["**/sim/**/*.go"]
+          deny:
+            - pkg: github.com/mixproto/mixcore/driver
+              desc: "an oracle that shares tables with the driver hides the driver's bugs"
+            - pkg: github.com/mixproto/mixcore/model
+              desc: "the simulator speaks the wire protocol, not our model"
+            - pkg: github.com/mixproto/mixcore/console
+              desc: "the simulator is built from docs/protocols only"
+            - pkg: github.com/mixproto/mixcore/api
+              desc: "the simulator is built from docs/protocols only"
+            - pkg: github.com/mixproto/mixcore/meters
+              desc: "the simulator is built from docs/protocols only"
+        console-layer:
+          files: ["**/console/*.go", "!$test"]
+          deny:
+            - pkg: github.com/mixproto/mixcore/api
+              desc: "console sits below the API"
+            - pkg: github.com/mixproto/mixcore/sim
+              desc: "only tests may use the simulator"
+            - pkg: github.com/mixproto/mixcore/driver/
+              desc: "console works with any family through the driver contract"
+  exclusions:
+    presets:
+      - std-error-handling
+
+formatters:
+  enable:
+    - gofmt

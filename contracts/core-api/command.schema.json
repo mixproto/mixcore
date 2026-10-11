@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/command.schema.json",
+  "title": "mixcore core API v0: Apply(commandJSON)",
+  "description": "One user gesture. set writes a value; holdBegin/holdEnd mark a fader as held by a finger (no write). Only origin kinds gesture and macro are accepted; console and system are rejected with ERR_NOT_USER_ORIGIN. A set for a fader whose hold was ended by an external change or by losing the console is rejected with ERR_GESTURE_ENDED until the same client sends holdBegin or holdEnd for it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "type",
+    "param",
+    "origin"
+  ],
+  "properties": {
+    "version": {
+      "$ref": "common.schema.json#/$defs/version"
+    },
+    "type": {
+      "enum": [
+        "set",
+        "holdBegin",
+        "holdEnd"
+      ]
+    },
+    "param": {
+      "$ref": "common.schema.json#/$defs/param"
+    },
+    "value": {
+      "$ref": "common.schema.json#/$defs/value"
+    },
+    "origin": {
+      "$ref": "common.schema.json#/$defs/origin"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "set"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "value"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "holdBegin",
+              "holdEnd"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "param": {
+            "properties": {
+              "field": {
+                "const": "fader"
+              }
+            }
+          }
+        },
+        "not": {
+          "required": [
+            "value"
+          ]
+        }
+      }
+    }
+  ],
+  "examples": [
+    {
+      "version": 0,
+      "type": "set",
+      "param": {
+        "strip": {
+          "kind": "input",
+          "index": 1
+        },
+        "field": "fader"
+      },
+      "value": -3.5,
+      "origin": {
+        "kind": "gesture",
+        "clientId": "ios-1",
+        "seq": 42
+      }
+    },
+    {
+      "version": 0,
+      "type": "set",
+      "param": {
+        "strip": {
+          "kind": "main"
+        },
+        "field": "fader"
+      },
+      "value": "-inf",
+      "origin": {
+        "kind": "gesture",
+        "clientId": "ios-1",
+        "seq": 43
+      }
+    },
+    {
+      "version": 0,
+      "type": "set",
+      "param": {
+        "strip": {
+          "kind": "input",
+          "index": 2
+        },
+        "field": "mute"
+      },
+      "value": true,
+      "origin": {
+        "kind": "gesture",
+        "clientId": "ios-1",
+        "seq": 44
+      }
+    },
+    {
+      "version": 0,
+      "type": "holdBegin",
+      "param": {
+        "strip": {
+          "kind": "input",
+          "index": 1
+        },
+        "field": "fader"
+      },
+      "origin": {
+        "kind": "gesture",
+        "clientId": "ios-1",
+        "seq": 45
+      }
+    }
+  ]
+}

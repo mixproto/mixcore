@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/common.schema.json",
+  "title": "mixcore core API v0: shared definitions",
+  "$defs": {
+    "version": { "const": 0, "description": "Contract version. v0 is unstable until the first tagged release." },
+    "stripRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["input", "main"] },
+        "index": { "type": "integer", "minimum": 1, "description": "Required for input (1-based). Omitted for main." }
+      },
+      "if": { "properties": { "kind": { "const": "input" } } },
+      "then": { "required": ["kind", "index"] }
+    },
+    "field": { "enum": ["fader", "mute", "name"] },
+    "param": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strip", "field"],
+      "properties": {
+        "strip": { "$ref": "#/$defs/stripRef" },
+        "field": { "$ref": "#/$defs/field" }
+      }
+    },
+    "level": {
+      "description": "A level in dB. JSON has no infinity, so fully off is the string \"-inf\". NaN never appears.",
+      "oneOf": [
+        { "type": "number" },
+        { "const": "-inf" }
+      ]
+    },
+    "value": {
+      "description": "fader: level; mute: boolean (true = muted); name: string. The field decides the type.",
+      "anyOf": [
+        { "$ref": "#/$defs/level" },
+        { "type": "boolean" },
+        { "type": "string" }
+      ]
+    },
+    "origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["gesture", "macro", "console", "system"] },
+        "clientId": { "type": "string", "maxLength": 128 },
+        "seq": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}
