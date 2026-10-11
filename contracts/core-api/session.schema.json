@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/session.schema.json",
+  "title": "mixcore core API v0: result of Start",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "family", "endpoint", "faderLaw"],
+  "properties": {
+    "version": { "$ref": "common.schema.json#/$defs/version" },
+    "family": { "enum": ["x32"] },
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "port"],
+      "properties": { "host": { "type": "string" }, "port": { "type": "integer" } }
+    },
+    "faderLaw": { "enum": ["x32"], "description": "Which law FaderPosition/FaderDB implement." }
+  }
+}

@@ -1,0 +1,1 @@
+{"version":0,"type":"diff","seq":2,"status":"live","changes":[{"param":{"strip":{"kind":"main"},"field":"fader"},"value":-6,"origin":{"kind":"gesture","clientId":"ui","seq":3}}]}

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/config.schema.json",
+  "title": "mixcore core API v0: Start(configJSON)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "family", "host"],
+  "properties": {
+    "version": { "$ref": "common.schema.json#/$defs/version" },
+    "family": { "enum": ["x32"] },
+    "host": { "type": "string", "description": "Console IP address (IPv4 or IPv6 literal, no hostname).", "minLength": 2, "maxLength": 64 },
+    "port": { "type": "integer", "minimum": 1, "maximum": 65535, "description": "Omitted: the family default (x32: 10023)." },
+    "meters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "inputs": { "type": "boolean" } }
+    }
+  },
+  "examples": [ { "version": 0, "family": "x32", "host": "192.168.1.62", "meters": { "inputs": true } } ]
+}

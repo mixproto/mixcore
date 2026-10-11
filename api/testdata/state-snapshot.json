@@ -1,0 +1,1 @@
+{"version":0,"type":"snapshot","seq":1,"status":"live","console":{"name":"FOH","model":"X32"},"strips":[{"kind":"input","index":1,"name":"Kick","faderDB":-3.5,"mute":false},{"kind":"main","name":"","faderDB":"-inf","mute":false}]}
