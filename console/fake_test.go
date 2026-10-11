@@ -83,6 +83,7 @@ type fakeSession struct {
 	applied []driver.Command
 	closed  bool
 	meters  driver.MeterRequest
+	rereads int
 }
 
 func (s *fakeSession) Identity() driver.Identity        { return driver.Identity{Name: "fake"} }
@@ -132,6 +133,22 @@ func (s *fakeSession) Close() error {
 	s.mu.Unlock()
 	s.lose()
 	return nil
+}
+
+func (s *fakeSession) Reread() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return driver.ErrClosed
+	}
+	s.rereads++
+	return nil
+}
+
+func (s *fakeSession) rereadCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rereads
 }
 
 func (s *fakeSession) lose() { s.lostOnce.Do(func() { close(s.lost) }) }

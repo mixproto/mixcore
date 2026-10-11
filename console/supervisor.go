@@ -10,6 +10,8 @@
 // a fader a person is holding is published at once and ends that gesture;
 // losing the console cancels every hold. It never queues writes: a write that
 // cannot be sent now is rejected, so nothing can be replayed after a reconnect.
+// While live it asks the session for a slow, read-only background re-read
+// (DefaultRereadEvery), skipped while any fader is held.
 package console
 
 import (
@@ -88,6 +90,9 @@ type Config struct {
 	Meters   driver.MeterRequest // re-applied after every connect
 	Logger   *slog.Logger
 	Rand     func() float64 // jitter source in [0, 1); nil: math/rand/v2
+	// RereadEvery is the background re-read interval while live (sessions
+	// that implement driver.Rereader). Zero: DefaultRereadEvery; negative: off.
+	RereadEvery time.Duration
 }
 
 // Supervisor owns the connection lifecycle of one console.
@@ -126,6 +131,9 @@ func New(cfg Config) (*Supervisor, error) {
 	}
 	if cfg.Rand == nil {
 		cfg.Rand = rand.Float64
+	}
+	if cfg.RereadEvery == 0 {
+		cfg.RereadEvery = DefaultRereadEvery
 	}
 	return &Supervisor{
 		cfg: cfg, notify: make(chan struct{}, 1),
@@ -309,10 +317,14 @@ func (s *Supervisor) runSession(ctx context.Context, sess driver.Session) error 
 	var wg sync.WaitGroup
 	defer func() { cancel(); wg.Wait() }() // cancel first, then wait, or Run could block forever
 	safe.Go(&wg, func(err error) { done <- err }, func() { done <- sess.Run(ctx, events) })
+	rr, rereadC, stopReread := s.rereadTicker(sess)
+	defer stopReread()
 	for {
 		select {
 		case ev := <-events:
 			s.handleEvent(ev)
+		case <-rereadC:
+			s.reread(rr)
 		case err := <-done:
 			return err
 		}
