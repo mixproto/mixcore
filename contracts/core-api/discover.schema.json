@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/discover.schema.json",
+  "title": "mixcore core API v0: Discover(requestJSON)",
+  "description": "One read-only probe for consoles. broadcast probes every broadcast-capable IPv4 interface; hosts are manual IPs probed the same way (x32: /xinfo, X32-F12). At least one of the two is required. The result arrives once, through the discovery listener (discovery.schema.json). While a probe runs, Discover returns ERR_BUSY.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "family"],
+  "properties": {
+    "version": { "$ref": "common.schema.json#/$defs/version" },
+    "family": { "enum": ["x32"] },
+    "broadcast": { "type": "boolean", "default": false },
+    "hosts": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["host"],
+        "properties": {
+          "host": { "type": "string", "description": "IPv4 or IPv6 literal, no hostname.", "minLength": 2, "maxLength": 64 },
+          "port": { "type": "integer", "minimum": 1, "maximum": 65535, "description": "Omitted: the family default (x32: 10023)." }
+        }
+      }
+    },
+    "waitMs": { "type": "integer", "minimum": 100, "maximum": 10000, "default": 1500, "description": "How long replies are collected." }
+  },
+  "anyOf": [
+    { "properties": { "broadcast": { "const": true } }, "required": ["broadcast"] },
+    { "properties": { "hosts": { "minItems": 1 } }, "required": ["hosts"] }
+  ],
+  "examples": [
+    { "version": 0, "family": "x32", "broadcast": true },
+    { "version": 0, "family": "x32", "hosts": [ { "host": "192.168.1.62" }, { "host": "10.0.0.5", "port": 10023 } ], "waitMs": 800 }
+  ]
+}

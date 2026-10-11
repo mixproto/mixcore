@@ -117,6 +117,7 @@ func (s *session) readAll(ctx context.Context) (model.State, error) {
 		}
 		s.retryReads(rs) // also while pushes keep arriving, or a lost reply is never re-requested
 	}
+	s.known = rs.values
 	return s.buildState(rs.values)
 }
 

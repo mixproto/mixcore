@@ -55,12 +55,13 @@ type session struct {
 	order   []int                // pending parameter indexes, first-seen order
 	pending map[int]pendingWrite // latest value per parameter (coalesced)
 
-	cmdReady   chan struct{}
-	meterReady chan struct{}
-	metersOn   atomic.Bool
-	stopped    atomic.Bool
-	running    atomic.Bool
-	closeOnce  sync.Once
+	cmdReady    chan struct{}
+	meterReady  chan struct{}
+	rereadReady chan struct{}
+	metersOn    atomic.Bool
+	stopped     atomic.Bool
+	running     atomic.Bool
+	closeOnce   sync.Once
 
 	// Owner-goroutine state.
 	// lastPong is when the last /xinfo reply arrived. Only replies prove that
@@ -71,6 +72,8 @@ type session struct {
 	tx       []byte
 	msg      osc.Message
 	sent     map[int][]sentWrite
+	known    []model.Value // newest value seen per parameter (initial read, then every change)
+	rr       rereadPass
 }
 
 var _ driver.Session = (*session)(nil)
@@ -79,7 +82,8 @@ func newSession(d *Driver, c *conn, opts driver.Options) *session {
 	return &session{
 		timing: d.timing, params: &d.params, c: c, log: logger(opts), audit: opts.WriteAudit,
 		pending: map[int]pendingWrite{}, cmdReady: make(chan struct{}, 1), meterReady: make(chan struct{}, 1),
-		tx: make([]byte, 0, rxBufSize), sent: map[int][]sentWrite{},
+		rereadReady: make(chan struct{}, 1), tx: make([]byte, 0, rxBufSize), sent: map[int][]sentWrite{},
+		rr: rereadPass{asked: map[int]bool{}},
 	}
 }
 
@@ -192,11 +196,14 @@ func (s *session) Run(ctx context.Context, events chan<- driver.Event) error {
 			s.flushPending()
 		case <-s.meterReady:
 			s.requestMeters()
+		case <-s.rereadReady:
+			s.startReread(time.Now())
 		case now := <-ping.C:
 			if silent := now.Sub(s.lastPong); silent > s.timing.DeadAfter {
 				return fmt.Errorf("x32: no /xinfo reply for %s: %w", silent.Round(time.Millisecond), driver.ErrConnectionLost)
 			}
 			s.sendSub(addrXinfo) // X32-F25: a read, never a write
+			s.rereadStep(now)
 		case <-renew.C:
 			s.sendSub(addrXremote) // X32-F20, X32-F27
 			s.requestMeters()
@@ -238,7 +245,9 @@ func (s *session) flushPending() {
 			s.log.Debug("x32: write failed", "addr", w.param.addr, "err", err)
 			continue
 		}
-		s.rememberSent(s.params.index(w.param.ref), sentWrite{arg: w.arg, origin: w.origin, at: now})
+		idx := s.params.index(w.param.ref)
+		s.rememberSent(idx, sentWrite{arg: w.arg, origin: w.origin, at: now})
+		s.markTouched(idx)
 		if s.audit != nil {
 			s.audit(driver.WriteRecord{Param: w.param.ref, Address: w.param.addr, Origin: w.origin, At: now})
 		}
@@ -290,7 +299,13 @@ func (s *session) decodeChange(p inPacket) (driver.ParamChanged, bool) {
 		s.log.Debug("x32: value outside the documented encoding", "addr", par.addr, "err", err)
 		return driver.ParamChanged{}, false
 	}
-	origin := s.matchEcho(s.params.index(par.ref), arg, p.at)
+	idx := s.params.index(par.ref)
+	if p.viaCmd {
+		return s.rereadReply(idx, v, p.at)
+	}
+	s.markTouched(idx)
+	s.remember(idx, v)
+	origin := s.matchEcho(idx, arg, p.at)
 	return driver.ParamChanged{Param: par.ref, Value: v, Origin: origin, At: p.at}, true
 }
 

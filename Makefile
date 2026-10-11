@@ -14,12 +14,31 @@ GOLANGCI_LINT_VERSION := v2.14.0
 GOVULNCHECK_VERSION   := v1.9.0
 BENCHSTAT_VERSION     := v0.0.0-20261009192801-be2c69fb417e
 
-.PHONY: tools generate lint test sim-test fuzz bench bench-compare mobile-check capi-check
+# Bindings (go-core-standards section 10, apple-standards section 3).
+BUILD        := $(CURDIR)/build
+XCFRAMEWORK  := $(BUILD)/Mixcore.xcframework
+IOS_MIN      := 17.0
+MACOS_MIN    := 14.0
+CAPI_DIR     := $(BUILD)/capi
+CAPITEST_DIR := $(BUILD)/capitest
+HOST_OS      := $(shell $(GO) env GOOS)
+ifeq ($(HOST_OS),darwin)
+CAPI_LIB     := libmixcore.dylib
+CAPI_LDFLAGS := -s -w -extldflags=-Wl,-install_name,@rpath/libmixcore.dylib
+else
+CAPI_LIB     := libmixcore.so
+CAPI_LDFLAGS := -s -w -extldflags=-Wl,-soname,libmixcore.so
+endif
 
-tools: ## pinned tools into ./bin, never global
+.PHONY: tools mobile-tools generate lint test sim-test fuzz bench bench-compare mobile-check capi-check xcframework
+
+tools: mobile-tools ## pinned tools into ./bin, never global
 	GOBIN=$(BIN) $(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	GOBIN=$(BIN) $(GO) install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 	GOBIN=$(BIN) $(GO) install golang.org/x/perf/cmd/benchstat@$(BENCHSTAT_VERSION)
+
+mobile-tools: ## gomobile and gobind into ./bin at the versions pinned by the go.mod tool lines
+	GOBIN=$(BIN) $(GO) install golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind
 
 generate: ## STUB: no generated code yet (MixLink types arrive with link/ and contracts/mixlink)
 	$(GO) generate ./...
@@ -50,8 +69,22 @@ bench:
 bench-compare: ## make bench-compare OLD=bench-main.out
 	$(BIN)/benchstat $(OLD) bench.out
 
-mobile-check: ## STUB: the gomobile package (mobile/) is the next spike; api/ already keeps a bindable surface
-	@echo "mobile-check: no mobile/ package yet (stub, passes)"
+mobile-check: ## gobind type check of mobile/ (no Xcode, no NDK); fails when gobind skips any symbol
+	@out=$$(mktemp -d) && PATH=$(BIN):$$PATH $(BIN)/gobind -lang=go,objc,java -outdir $$out ./mobile && \
+	if grep -rn "skipped" $$out; then echo "mobile-check: gobind skipped the symbols above"; rm -rf $$out; exit 1; fi; \
+	rm -rf $$out; echo "mobile-check: ok, every exported symbol of mobile/ is bindable"
 
-capi-check: ## STUB: the c-shared package (capi/) is a later spike
-	@echo "capi-check: no capi/ package yet (stub, passes)"
+capi-check: ## host c-shared library + header into build/capi, capitest build, Go tests, C smoke test against mixsim
+	CGO_ENABLED=1 $(NICE) $(GO) build -buildmode=c-shared -trimpath -ldflags='$(CAPI_LDFLAGS)' -o $(CAPI_DIR)/$(CAPI_LIB) ./capi
+	CGO_ENABLED=1 $(NICE) $(GO) build -buildmode=c-shared -trimpath -tags capitest -ldflags='$(CAPI_LDFLAGS)' -o $(CAPITEST_DIR)/$(CAPI_LIB) ./capi
+	$(NICE) $(GO) build -o $(CAPITEST_DIR)/mixsim ./cmd/mixsim
+	CGO_ENABLED=1 $(NICE) $(GO) test -race -count=1 -tags capitest ./capi
+	$(NICE) sh capi/testdata/smoke.sh $(CAPITEST_DIR) $(CAPITEST_DIR)/mixsim
+
+xcframework: ## Apple xcframework of mobile/ (iOS, iOS simulator, macOS) into build/; needs full Xcode (DEVELOPER_DIR)
+	@xcrun --sdk iphoneos --show-sdk-path >/dev/null 2>&1 || { \
+	  echo "xcframework: no iOS SDK. Point DEVELOPER_DIR at a full Xcode, e.g."; \
+	  echo "  make xcframework DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer"; exit 1; }
+	rm -rf $(XCFRAMEWORK)
+	PATH=$(BIN):$$PATH $(NICE) $(BIN)/gomobile bind -target=ios,iossimulator,macos \
+	  -iosversion $(IOS_MIN) -macosversion $(MACOS_MIN) -trimpath -ldflags='-s -w' -o $(XCFRAMEWORK) ./mobile

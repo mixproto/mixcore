@@ -4,10 +4,12 @@
 
 // Package api is the in-process facade every app uses: Start/Stop/Pause/
 // Resume, a JSON state listener, Apply for user gestures, MeterFrame and the
-// family's fader law (contracts/core-api). The exported surface of Engine uses
-// only types gomobile can bind (string, []byte, bool, float64, error and
-// callback interfaces of those), so core/mobile and core/capi stay thin.
-// Go-only extras (NewEngineWith, Options) are for Go hosts and tests.
+// family's fader law, Discover with a result listener, a log sink and the
+// Android socket binder (contracts/core-api). The exported surface of Engine
+// uses only types gomobile can bind (string, []byte, bool, int, float64, error
+// and callback interfaces of those), so core/mobile and core/capi stay thin.
+// Go-only extras (NewEngineWith, Options, Close, ReadMeterFrame) are for Go
+// hosts, the c-shared binding and tests.
 //
 // No method blocks on the network: connecting runs in the background and is
 // reported through the StateListener.
@@ -22,6 +24,7 @@ import (
 	"math"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/mixproto/mixcore/console"
 	"github.com/mixproto/mixcore/driver"
@@ -39,11 +42,15 @@ type StateListener interface {
 // Options are Go-only settings for hosts and tests (not part of the bound API).
 type Options struct {
 	// Drivers by family name; nil uses the built-in x32 driver.
-	Drivers      map[string]driver.Driver
+	Drivers map[string]driver.Driver
+	// ListenPacket opens every socket; nil: OS sockets through SetSocketBinder.
 	ListenPacket driver.ListenPacketFunc
-	Logger       *slog.Logger
+	// Logger; nil: records go to the LogSink set with SetLogSink.
+	Logger *slog.Logger
 	// WriteAudit receives every write a driver sends (tests, diagnostics).
 	WriteAudit func(driver.WriteRecord)
+	// RereadEvery is the background re-read interval (console.Config); zero: default.
+	RereadEvery time.Duration
 }
 
 type listenerBox struct{ l StateListener }
@@ -58,6 +65,9 @@ type Engine struct {
 	lis      atomic.Pointer[listenerBox]
 	wantFull atomic.Bool
 	kick     chan struct{}
+	logs     *logPump
+	binder   atomic.Pointer[binderBox]
+	disc     discovery
 
 	mu       sync.Mutex
 	sup      *console.Supervisor
@@ -74,10 +84,15 @@ func NewEngineWith(opts Options) *Engine {
 	if opts.Drivers == nil {
 		opts.Drivers = map[string]driver.Driver{familyX32: x32.New(x32.Config{})}
 	}
+	e := &Engine{slot: &meters.Slot{}, kick: make(chan struct{}, 1), logs: newLogPump()}
 	if opts.Logger == nil {
-		opts.Logger = slog.New(slog.DiscardHandler)
+		opts.Logger = slog.New(&sinkHandler{pump: e.logs})
 	}
-	e := &Engine{opts: opts, slot: &meters.Slot{}, kick: make(chan struct{}, 1)}
+	if opts.ListenPacket == nil {
+		opts.ListenPacket = e.listenPacket
+	}
+	e.opts = opts
+	e.disc.ctx, e.disc.cancel = context.WithCancel(context.Background())
 	if d, ok := opts.Drivers[familyX32]; ok {
 		e.law.Store(&lawBox{law: d.FaderLaw()})
 	}
@@ -113,11 +128,12 @@ func (e *Engine) Start(configJSON string) (out string, err error) {
 		return "", codeErr(CodeAlreadyStarted, nil)
 	}
 	sup, err := console.New(console.Config{
-		Driver:   drv,
-		Endpoint: driver.Endpoint{Host: cfg.Host, Port: cfg.Port},
-		Options:  driver.Options{Logger: e.opts.Logger, Meters: e.slot, ListenPacket: e.opts.ListenPacket, WriteAudit: e.opts.WriteAudit},
-		Meters:   driver.MeterRequest{Inputs: cfg.Meters.Inputs},
-		Logger:   e.opts.Logger,
+		Driver:      drv,
+		Endpoint:    driver.Endpoint{Host: cfg.Host, Port: cfg.Port},
+		Options:     driver.Options{Logger: e.opts.Logger, Meters: e.slot, ListenPacket: e.opts.ListenPacket, WriteAudit: e.opts.WriteAudit},
+		Meters:      driver.MeterRequest{Inputs: cfg.Meters.Inputs},
+		Logger:      e.opts.Logger,
+		RereadEvery: e.opts.RereadEvery,
 	})
 	if err != nil {
 		return "", err
@@ -247,8 +263,8 @@ func (e *Engine) Apply(commandJSON string) (err error) {
 	}
 }
 
-// MeterFrame returns the newest meter frame (contracts/core-api/meter-frame.md).
-// It never blocks on the network or on the session.
+// MeterFrame returns the newest meter frame (contracts/core-api/meter-frame.md)
+// in a new slice. It never blocks on the network or on the session.
 func (e *Engine) MeterFrame() (out []byte) {
 	defer func() {
 		if recover() != nil {
@@ -257,7 +273,46 @@ func (e *Engine) MeterFrame() (out []byte) {
 	}()
 	var fr meters.Frame
 	e.slot.CopyLatest(&fr)
-	return meters.AppendBinary(make([]byte, 0, meters.FrameHeaderSize+4*fr.Count), &fr)
+	return meters.AppendBinary(make([]byte, 0, meters.EncodedSize(&fr)), &fr)
+}
+
+// MeterFrameMaxBytes is the largest frame MeterFrame and ReadMeterFrame return.
+const MeterFrameMaxBytes = meters.MaxEncodedSize
+
+// ReadMeterFrame copies the newest meter frame into dst without allocating and
+// returns its length. When dst is shorter than that length nothing is copied:
+// call again with a buffer of at least the returned size (MeterFrameMaxBytes
+// always fits). It never blocks on the network or on the session.
+func (e *Engine) ReadMeterFrame(dst []byte) (n int) {
+	defer func() {
+		if recover() != nil {
+			n = 0
+		}
+	}()
+	var fr meters.Frame
+	e.slot.CopyLatest(&fr)
+	n = meters.EncodedSize(&fr)
+	if n <= len(dst) {
+		meters.AppendBinary(dst[:0], &fr)
+	}
+	return n
+}
+
+// SetLogSink installs (or, with nil, removes) the sink for the engine's log
+// lines at minLevel and above (LogDebug, LogInfo, LogWarn, LogError). Without
+// a sink nothing is formatted. Channel and console names are user content and
+// appear only at LogDebug. Ignored when Options.Logger was given.
+func (e *Engine) SetLogSink(sink LogSink, minLevel int) {
+	defer func() { _ = recover() }()
+	e.logs.set(sink, minLevel)
+}
+
+// Close stops the session, a running discovery and the log goroutine, and
+// waits for them (Go hosts and tests; apps keep one engine for the process).
+func (e *Engine) Close() {
+	_ = e.Stop()
+	e.disc.stop()
+	e.logs.set(nil, LogInfo)
 }
 
 // FaderPosition maps dB to a fader position 0..1 with the family's law. Never blocks.

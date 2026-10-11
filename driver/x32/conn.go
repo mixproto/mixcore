@@ -27,8 +27,9 @@ const (
 )
 
 type inPacket struct {
-	data []byte // aliases the reader's ring; valid until inboundCap+1 newer packets
-	at   time.Time
+	data   []byte // aliases the reader's ring; valid until inboundCap+1 newer packets
+	at     time.Time
+	viaCmd bool // arrived on the write socket: only re-read replies come there
 }
 
 // conn owns the two UDP sockets of a session and their reader goroutines.
@@ -63,8 +64,8 @@ func openConn(ctx context.Context, console netip.AddrPort, opts driver.Options) 
 		meters: newMeterSink(opts.Meters),
 	}
 	onPanic := func(err error) { c.fail(err) }
-	safe.Go(&c.wg, onPanic, func() { c.fail(c.readLoop(sub, true)) })
-	safe.Go(&c.wg, onPanic, func() { c.fail(c.readLoop(cmd, false)) })
+	safe.Go(&c.wg, onPanic, func() { c.fail(c.readLoop(sub, false)) })
+	safe.Go(&c.wg, onPanic, func() { c.fail(c.readLoop(cmd, true)) })
 	return c, nil
 }
 
@@ -80,7 +81,7 @@ func (c *conn) fail(err error) {
 
 // readLoop forwards packets from the console. Meter packets are decoded right
 // here into a pre-allocated frame and never reach the owner (latest wins).
-func (c *conn) readLoop(pc net.PacketConn, withMeters bool) error {
+func (c *conn) readLoop(pc net.PacketConn, isCmd bool) error {
 	ring := make([][]byte, inboundCap+2) // see inPacket.data: the owner's packet is never overwritten
 	for i := range ring {
 		ring[i] = make([]byte, rxBufSize)
@@ -99,12 +100,12 @@ func (c *conn) readLoop(pc net.PacketConn, withMeters bool) error {
 		}
 		now := time.Now()
 		pkt := ring[i][:n]
-		if withMeters && c.meters.handle(pkt, now) {
+		if !isCmd && c.meters.handle(pkt, now) {
 			i--
 			continue
 		}
 		select {
-		case c.inbound <- inPacket{data: pkt, at: now}:
+		case c.inbound <- inPacket{data: pkt, at: now, viaCmd: isCmd}:
 		case <-c.done:
 			return nil
 		}

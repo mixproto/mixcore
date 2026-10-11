@@ -361,6 +361,8 @@ func TestMeters_InputLevelsPublishedInDBFS(t *testing.T) {
 			t.Fatal("meters stopped although SetMeters is on")
 		}
 		_ = sess.SetMeters(driver.MeterRequest{})
+		synctest.Wait()
+		r.slot.CopyLatest(&fr) // a frame already in flight may land before the switch takes effect
 		time.Sleep(15 * time.Second)
 		before = fr.Seq
 		time.Sleep(time.Second)

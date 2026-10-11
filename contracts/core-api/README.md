@@ -19,12 +19,19 @@ folder) or as a binary meter frame (`meter-frame.md`). v0 is unstable until the 
 | `MeterFrame()` | | bytes, `meter-frame.md` | **never blocks**: copies the newest frame under a lock that is never held across I/O |
 | `FaderPosition(db)` | dB (`-inf` allowed) | position 0..1 | **never blocks**: pure function of the family's fader law |
 | `FaderDB(position)` | position 0..1 | dB (`-inf` at 0) | **never blocks**: pure |
+| `SetDiscoveryListener(l)` | `DiscoveryListener` with `OnDiscovery(resultJSON string)` | | no |
+| `Discover(requestJSON)` | `discover.schema.json` | error code; result later through the listener (`discovery.schema.json`) | **no**: probes on a goroutine; `ERR_BUSY` while one runs. Only reads, never subscribes or writes |
+| `SetLogSink(sink, minLevel)` | `LogSink` with `Log(level int, line string)`; levels -4 debug, 0 info, 4 warn, 8 error | | no. Lines come from one dedicated goroutine (bounded queue, overflow counted and reported) |
+| `SetSocketBinder(b)` | `SocketBinder` with `BindSocket(fd int) error` | | no. Android only: every socket opened afterwards is passed to it before use; an error keeps that socket closed. Apple and Windows never call it |
+| `ReadMeterFrame(dst)` (Go) / `MixMeterFrame(buf, cap)` (C) | caller buffer | frame length | **never blocks, never allocates**; snprintf style when the buffer is short (`capi.md`) |
 
 `FaderPosition`/`FaderDB` use 64-bit floats, which carry `-inf` natively (Swift `-Double.infinity`, Kotlin
 `Double.NEGATIVE_INFINITY`, C# `double.NegativeInfinity`). NaN input gives position 0 / `-inf`.
 
 ## Threading
 - Every call may come from any thread and returns quickly; none performs network I/O on the calling thread.
+- `OnDiscovery` is called once per `Discover`, from that probe's goroutine; it may call `Discover` again.
+- `Log` is called from the log goroutine only. Console and channel names are user content and appear only at debug level.
 - `OnState` is called from one dedicated goroutine, one message at a time, in `seq` order. A slow listener never
   slows the console connection: changes are coalesced, and if too many pile up the next message is a full snapshot.
   The listener must not call `Stop` or `Pause` synchronously from inside `OnState`.
@@ -42,7 +49,12 @@ folder) or as a binary meter frame (`meter-frame.md`). v0 is unstable until the 
    client sends `holdBegin` (new gesture) or `holdEnd` (finger lifted). Going stale, pausing or stopping cancels every
    active hold (`holdCancelled` event): when the status returns to `live`, no write resumes without a new `holdBegin`.
 5. Echo: a diff caused by the app's own write carries the write's origin (`kind`, `clientId`, `seq`), so the UI can tell
-   its own echo from a change made at the desk.
+   its own echo from a change made at the desk. A write of another client (another `clientId` through the same engine,
+   or a MixLink client) carries that client's origin and is an external change for everyone else's holds.
+6. Background re-read: while live, the core re-reads the console state every 15 s (read-only, paced) to recover a
+   change whose push was lost. Only values that differ from the last one seen reach the listener, as ordinary diffs with
+   origin `console`. A pass is skipped while any fader is held, and parameters with a recent write of ours are not
+   re-read. It never writes.
 
 ## Error codes
 `Apply`, `Start`, `Stop`, `Pause`, `Resume` and `RequestSnapshot` return an error whose message is exactly one of
@@ -61,3 +73,31 @@ these codes (details go to the log, never to the user):
 | `ERR_ALREADY_STARTED` | `Start` while started |
 | `ERR_INTERNAL` | a bug; recovered panic |
 | `ERR_ROLE` | reserved for MixLink roles (not emitted in v0) |
+| `ERR_BUSY` | `Discover` while a probe is running |
+| `ERR_NETWORK` | discovery result only: no socket could be opened or every probe send was refused (e.g. Local Network access denied) |
+| `ERR_INVALID_ARGUMENT` | C binding only: a NULL pointer or a negative length from native code |
+
+## Bindings
+
+Both bindings expose the calls above and nothing else; behaviour is identical because both only translate types.
+
+**gomobile (`mobile/`, `make xcframework`, AAR by the Android build).** One package, one engine per process. Names:
+
+| Call | Swift (`import Mixcore`) | Kotlin / Java (`import mobile.Mobile`) |
+|---|---|---|
+| `Start` | `MobileStart(_ configJSON: String?, _ error: NSErrorPointer) -> String` | `Mobile.start(String): String` throws `Exception` |
+| `Stop`, `Pause`, `Resume`, `RequestSnapshot` | `MobileStop(_ error: NSErrorPointer) -> Bool` (same shape) | `Mobile.stop()` throws `Exception` (same shape) |
+| `Apply`, `Discover` | `MobileApply(_ json: String?, _ error: NSErrorPointer) -> Bool` | `Mobile.apply(String)` throws `Exception` |
+| `MeterFrame` | `MobileMeterFrame() -> Data?` | `Mobile.meterFrame(): ByteArray` |
+| `FaderPosition`, `FaderDB` | `MobileFaderPosition(_ db: Double) -> Double` | `Mobile.faderPosition(Double): Double` |
+| `SetStateListener` | `MobileSetStateListener(_ l: MobileStateListenerProtocol?)` | `Mobile.setStateListener(StateListener)` |
+| `SetDiscoveryListener` | `MobileSetDiscoveryListener(_ l: MobileDiscoveryListenerProtocol?)` | `Mobile.setDiscoveryListener(DiscoveryListener)` |
+| `SetLogSink` | `MobileSetLogSink(_ s: MobileLogSinkProtocol?, _ minLevel: Int)` | `Mobile.setLogSink(LogSink, Long)` |
+| `SetSocketBinder` | not used on Apple | `Mobile.setSocketBinder(SocketBinder)`; `bindSocket(fd: Long)` throws to refuse |
+| codes, levels | `MobileErrStale`, ..., `MobileLogInfo`, `MobileMeterFrameMaxBytes` | `Mobile.ErrStale`, ..., `Mobile.LogInfo`, `Mobile.MeterFrameMaxBytes` |
+
+Swift imports these C-style functions with a trailing `NSErrorPointer`; they do **not** `throw`. On failure the
+`NSError` has domain `go`, code 1 and `localizedDescription` equal to the stable code (`ERR_STALE`, ...). Java/Kotlin
+gets an `Exception` whose `message` is the code. Callback objects are retained by Go until replaced or cleared with nil.
+
+**c-shared (`capi/`, `make capi-check`)**: the C ABI, numeric status codes and memory rules are in `capi.md`.

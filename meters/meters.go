@@ -74,9 +74,17 @@ const (
 	levelSize       = 4
 )
 
+// MaxEncodedSize is the largest v0 binary frame: a buffer of this size always fits.
+const MaxEncodedSize = FrameHeaderSize + levelSize*MaxMeterChannels
+
+func levelCount(f *Frame) int { return min(max(f.Count, 0), MaxMeterChannels) }
+
+// EncodedSize is the length of the v0 binary encoding of f.
+func EncodedSize(f *Frame) int { return FrameHeaderSize + levelSize*levelCount(f) }
+
 // AppendBinary appends the v0 binary encoding of f to dst.
 func AppendBinary(dst []byte, f *Frame) []byte {
-	n := min(max(f.Count, 0), MaxMeterChannels)
+	n := levelCount(f)
 	dst = append(dst, FrameMagic...)
 	dst = binary.LittleEndian.AppendUint16(dst, FrameVersion)
 	dst = binary.LittleEndian.AppendUint16(dst, uint16(n))

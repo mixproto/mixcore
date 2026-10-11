@@ -18,3 +18,8 @@ Channel map (v0, x32): level `i` is input channel `i+1`, `n` = 32 while input me
 `n` = 0 otherwise (meters off, stale, paused or stopped). The value is the console's own meter level converted from
 linear amplitude (1.0 = 0 dBFS, up to +18 dBFS); see `docs/protocols/x32.md` X32-F51..F54. A UI that sees the same `seq` twice
 has nothing new to draw.
+
+## Reading without allocation
+`MeterFrame()` (gomobile) returns a new copy each call. The Go API `ReadMeterFrame(dst)` and the C call
+`MixMeterFrame(buf, cap)` copy the same bytes into a caller-owned buffer instead, with no allocation per frame; a frame
+is never larger than 536 bytes (`MeterFrameMaxBytes`, `MIX_METER_FRAME_MAX_BYTES`: 24 + 4 x 128). See `capi.md`.

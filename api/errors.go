@@ -26,6 +26,10 @@ const (
 	CodeNotStarted     = "ERR_NOT_STARTED"
 	CodeAlreadyStarted = "ERR_ALREADY_STARTED"
 	CodeInternal       = "ERR_INTERNAL"
+	CodeRole           = "ERR_ROLE"             // reserved for MixLink roles, not emitted in v0
+	CodeBusy           = "ERR_BUSY"             // a discovery is already running
+	CodeNetwork        = "ERR_NETWORK"          // no socket could be opened or no probe sent (discovery result)
+	CodeInvalidArg     = "ERR_INVALID_ARGUMENT" // bindings only: NULL pointer or bad length from native code
 )
 
 // Error carries a stable code for the bindings and the cause for logs.

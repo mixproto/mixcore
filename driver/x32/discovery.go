@@ -71,7 +71,8 @@ func directedBroadcast(a net.Addr) (netip.AddrPort, bool) {
 
 // Probe sends /xinfo to every target (broadcast addresses and manual IPs alike,
 // X32-F12) from one unconnected socket and collects replies until wait has
-// passed or ctx ends. It only reads; it never subscribes or writes.
+// passed or ctx ends. It only reads; it never subscribes or writes. It fails
+// only when the socket cannot be opened or no probe could be sent at all.
 func Probe(ctx context.Context, listen driver.ListenPacketFunc, targets []netip.AddrPort, wait time.Duration) ([]Found, error) {
 	if listen == nil {
 		listen = listenFunc(driver.Options{})
@@ -81,14 +82,8 @@ func Probe(ctx context.Context, listen driver.ListenPacketFunc, targets []netip.
 		return nil, fmt.Errorf("x32 probe: listen: %w", err)
 	}
 	defer pc.Close()
-	pkt, err := osc.AppendString(nil, addrXinfo)
-	if err != nil {
+	if err := sendProbes(pc, targets); err != nil {
 		return nil, err
-	}
-	for _, t := range targets {
-		if _, err := pc.WriteTo(pkt, net.UDPAddrFromAddrPort(t)); err != nil {
-			return nil, fmt.Errorf("x32 probe: send to %s: %w", t, err)
-		}
 	}
 	deadline := time.Now().Add(wait)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
@@ -100,6 +95,31 @@ func Probe(ctx context.Context, listen driver.ListenPacketFunc, targets []netip.
 	stop := context.AfterFunc(ctx, func() { _ = pc.SetReadDeadline(time.Now()) })
 	defer stop()
 	return collectReplies(pc)
+}
+
+// sendProbes sends /xinfo to every target. A target that cannot be reached
+// (for example a broadcast address the OS refuses) does not stop the others;
+// only when every send fails is the probe an error.
+func sendProbes(pc net.PacketConn, targets []netip.AddrPort) error {
+	pkt, err := osc.AppendString(nil, addrXinfo)
+	if err != nil {
+		return err
+	}
+	var firstErr error
+	sent := 0
+	for _, t := range targets {
+		if _, err := pc.WriteTo(pkt, net.UDPAddrFromAddrPort(t)); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("x32 probe: send to %s: %w", t, err)
+			}
+			continue
+		}
+		sent++
+	}
+	if sent == 0 && firstErr != nil {
+		return firstErr
+	}
+	return nil
 }
 
 func collectReplies(pc net.PacketConn) ([]Found, error) {

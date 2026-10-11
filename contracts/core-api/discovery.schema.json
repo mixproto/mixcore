@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/discovery.schema.json",
+  "title": "mixcore core API v0: discovery listener message",
+  "description": "Delivered once per Discover call, from the discovery goroutine. status failed means no probe could be sent at all (error ERR_NETWORK: no socket, or every send refused, for example Local Network access denied); consoles is then empty. A target that did not answer is simply absent.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "type", "status", "consoles"],
+  "properties": {
+    "version": { "$ref": "common.schema.json#/$defs/version" },
+    "type": { "const": "discovery" },
+    "status": { "enum": ["done", "failed"] },
+    "error": { "enum": ["ERR_NETWORK", "ERR_INTERNAL"] },
+    "consoles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["family", "host", "port", "name", "model", "firmware"],
+        "properties": {
+          "family": { "enum": ["x32"] },
+          "host": { "type": "string", "description": "Address the reply came from; pass it to Start as host." },
+          "port": { "type": "integer" },
+          "name": { "type": "string", "description": "Network name the console reports (user content)." },
+          "model": { "type": "string" },
+          "firmware": { "type": "string" }
+        }
+      }
+    }
+  },
+  "examples": [
+    { "version": 0, "type": "discovery", "status": "done",
+      "consoles": [ { "family": "x32", "host": "192.168.1.62", "port": 10023, "name": "X32-02-4A-53", "model": "X32", "firmware": "3.04" } ] },
+    { "version": 0, "type": "discovery", "status": "failed", "error": "ERR_NETWORK", "consoles": [] }
+  ]
+}
