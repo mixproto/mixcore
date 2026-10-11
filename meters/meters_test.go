@@ -86,3 +86,24 @@ func TestAppendBinary_Layout(t *testing.T) {
 		t.Fatalf("level 1 = %v, want -inf", l)
 	}
 }
+
+func TestEncodedSize(t *testing.T) {
+	tests := []struct {
+		name  string
+		count int
+		want  int
+	}{
+		{"no frame", 0, FrameHeaderSize},
+		{"32 inputs", 32, FrameHeaderSize + 32*levelSize},
+		{"negative count is clamped", -3, FrameHeaderSize},
+		{"oversized count is clamped", MaxMeterChannels + 9, MaxEncodedSize},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := Frame{Count: tc.count}
+			if got := EncodedSize(&f); got != tc.want || len(AppendBinary(nil, &f)) != got {
+				t.Fatalf("EncodedSize = %d, AppendBinary len = %d, want %d", got, len(AppendBinary(nil, &f)), tc.want)
+			}
+		})
+	}
+}

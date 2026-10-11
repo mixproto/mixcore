@@ -44,6 +44,16 @@ type loop struct {
 // scaled timing (driver and simulator lifetimes scaled together).
 func newLoop(t *testing.T) *loop {
 	t.Helper()
+	return newLoopWith(t, Options{Drivers: map[string]driver.Driver{"x32": x32.New(x32.Config{Timing: fastTiming})}})
+}
+
+// newLoopWith is newLoop with explicit engine options (fast timing is added
+// when no driver is given).
+func newLoopWith(t *testing.T, opts Options) *loop {
+	t.Helper()
+	if opts.Drivers == nil {
+		opts.Drivers = map[string]driver.Driver{"x32": x32.New(x32.Config{Timing: fastTiming})}
+	}
 	pc, err := net.ListenPacket("udp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -52,7 +62,7 @@ func newLoop(t *testing.T) *loop {
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 	wg.Go(func() { _ = sim.Serve(ctx, pc) })
-	eng := NewEngineWith(Options{Drivers: map[string]driver.Driver{"x32": x32.New(x32.Config{Timing: fastTiming})}})
+	eng := NewEngineWith(opts)
 	rec := &recorder{}
 	eng.SetStateListener(rec)
 	t.Cleanup(func() { _ = eng.Stop(); cancel(); wg.Wait(); _ = pc.Close() })

@@ -1,0 +1,119 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+package api
+
+import (
+	"bytes"
+	"math"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/mixproto/mixcore/console"
+	"github.com/mixproto/mixcore/internal/osc"
+	"github.com/mixproto/mixcore/meters"
+	simx32 "github.com/mixproto/mixcore/sim/x32"
+)
+
+func TestReadMeterFrame_FillsCallerBufferOrReportsSize(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		e := newEnv(t)
+		e.sim.SetInputLevels([]float32{1, 0.5})
+		e.startLive(t)
+		buf := make([]byte, MeterFrameMaxBytes)
+		n := e.eng.ReadMeterFrame(buf)
+		if n != meters.FrameHeaderSize+32*4 || !bytes.Equal(buf[:n], e.eng.MeterFrame()) {
+			t.Fatalf("ReadMeterFrame = %d bytes, want the same frame as MeterFrame", n)
+		}
+		small := bytes.Repeat([]byte{0xAA}, 10)
+		if got := e.eng.ReadMeterFrame(small); got != n || !bytes.Equal(small, bytes.Repeat([]byte{0xAA}, 10)) {
+			t.Fatalf("short buffer: got %d (want %d) and the buffer must stay untouched", got, n)
+		}
+		if got := e.eng.ReadMeterFrame(nil); got != n {
+			t.Fatalf("nil buffer: %d", got)
+		}
+	})
+}
+
+// A write from another of our own clients (another clientId through the same
+// engine, or a MixLink client) is an external change for a held fader: the
+// echo carries the other client's origin, never the holder's.
+func TestHold_OtherOwnClientWriteEndsGesture(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		e := newEnv(t)
+		e.startLive(t)
+		hold := `{"version":0,"type":"holdBegin","param":{"strip":{"kind":"input","index":1},"field":"fader"},"origin":{"kind":"gesture","clientId":"ui"}}`
+		if err := e.eng.Apply(hold); err != nil {
+			t.Fatal(err)
+		}
+		tablet := `{"version":0,"type":"set","param":{"strip":{"kind":"input","index":1},"field":"fader"},"value":-12,"origin":{"kind":"gesture","clientId":"tablet","seq":1}}`
+		if err := e.eng.Apply(tablet); err != nil {
+			t.Fatal(err)
+		}
+		synctest.Wait()
+		d := e.rec.last()
+		if len(d.Events) != 1 || d.Events[0].Type != "externalChangeOnHeld" || d.Events[0].ClientID != "ui" ||
+			d.Events[0].Origin.ClientID != "tablet" || d.Events[0].Origin.Kind != "gesture" {
+			t.Fatalf("events = %+v, want ui's gesture ended by the tablet", d.Events)
+		}
+		if err := e.eng.Apply(cmd("fader", "-4", "gesture")); CodeOf(err) != CodeGestureEnded {
+			t.Fatalf("ui's next write = %v, want %s", err, CodeGestureEnded)
+		}
+	})
+}
+
+func TestIdleEngine_RereadsInTheBackgroundButNeverWrites(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		e := newEnv(t)
+		e.startLive(t)
+		time.Sleep(time.Hour)
+		synctest.Wait()
+		reads := 0
+		for _, entry := range e.sim.Log() {
+			if entry.Class == simx32.ClassRead && entry.Address == "/ch/01/mix/fader" {
+				reads++
+			}
+		}
+		want := 1 + int(time.Hour/console.DefaultRereadEvery)
+		if reads < want-1 || reads > want {
+			t.Fatalf("ch1 fader read %d times in an hour, want about %d", reads, want)
+		}
+		if n := len(e.sim.Writes()); n != 0 {
+			t.Fatalf("an idle engine wrote %d times", n) // safety rule 2
+		}
+		if st := e.rec.last(); st.Status != "live" {
+			t.Fatalf("status %q after an hour", st.Status)
+		}
+	})
+}
+
+func TestReread_LostPushReachesTheUIAsConsoleChange(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		e := newEnv(t)
+		e.startLive(t)
+		e.net.SetDropFrom(consoleIP, true)
+		_ = e.sim.SurfaceSet("/ch/07/mix/fader", osc.Float(0.5)) // -10 dB, push lost
+		e.net.SetDropFrom(consoleIP, false)
+		time.Sleep(console.DefaultRereadEvery + 10*time.Second)
+		synctest.Wait()
+		var got *changeJSON
+		for _, m := range e.rec.all() {
+			if m.Changes == nil {
+				continue
+			}
+			for _, c := range *m.Changes {
+				if c.Param.Strip.Index == 7 && c.Param.Field == "fader" {
+					got = &c
+				}
+			}
+		}
+		if got == nil || got.Origin.Kind != "console" || math.Abs(got.Value.(float64)+10) > 0.05 {
+			t.Fatalf("lost push not recovered: %+v", got)
+		}
+		if len(e.sim.Writes()) != 0 {
+			t.Fatal("recovering a lost push must not write")
+		}
+	})
+}

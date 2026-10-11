@@ -16,13 +16,18 @@ import (
 )
 
 // The examples printed in the contract must be accepted by the parser.
-func TestContractExamples_CommandAndConfigParse(t *testing.T) {
+func TestContractExamples_Parse(t *testing.T) {
 	for _, tc := range []struct {
 		file  string
 		parse func(string) error
 	}{
 		{"../contracts/core-api/command.schema.json", func(s string) error { _, err := parseCommand(s); return err }},
 		{"../contracts/core-api/config.schema.json", func(s string) error { _, err := parseConfig(s); return err }},
+		{"../contracts/core-api/discover.schema.json", func(s string) error { _, err := parseDiscover(s); return err }},
+		{"../contracts/core-api/discovery.schema.json", func(s string) error {
+			var m discoveryResultJSON
+			return decodeStrict(s, &m)
+		}},
 	} {
 		b, err := os.ReadFile(tc.file)
 		if err != nil {

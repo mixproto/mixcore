@@ -66,6 +66,7 @@ func (r *recorder) all() []stateJSON {
 }
 
 type env struct {
+	net *memnet.Network
 	sim *simx32.Sim
 	eng *Engine
 	rec *recorder
@@ -92,7 +93,7 @@ func newEnv(t *testing.T) *env {
 		wg.Wait()
 		_ = pc.Close()
 	})
-	return &env{sim: sim, eng: eng, rec: rec}
+	return &env{net: n, sim: sim, eng: eng, rec: rec}
 }
 
 func (e *env) startLive(t *testing.T) {
