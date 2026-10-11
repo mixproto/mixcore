@@ -1,0 +1,14 @@
+.DS_Store
+bin/
+build/
+dist/
+*.xcframework
+*.aar
+*.dll
+*.so
+*.dylib
+*.h.gen
+coverage.out
+bench.out
+go.work
+go.work.sum
