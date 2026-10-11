@@ -18,6 +18,12 @@
 // are renewed every Timing.RenewEvery. Liveness is the time of the last packet
 // received, kept fresh by an /xinfo poll (X32-F25). A scene recall arrives as
 // ordinary pushes (no StateReplaced yet).
+//
+// Background re-read (driver.Rereader): on request, one read-only pass over
+// every parameter, paced at one batch of reads per PingEvery, recovers changes
+// whose push was lost. Only values that differ from the last one seen are
+// reported; parameters we wrote within EchoWindow are skipped and replies that
+// cross one of our writes are dropped.
 package x32
 
 import (

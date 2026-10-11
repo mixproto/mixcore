@@ -148,6 +148,18 @@ type Session interface {
 	Close() error // idempotent; safe before, during and after Run
 }
 
+// Rereader is implemented by sessions that can re-read their state in the
+// background, to recover changes whose push was lost (UDP drops silently).
+// Reread asks for one paced, read-only pass and returns at once; a pass
+// already running is not restarted. Only values that differ from what the
+// session last saw are emitted, as ParamChanged with a console origin. A
+// parameter written recently by us is not re-read, and a reply that crosses
+// one of our writes is discarded, so the pass can never mistake an old value
+// for a desk change. It never writes. Errors: ErrClosed.
+type Rereader interface {
+	Reread() error
+}
+
 // Event is emitted by Session.Run.
 type Event interface{ isEvent() }
 
