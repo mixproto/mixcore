@@ -100,7 +100,9 @@ func (h *holds) isEnded(p model.ParamRef, client string) bool {
 }
 
 // Hold starts (held = true) or ends (false) a person's gesture on a fader.
-// Both clear an ended gesture of that client. Holding never writes.
+// Both clear an ended gesture of that client. Holding never writes. A hold can
+// only begin while live (ErrStale otherwise), so no finger held through an
+// outage writes after the reconnect; ending a hold always works.
 func (s *Supervisor) Hold(p model.ParamRef, origin driver.Origin, held bool) error {
 	if !origin.MayWrite() {
 		return driver.ErrNotUserOrigin
@@ -111,6 +113,9 @@ func (s *Supervisor) Hold(p model.ParamRef, origin driver.Origin, held bool) err
 	k := holdKey{param: p, client: origin.ClientID}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if held && s.status != StatusLive {
+		return driver.ErrStale
+	}
 	delete(s.holds.ended, k)
 	if held {
 		s.holds.active[k] = struct{}{}

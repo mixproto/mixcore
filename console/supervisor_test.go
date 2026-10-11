@@ -178,6 +178,35 @@ func TestReconnect_BackoffWithJitterAndNeverGivesUp(t *testing.T) {
 	})
 }
 
+func TestReconnect_ShortLivedSessionsStillBackOff(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		drv := &fakeDriver{snapshot: stateWith(0), flaky: true}
+		start(t, drv)
+		time.Sleep(10 * time.Second)
+		at := drv.attempts()
+		if len(at) > 12 {
+			t.Fatalf("%d connects in 10 s: a console that drops us at once must get backoff", len(at))
+		}
+		if got := at[2].Sub(at[1]); got != backoff.Default.Delay(2, 0.5) {
+			t.Fatalf("delay before attempt 3 = %v, want %v", got, backoff.Default.Delay(2, 0.5))
+		}
+	})
+}
+
+func TestHold_BeginRejectedWhileNotLive(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		drv := &fakeDriver{snapshot: stateWith(0), down: true}
+		sup := start(t, drv)
+		synctest.Wait()
+		if err := sup.Hold(ch1Fader, gesture, true); !errors.Is(err, driver.ErrStale) {
+			t.Fatalf("holdBegin while connecting = %v, want ErrStale", err)
+		}
+		if err := sup.Hold(ch1Fader, gesture, false); err != nil {
+			t.Fatalf("holdEnd must always work: %v", err)
+		}
+	})
+}
+
 func TestEcho_OwnWriteDoesNotBounce(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		drv := &fakeDriver{snapshot: stateWith(0)}

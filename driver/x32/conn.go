@@ -11,7 +11,6 @@ import (
 	"net"
 	"net/netip"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/mixproto/mixcore/driver"
@@ -41,7 +40,6 @@ type conn struct {
 	inbound   chan inPacket
 	errs      chan error // reader failures other than a normal close
 	done      chan struct{}
-	lastRx    atomic.Int64 // Unix nanoseconds of the last packet from the console
 	meters    *meterSink
 	wg        sync.WaitGroup
 	closeOnce sync.Once
@@ -64,7 +62,6 @@ func openConn(ctx context.Context, console netip.AddrPort, opts driver.Options) 
 		inbound: make(chan inPacket, inboundCap), errs: make(chan error, 2), done: make(chan struct{}),
 		meters: newMeterSink(opts.Meters),
 	}
-	c.lastRx.Store(time.Now().UnixNano())
 	onPanic := func(err error) { c.fail(err) }
 	safe.Go(&c.wg, onPanic, func() { c.fail(c.readLoop(sub, true)) })
 	safe.Go(&c.wg, onPanic, func() { c.fail(c.readLoop(cmd, false)) })
@@ -101,7 +98,6 @@ func (c *conn) readLoop(pc net.PacketConn, withMeters bool) error {
 			continue
 		}
 		now := time.Now()
-		c.lastRx.Store(now.UnixNano())
 		pkt := ring[i][:n]
 		if withMeters && c.meters.handle(pkt, now) {
 			i--
@@ -133,8 +129,6 @@ func (c *conn) sendCmd(pkt []byte) error {
 	_, err := c.cmd.WriteTo(pkt, c.consoleTo)
 	return err
 }
-
-func (c *conn) lastReceived() time.Time { return time.Unix(0, c.lastRx.Load()) }
 
 // close stops the readers and waits for them. Idempotent.
 func (c *conn) close() {

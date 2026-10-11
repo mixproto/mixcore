@@ -22,6 +22,7 @@ var errRefused = errors.New("fake: console unreachable")
 type fakeDriver struct {
 	mu        sync.Mutex
 	down      bool
+	flaky     bool // sessions are lost right after connect
 	snapshot  model.State
 	sessions  []*fakeSession
 	connectAt []time.Time
@@ -39,6 +40,9 @@ func (d *fakeDriver) Connect(ctx context.Context, _ driver.Endpoint, _ driver.Op
 	}
 	s := &fakeSession{snapshot: d.snapshot, lost: make(chan struct{}), push: make(chan driver.Event, 16)}
 	d.sessions = append(d.sessions, s)
+	if d.flaky {
+		s.lose()
+	}
 	return s, nil
 }
 

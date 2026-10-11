@@ -41,11 +41,13 @@ type Network struct {
 	conns    map[netip.AddrPort]*PacketConn
 	nextPort uint16
 	down     map[netip.Addr]bool
+	dropFrom map[netip.Addr]bool
 }
 
 // New returns an empty network.
 func New() *Network {
-	return &Network{conns: map[netip.AddrPort]*PacketConn{}, nextPort: firstEphemera, down: map[netip.Addr]bool{}}
+	return &Network{conns: map[netip.AddrPort]*PacketConn{}, nextPort: firstEphemera, down: map[netip.Addr]bool{},
+		dropFrom: map[netip.Addr]bool{}}
 }
 
 // ListenPacket binds addr ("10.0.0.2:10023"; port 0 picks a free port).
@@ -57,8 +59,8 @@ func (n *Network) ListenPacket(addr string) (*PacketConn, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if ap.Port() == 0 {
-		for n.conns[netip.AddrPortFrom(ap.Addr(), n.nextPort)] != nil {
-			n.nextPort++
+		for n.nextPort < firstEphemera || n.conns[netip.AddrPortFrom(ap.Addr(), n.nextPort)] != nil {
+			n.nextPort = max(n.nextPort+1, firstEphemera) // never wraps to port 0
 		}
 		ap = netip.AddrPortFrom(ap.Addr(), n.nextPort)
 		n.nextPort++
@@ -85,6 +87,14 @@ func (n *Network) Host(ip string) func(ctx context.Context, network, address str
 	}
 }
 
+// SetDropFrom drops (true) or restores (false) packets sent by ip only: a
+// one-way outage where ip still receives.
+func (n *Network) SetDropFrom(ip string, drop bool) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.dropFrom[netip.MustParseAddr(ip)] = drop
+}
+
 // SetDown cuts (true) or restores (false) every packet to and from ip.
 func (n *Network) SetDown(ip string, down bool) {
 	n.mu.Lock()
@@ -95,7 +105,7 @@ func (n *Network) SetDown(ip string, down bool) {
 func (n *Network) deliver(from netip.AddrPort, to netip.AddrPort, b []byte) {
 	n.mu.Lock()
 	var targets []*PacketConn
-	if !n.down[from.Addr()] {
+	if !n.down[from.Addr()] && !n.dropFrom[from.Addr()] {
 		if to.Addr() == broadcast {
 			for ap, c := range n.conns {
 				if ap.Port() == to.Port() && ap != from && !n.down[ap.Addr()] {

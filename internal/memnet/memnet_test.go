@@ -100,6 +100,28 @@ func TestSetDownDropsTraffic(t *testing.T) {
 	})
 }
 
+func TestSetDropFromIsOneWay(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		n := New()
+		a, _ := n.ListenPacket("10.0.0.1:1")
+		b, _ := n.ListenPacket("10.0.0.2:1")
+		defer a.Close()
+		defer b.Close()
+		n.SetDropFrom("10.0.0.2", true)
+		_, _ = b.WriteTo([]byte("up"), udp("10.0.0.1:1"))
+		_, _ = a.WriteTo([]byte("down"), udp("10.0.0.2:1"))
+		buf := make([]byte, 8)
+		_ = b.SetReadDeadline(time.Now().Add(time.Second))
+		if _, _, err := b.ReadFrom(buf); err != nil {
+			t.Fatalf("downlink must still work: %v", err)
+		}
+		_ = a.SetReadDeadline(time.Now().Add(time.Second))
+		if _, _, err := a.ReadFrom(buf); !errors.Is(err, os.ErrDeadlineExceeded) {
+			t.Fatalf("uplink must be dropped: %v", err)
+		}
+	})
+}
+
 func TestAddressErrors(t *testing.T) {
 	n := New()
 	if _, err := n.ListenPacket("nonsense"); !errors.Is(err, ErrBadAddr) {

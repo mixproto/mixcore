@@ -156,6 +156,9 @@ func (s *Sim) Serve(ctx context.Context, pc net.PacketConn) error {
 		s.mu.Unlock()
 	}()
 
+	if err := pc.SetReadDeadline(time.Time{}); err != nil { // a previous Serve may have left one
+		return fmt.Errorf("x32 sim: %w", err)
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
 	defer func() { cancel(); wg.Wait() }()

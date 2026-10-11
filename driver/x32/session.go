@@ -63,9 +63,14 @@ type session struct {
 	closeOnce  sync.Once
 
 	// Owner-goroutine state.
-	tx   []byte
-	msg  osc.Message
-	sent map[int][]sentWrite
+	// lastPong is when the last /xinfo reply arrived. Only replies prove that
+	// our packets reach the console; pushes and meters keep flowing for up to
+	// 10 s after our uplink dies. time.Now keeps a monotonic reading, so a
+	// wall-clock step cannot fake or hide a loss.
+	lastPong time.Time
+	tx       []byte
+	msg      osc.Message
+	sent     map[int][]sentWrite
 }
 
 var _ driver.Session = (*session)(nil)
@@ -105,6 +110,10 @@ func (s *session) Apply(cmd driver.Command) error {
 	}
 	s.pending[idx] = pendingWrite{param: p, arg: arg, origin: cmd.Origin}
 	s.mu.Unlock()
+	if s.stopped.Load() { // Run ended meanwhile: never send it, and say so
+		s.dropPending()
+		return driver.ErrClosed
+	}
 	signal(s.cmdReady)
 	return nil
 }
@@ -184,8 +193,8 @@ func (s *session) Run(ctx context.Context, events chan<- driver.Event) error {
 		case <-s.meterReady:
 			s.requestMeters()
 		case now := <-ping.C:
-			if silent := now.Sub(s.c.lastReceived()); silent > s.timing.DeadAfter {
-				return fmt.Errorf("x32: silent for %s: %w", silent.Round(time.Millisecond), driver.ErrConnectionLost)
+			if silent := now.Sub(s.lastPong); silent > s.timing.DeadAfter {
+				return fmt.Errorf("x32: no /xinfo reply for %s: %w", silent.Round(time.Millisecond), driver.ErrConnectionLost)
 			}
 			s.sendSub(addrXinfo) // X32-F25: a read, never a write
 		case <-renew.C:
@@ -264,9 +273,13 @@ func (s *session) decodeChange(p inPacket) (driver.ParamChanged, bool) {
 		s.log.Debug("x32: undecodable packet", "err", err)
 		return driver.ParamChanged{}, false
 	}
+	if s.msg.AddressIs(addrXinfo) {
+		s.lastPong = p.at // X32-F25
+		return driver.ParamChanged{}, false
+	}
 	par, ok := s.params.byAddress(s.msg.Address)
 	if !ok {
-		return driver.ParamChanged{}, false // /xinfo replies and anything we did not ask for
+		return driver.ParamChanged{}, false // anything we did not ask for
 	}
 	arg, ok := s.msg.Arg(0)
 	if !ok {

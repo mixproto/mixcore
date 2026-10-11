@@ -55,5 +55,15 @@ func (e *Engine) deliver(sup *console.Supervisor, seq *uint64) {
 		e.opts.Logger.Error("api: encode state", "err", err)
 		return
 	}
-	box.l.OnState(string(b))
+	e.callListener(box.l, string(b))
+}
+
+// callListener contains a panic in app code: the dispatcher keeps running.
+func (e *Engine) callListener(l StateListener, msg string) {
+	defer func() {
+		if r := recover(); r != nil {
+			e.opts.Logger.Error("api: state listener panicked", "panic", r)
+		}
+	}()
+	l.OnState(msg)
 }

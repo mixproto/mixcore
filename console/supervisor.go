@@ -34,6 +34,10 @@ const (
 	// maxPendingChanges bounds changes kept between two Drain calls; beyond it
 	// the next Drain returns a full snapshot instead.
 	maxPendingChanges = 1024
+	// stableAfter: a session that lived shorter than this counts as a failed
+	// attempt, so a console that accepts and drops us at once still gets backoff
+	// (and does not burn a push-client slot per retry). Design target.
+	stableAfter = 10 * time.Second
 )
 
 // ErrAlreadyRunning is returned by Start on a running supervisor.
@@ -90,6 +94,7 @@ type Config struct {
 type Supervisor struct {
 	cfg    Config
 	notify chan struct{}
+	life   sync.Mutex // serialises Start and Stop, including Stop's wait
 
 	mu      sync.Mutex
 	status  Status
@@ -131,6 +136,8 @@ func New(cfg Config) (*Supervisor, error) {
 // Start launches the connect loop. It returns at once; progress is reported
 // through Notify/Drain.
 func (s *Supervisor) Start(ctx context.Context) error {
+	s.life.Lock()
+	defer s.life.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.cancel != nil {
@@ -146,6 +153,8 @@ func (s *Supervisor) Start(ctx context.Context) error {
 
 // Stop ends the connect loop and closes the session. Last values stay.
 func (s *Supervisor) Stop() {
+	s.life.Lock()
+	defer s.life.Unlock()
 	s.mu.Lock()
 	cancel := s.cancel
 	s.cancel = nil
@@ -209,23 +218,34 @@ func (s *Supervisor) setStatusLocked(st Status, reason string) {
 func (s *Supervisor) run(ctx context.Context) {
 	attempt := 0
 	for ctx.Err() == nil {
-		started := time.Now()
-		sess, err := s.cfg.Driver.Connect(ctx, s.cfg.Endpoint, s.cfg.Options)
-		if err != nil {
-			s.markStale(ctx, err)
-			attempt++
-			if !sleepCtx(ctx, s.cfg.Policy.Delay(attempt, s.cfg.Rand())) {
-				return
-			}
-			continue
-		}
-		attempt = 0
-		s.adopt(sess)
-		s.cfg.Logger.Info("console: live", "endpoint", s.cfg.Endpoint.Host, "connect_ms", time.Since(started).Milliseconds())
-		err = s.runSession(ctx, sess)
-		_ = sess.Close()
+		lived, err := s.connectAndRun(ctx)
 		s.markStale(ctx, err)
+		if lived >= stableAfter {
+			attempt = 0
+			continue // a healthy session was lost: retry at once
+		}
+		attempt++
+		if !sleepCtx(ctx, s.cfg.Policy.Delay(attempt, s.cfg.Rand())) {
+			return
+		}
 	}
+}
+
+// connectAndRun runs one session. The session is always closed, and a panic
+// anywhere in it becomes an error, so the loop marks stale and reconnects.
+func (s *Supervisor) connectAndRun(ctx context.Context) (lived time.Duration, err error) {
+	defer safe.RecoverAsError(&err)
+	started := time.Now()
+	sess, err := s.cfg.Driver.Connect(ctx, s.cfg.Endpoint, s.cfg.Options)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = sess.Close() }()
+	s.adopt(sess)
+	live := time.Now()
+	s.cfg.Logger.Info("console: live", "endpoint", s.cfg.Endpoint.Host, "connect_ms", live.Sub(started).Milliseconds())
+	err = s.runSession(ctx, sess)
+	return time.Since(live), err
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) bool {
@@ -248,11 +268,11 @@ func (s *Supervisor) adopt(sess driver.Session) {
 	s.state = sess.Snapshot()
 	s.changes = nil
 	s.setStatusLocked(StatusLive, "")
-	meterReq := s.cfg.Meters
-	s.mu.Unlock()
-	if err := sess.SetMeters(meterReq); err != nil {
+	// SetMeters never blocks; calling it under mu orders it with SetMeters below.
+	if err := sess.SetMeters(s.cfg.Meters); err != nil {
 		s.cfg.Logger.Debug("console: meters", "err", err)
 	}
+	s.mu.Unlock()
 }
 
 // markStale keeps the last values, locks input and forgets the session.
@@ -363,13 +383,12 @@ func (s *Supervisor) Apply(cmd driver.Command) error {
 // SetMeters changes the meter request now and for every future connection.
 func (s *Supervisor) SetMeters(req driver.MeterRequest) error {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.cfg.Meters = req
-	sess := s.sess
-	s.mu.Unlock()
-	if sess == nil {
+	if s.sess == nil {
 		return nil
 	}
-	return sess.SetMeters(req)
+	return s.sess.SetMeters(req)
 }
 
 // MeterSlot returns the slot meters are published to (may be nil).

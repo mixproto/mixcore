@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/mixproto/mixcore/driver"
+	"github.com/mixproto/mixcore/internal/safe"
 	"github.com/mixproto/mixcore/model"
 )
 
@@ -99,7 +100,8 @@ func capabilities() model.Capabilities {
 
 // Connect implements driver.Driver. It identifies the console with /xinfo,
 // registers /xremote and reads every parameter. It never writes a parameter.
-func (d *Driver) Connect(ctx context.Context, ep driver.Endpoint, opts driver.Options) (driver.Session, error) {
+func (d *Driver) Connect(ctx context.Context, ep driver.Endpoint, opts driver.Options) (_ driver.Session, err error) {
+	defer safe.RecoverAsError(&err)
 	console, err := resolve(ep)
 	if err != nil {
 		return nil, err
@@ -111,8 +113,12 @@ func (d *Driver) Connect(ctx context.Context, ep driver.Endpoint, opts driver.Op
 		return nil, err
 	}
 	s := newSession(d, c, opts)
+	defer func() {
+		if err != nil {
+			_ = s.Close() // also after a recovered panic
+		}
+	}()
 	if err := s.connect(ctx); err != nil {
-		_ = s.Close()
 		return nil, fmt.Errorf("x32: connect %s: %w", console, err)
 	}
 	return s, nil

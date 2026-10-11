@@ -320,6 +320,23 @@ func TestRun_DetectsLostConsole(t *testing.T) {
 	})
 }
 
+// Meters and pushes keep arriving after our uplink dies; only missing /xinfo
+// replies reveal it (X32-F25).
+func TestRun_DetectsUplinkOnlyLossDespiteMeters(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t, simx32.Options{})
+		sess := r.connect()
+		_, stop := r.run(sess)
+		_ = sess.SetMeters(driver.MeterRequest{Inputs: true})
+		time.Sleep(time.Second)
+		r.net.SetDropFrom(clientIP, true)
+		time.Sleep(DefaultTiming.DeadAfter + DefaultTiming.PingEvery)
+		if err := stop(); !errors.Is(err, driver.ErrConnectionLost) {
+			t.Fatalf("Run err = %v, want ErrConnectionLost while meters still flow", err)
+		}
+	})
+}
+
 func TestMeters_InputLevelsPublishedInDBFS(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		r := newRig(t, simx32.Options{})

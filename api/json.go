@@ -165,8 +165,9 @@ func parseOrigin(o originJSON) (driver.Origin, error) {
 }
 
 func parseValue(f model.Field, raw json.RawMessage) (model.Value, error) {
-	if len(raw) == 0 {
-		return model.Value{}, codeErr(CodeInvalidCommand, errors.New("set needs a value"))
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		// json.Unmarshal(null) leaves the target unchanged: false would unmute, "" would wipe a name.
+		return model.Value{}, codeErr(CodeInvalidCommand, errors.New("set needs a non-null value"))
 	}
 	var (
 		v   model.Value

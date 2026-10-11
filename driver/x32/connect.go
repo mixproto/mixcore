@@ -72,6 +72,7 @@ func (s *session) identify(ctx context.Context) (driver.Identity, error) {
 			if !ok || osc.Decode(p.data, &s.msg) != nil || !s.msg.AddressIs(addrXinfo) {
 				continue
 			}
+			s.lastPong = p.at
 			return parseXinfo(&s.msg)
 		}
 	}
@@ -113,9 +114,8 @@ func (s *session) readAll(ctx context.Context) (model.State, error) {
 		}
 		if ok {
 			s.acceptRead(rs, p)
-			continue
 		}
-		s.retryReads(rs)
+		s.retryReads(rs) // also while pushes keep arriving, or a lost reply is never re-requested
 	}
 	return s.buildState(rs.values)
 }
