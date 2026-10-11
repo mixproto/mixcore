@@ -200,7 +200,7 @@ func TestEcho_OwnWriteDoesNotBounce(t *testing.T) {
 	})
 }
 
-func TestHeldFader_ConsoleUpdateAppliedOnRelease(t *testing.T) {
+func TestHeldFader_ExternalChangeEndsGesture(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		drv := &fakeDriver{snapshot: stateWith(0)}
 		sup := start(t, drv)
@@ -209,47 +209,141 @@ func TestHeldFader_ConsoleUpdateAppliedOnRelease(t *testing.T) {
 		if err := sup.Hold(ch1Fader, gesture, true); err != nil {
 			t.Fatal(err)
 		}
-		console := driver.Origin{Kind: driver.OriginConsole}
-		drv.session(0).push <- driver.ParamChanged{Param: ch1Fader, Value: lvl(t, -30), Origin: console}
-		drv.session(0).push <- driver.ParamChanged{Param: ch1Fader, Value: lvl(t, -25), Origin: console}
-		synctest.Wait()
-		if u := sup.Drain(); faderOf(t, u) != 0 || len(u.Changes) != 0 {
-			t.Fatalf("while held the fader must not move: %v, %d changes", faderOf(t, u), len(u.Changes))
-		}
-		if err := sup.Hold(ch1Fader, gesture, false); err != nil {
+		if err := sup.Apply(driver.Command{Param: ch1Fader, Value: lvl(t, -3), Origin: gesture}); err != nil {
 			t.Fatal(err)
 		}
+		// Our own echo does not end the gesture.
+		drv.session(0).push <- driver.ParamChanged{Param: ch1Fader, Value: lvl(t, -3), Origin: gesture}
+		synctest.Wait()
+		if u := sup.Drain(); len(u.Events) != 0 || faderOf(t, u) != -3 {
+			t.Fatalf("own echo: events %+v fader %v", u.Events, faderOf(t, u))
+		}
+		if err := sup.Apply(driver.Command{Param: ch1Fader, Value: lvl(t, -4), Origin: gesture}); err != nil {
+			t.Fatalf("gesture must continue after its own echo: %v", err)
+		}
+
+		// The engineer moves the fader at the desk.
+		desk := driver.Origin{Kind: driver.OriginConsole}
+		drv.session(0).push <- driver.ParamChanged{Param: ch1Fader, Value: lvl(t, -10), Origin: desk}
+		synctest.Wait()
 		u := sup.Drain()
-		if faderOf(t, u) != -25 || len(u.Changes) != 1 {
-			t.Fatalf("on release the latest console value must apply: %v, %+v", faderOf(t, u), u.Changes)
+		if faderOf(t, u) != -10 {
+			t.Fatalf("the console's value must be published at once, got %v", faderOf(t, u))
 		}
-		if n := len(drv.session(0).writes()); n != 0 {
-			t.Fatalf("holding produced %d writes", n)
+		if len(u.Events) != 1 || u.Events[0].Kind != HoldExternalChange || u.Events[0].ClientID != "ui" ||
+			!u.Events[0].Value.Equal(lvl(t, -10)) || u.Events[0].Origin != desk {
+			t.Fatalf("events = %+v, want one external change on the held fader", u.Events)
 		}
+		writesBefore := len(drv.session(0).writes())
+		if err := sup.Apply(driver.Command{Param: ch1Fader, Value: lvl(t, -5), Origin: gesture}); !errors.Is(err, ErrGestureEnded) {
+			t.Fatalf("Apply after an external change = %v, want ErrGestureEnded", err)
+		}
+		if n := len(drv.session(0).writes()); n != writesBefore {
+			t.Fatal("an ended gesture reached the console")
+		}
+		// Other parameters and other clients are not affected.
 		mute := model.ParamRef{Strip: ch1Fader.Strip, Field: model.FieldMute}
+		if err := sup.Apply(driver.Command{Param: mute, Value: model.Bool(true), Origin: gesture}); err != nil {
+			t.Fatalf("mute of the same client: %v", err)
+		}
+		tablet := driver.Origin{Kind: driver.OriginGesture, ClientID: "tablet"}
+		if err := sup.Apply(driver.Command{Param: ch1Fader, Value: lvl(t, -5), Origin: tablet}); err != nil {
+			t.Fatalf("another client: %v", err)
+		}
+		// A new hold-begin starts a new gesture.
+		if err := sup.Hold(ch1Fader, gesture, true); err != nil {
+			t.Fatal(err)
+		}
+		if err := sup.Apply(driver.Command{Param: ch1Fader, Value: lvl(t, -5), Origin: gesture}); err != nil {
+			t.Fatalf("after a new hold-begin: %v", err)
+		}
 		if err := sup.Hold(mute, gesture, true); !errors.Is(err, driver.ErrUnsupported) {
 			t.Fatalf("hold on a mute err = %v", err)
 		}
 	})
 }
 
-func TestHeldFader_TwoClientsReleaseOnLast(t *testing.T) {
+func TestHeldFader_EndedGestureClearedByRelease(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		drv := &fakeDriver{snapshot: stateWith(0)}
 		sup := start(t, drv)
 		synctest.Wait()
-		other := driver.Origin{Kind: driver.OriginGesture, ClientID: "tablet"}
 		_ = sup.Hold(ch1Fader, gesture, true)
-		_ = sup.Hold(ch1Fader, other, true)
 		drv.session(0).push <- driver.ParamChanged{Param: ch1Fader, Value: lvl(t, -10), Origin: driver.Origin{Kind: driver.OriginConsole}}
 		synctest.Wait()
-		_ = sup.Hold(ch1Fader, gesture, false)
-		if faderOf(t, sup.Snapshot()) != 0 {
-			t.Fatal("still held by the tablet; must not apply yet")
+		_ = sup.Hold(ch1Fader, gesture, false) // finger lifted
+		if err := sup.Apply(driver.Command{Param: ch1Fader, Value: lvl(t, -2), Origin: gesture}); err != nil {
+			t.Fatalf("a tap after the finger was lifted must work: %v", err)
 		}
-		_ = sup.Hold(ch1Fader, other, false)
-		if faderOf(t, sup.Snapshot()) != -10 {
-			t.Fatal("last release must apply the console value")
+	})
+}
+
+func TestHeldFader_OtherClientsWriteEndsGesture(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		drv := &fakeDriver{snapshot: stateWith(0)}
+		sup := start(t, drv)
+		synctest.Wait()
+		_ = sup.Hold(ch1Fader, gesture, true)
+		tablet := driver.Origin{Kind: driver.OriginGesture, ClientID: "tablet", Seq: 1}
+		drv.session(0).push <- driver.ParamChanged{Param: ch1Fader, Value: lvl(t, -8), Origin: tablet} // echo of the tablet's write
+		synctest.Wait()
+		if u := sup.Drain(); len(u.Events) != 1 || u.Events[0].ClientID != "ui" {
+			t.Fatalf("another client's write must end ui's gesture: %+v", u.Events)
+		}
+	})
+}
+
+func TestHeldFader_SceneRecallEndsGesture(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		drv := &fakeDriver{snapshot: stateWith(0)}
+		sup := start(t, drv)
+		synctest.Wait()
+		_ = sup.Hold(ch1Fader, gesture, true)
+		drv.session(0).push <- driver.StateReplaced{State: stateWith(-20), Reason: "scene recall"}
+		synctest.Wait()
+		u := sup.Drain()
+		if !u.Full || faderOf(t, u) != -20 || len(u.Events) != 1 || u.Events[0].Kind != HoldExternalChange {
+			t.Fatalf("after recall: full %v fader %v events %+v", u.Full, faderOf(t, u), u.Events)
+		}
+	})
+}
+
+func TestStale_CancelsActiveHolds(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		drv := &fakeDriver{snapshot: stateWith(0)}
+		sup := start(t, drv)
+		synctest.Wait()
+		sup.Drain()
+		if err := sup.Hold(ch1Fader, gesture, true); err != nil {
+			t.Fatal(err)
+		}
+		drv.setDown(true)
+		drv.session(0).lose()
+		synctest.Wait()
+		u := sup.Drain()
+		if u.Status != StatusStale || len(u.Events) != 1 || u.Events[0].Kind != HoldCancelled || u.Events[0].Reason != "stale" {
+			t.Fatalf("after loss: status %v events %+v", u.Status, u.Events)
+		}
+		drv.setDown(false)
+		time.Sleep(backoff.Default.Max)
+		synctest.Wait()
+		if u := sup.Drain(); u.Status != StatusLive {
+			t.Fatalf("did not reconnect: %v", u.Status)
+		}
+		if err := sup.Apply(driver.Command{Param: ch1Fader, Value: lvl(t, -3), Origin: gesture}); !errors.Is(err, ErrGestureEnded) {
+			t.Fatalf("Apply on the cancelled hold after Live = %v, want ErrGestureEnded", err)
+		}
+		if n := len(drv.session(1).writes()); n != 0 {
+			t.Fatalf("%d writes resumed without a new hold-begin", n)
+		}
+		_ = sup.Hold(ch1Fader, gesture, true)
+		if err := sup.Apply(driver.Command{Param: ch1Fader, Value: lvl(t, -3), Origin: gesture}); err != nil {
+			t.Fatalf("new hold after reconnect: %v", err)
+		}
+		_ = sup.Hold(ch1Fader, gesture, true)
+		sup.Stop()
+		if u := sup.Drain(); len(u.Events) != 1 || u.Events[0].Reason != "stopped" {
+			t.Fatalf("Stop must cancel holds: %+v", u.Events)
 		}
 	})
 }

@@ -167,7 +167,7 @@ func TestEngine_ConnectsAndSendsSnapshotThenDiffs(t *testing.T) {
 		_ = e.sim.SurfaceSet("/ch/04/mix/on", osc.Int(0))
 		synctest.Wait()
 		diff := e.rec.last()
-		if diff.Type != "diff" || len(diff.Changes) != 1 || diff.Changes[0].Origin.Kind != "console" || diff.Changes[0].Value != true {
+		if diff.Type != "diff" || len(*diff.Changes) != 1 || (*diff.Changes)[0].Origin.Kind != "console" || (*diff.Changes)[0].Value != true {
 			t.Fatalf("diff = %+v", diff)
 		}
 		for i, m := range e.rec.all() {
@@ -193,7 +193,7 @@ func TestApply_WritesAndEchoCarriesGestureOrigin(t *testing.T) {
 			t.Fatalf("console fader = %v, want 0.5", v.Float)
 		}
 		d := e.rec.last()
-		if d.Type != "diff" || d.Changes[0].Origin != (originJSON{Kind: "gesture", ClientID: "ui", Seq: 9}) {
+		if d.Type != "diff" || (*d.Changes)[0].Origin != (originJSON{Kind: "gesture", ClientID: "ui", Seq: 9}) {
 			t.Fatalf("echo diff = %+v", d)
 		}
 		if err := e.eng.Apply(cmd("fader", `"-inf"`, "macro")); err != nil {
@@ -302,32 +302,44 @@ func TestResume_RereadsAndWritesNothing(t *testing.T) {
 	})
 }
 
-func TestHold_ConsoleUpdateAppliedOnRelease(t *testing.T) {
+func TestHold_ExternalChangeEndsGesture(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := newEnv(t)
 		e.startLive(t)
-		hold := func(typ string) string {
-			return `{"version":0,"type":"` + typ + `","param":{"strip":{"kind":"input","index":1},"field":"fader"},"origin":{"kind":"gesture","clientId":"ui"}}`
-		}
-		if err := e.eng.Apply(hold("holdBegin")); err != nil {
+		hold := `{"version":0,"type":"holdBegin","param":{"strip":{"kind":"input","index":1},"field":"fader"},"origin":{"kind":"gesture","clientId":"ui"}}`
+		if err := e.eng.Apply(hold); err != nil {
 			t.Fatal(err)
 		}
-		before := len(e.rec.all())
-		_ = e.sim.SurfaceSet("/ch/01/mix/fader", osc.Float(0.25))
+		if err := e.eng.Apply(cmd("fader", "-3", "gesture")); err != nil {
+			t.Fatal(err)
+		}
 		synctest.Wait()
-		if len(e.rec.all()) != before {
-			t.Fatal("a held fader must not move")
+		if d := e.rec.last(); len(d.Events) != 0 {
+			t.Fatalf("our own echo ended the gesture: %+v", d.Events)
 		}
-		if err := e.eng.Apply(hold("holdEnd")); err != nil {
-			t.Fatal(err)
-		}
+		_ = e.sim.SurfaceSet("/ch/01/mix/fader", osc.Float(0.5)) // -10 dB at the desk
 		synctest.Wait()
 		d := e.rec.last()
-		if d.Type != "diff" || len(d.Changes) != 1 || d.Changes[0].Origin.Kind != "console" {
-			t.Fatalf("release diff = %+v", d)
+		if d.Type != "diff" || len(*d.Changes) != 1 || len(d.Events) != 1 {
+			t.Fatalf("diff = %+v", d)
 		}
-		if n := len(e.sim.Writes()); n != 0 {
-			t.Fatalf("holding wrote %d times", n)
+		ev := d.Events[0]
+		if ev.Type != "externalChangeOnHeld" || ev.ClientID != "ui" || ev.Origin.Kind != "console" || math.Abs(ev.Value.(float64)+10) > 0.05 {
+			t.Fatalf("event = %+v", ev)
+		}
+		writes := len(e.sim.Writes())
+		if err := e.eng.Apply(cmd("fader", "-4", "gesture")); CodeOf(err) != CodeGestureEnded {
+			t.Fatalf("Apply after the external change = %v, want %s", err, CodeGestureEnded)
+		}
+		synctest.Wait()
+		if len(e.sim.Writes()) != writes {
+			t.Fatal("an ended gesture reached the console")
+		}
+		if err := e.eng.Apply(hold); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.eng.Apply(cmd("fader", "-4", "gesture")); err != nil {
+			t.Fatalf("new hold: %v", err)
 		}
 	})
 }

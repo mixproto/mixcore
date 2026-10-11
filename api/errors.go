@@ -7,6 +7,7 @@ package api
 import (
 	"errors"
 
+	"github.com/mixproto/mixcore/console"
 	"github.com/mixproto/mixcore/driver"
 	"github.com/mixproto/mixcore/internal/safe"
 	"github.com/mixproto/mixcore/model"
@@ -20,6 +21,7 @@ const (
 	CodeInvalidValue   = "ERR_INVALID_VALUE"
 	CodeNotUserOrigin  = "ERR_NOT_USER_ORIGIN"
 	CodeStale          = "ERR_STALE"
+	CodeGestureEnded   = "ERR_GESTURE_ENDED"
 	CodeUnsupported    = "ERR_UNSUPPORTED"
 	CodeNotStarted     = "ERR_NOT_STARTED"
 	CodeAlreadyStarted = "ERR_ALREADY_STARTED"
@@ -57,6 +59,8 @@ func mapError(err error) error {
 		return nil
 	case errors.As(err, &e):
 		return err
+	case errors.Is(err, console.ErrGestureEnded):
+		return codeErr(CodeGestureEnded, err)
 	case errors.Is(err, driver.ErrNotUserOrigin):
 		return codeErr(CodeNotUserOrigin, err)
 	case errors.Is(err, driver.ErrStale), errors.Is(err, driver.ErrClosed):

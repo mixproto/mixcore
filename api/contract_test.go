@@ -57,7 +57,12 @@ func stateExamples(t *testing.T) [][]byte {
 	lv, _ := model.Level(-6)
 	u := console.Update{Status: console.StatusLive, State: st, Identity: driver.Identity{Name: "FOH", Model: "X32"},
 		Changes: []console.Change{{Param: model.ParamRef{Strip: model.MainRef, Field: model.FieldFader}, Value: lv,
-			Origin: driver.Origin{Kind: driver.OriginGesture, ClientID: "ui", Seq: 3}}}}
+			Origin: driver.Origin{Kind: driver.OriginGesture, ClientID: "ui", Seq: 3}}},
+		Events: []console.HoldEvent{
+			{Kind: console.HoldExternalChange, Param: model.ParamRef{Strip: model.MainRef, Field: model.FieldFader}, ClientID: "ios-1",
+				Value: lv, Origin: driver.Origin{Kind: driver.OriginConsole}},
+			{Kind: console.HoldCancelled, Param: model.ParamRef{Strip: model.MainRef, Field: model.FieldFader}, ClientID: "ios-2", Reason: "stale"},
+		}}
 	snap, err := encodeUpdate(u, 1, true)
 	if err != nil {
 		t.Fatal(err)
@@ -72,9 +77,13 @@ func stateExamples(t *testing.T) [][]byte {
 func TestStateJSON_Golden(t *testing.T) {
 	ex := stateExamples(t)
 	wantSnap := `{"version":0,"type":"snapshot","seq":1,"status":"live","console":{"name":"FOH","model":"X32"},` +
-		`"strips":[{"kind":"input","index":1,"name":"Kick","faderDB":-3.5,"mute":false},{"kind":"main","name":"","faderDB":"-inf","mute":false}]}`
+		`"strips":[{"kind":"input","index":1,"name":"Kick","faderDB":-3.5,"mute":false},{"kind":"main","name":"","faderDB":"-inf","mute":false}],` +
+		`"events":[{"type":"externalChangeOnHeld","param":{"strip":{"kind":"main"},"field":"fader"},"clientId":"ios-1","value":-6,"origin":{"kind":"console"}},` +
+		`{"type":"holdCancelled","param":{"strip":{"kind":"main"},"field":"fader"},"clientId":"ios-2","reason":"stale"}]}`
 	wantDiff := `{"version":0,"type":"diff","seq":2,"status":"live","changes":[{"param":{"strip":{"kind":"main"},"field":"fader"},` +
-		`"value":-6,"origin":{"kind":"gesture","clientId":"ui","seq":3}}]}`
+		`"value":-6,"origin":{"kind":"gesture","clientId":"ui","seq":3}}],` +
+		`"events":[{"type":"externalChangeOnHeld","param":{"strip":{"kind":"main"},"field":"fader"},"clientId":"ios-1","value":-6,"origin":{"kind":"console"}},` +
+		`{"type":"holdCancelled","param":{"strip":{"kind":"main"},"field":"fader"},"clientId":"ios-2","reason":"stale"}]}`
 	if string(ex[0]) != wantSnap {
 		t.Fatalf("snapshot\n got %s\nwant %s", ex[0], wantSnap)
 	}

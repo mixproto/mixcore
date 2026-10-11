@@ -247,6 +247,15 @@ type changeJSON struct {
 	Origin originJSON `json:"origin"`
 }
 
+type eventJSON struct {
+	Type     string      `json:"type"`
+	Param    paramJSON   `json:"param"`
+	ClientID string      `json:"clientId"`
+	Value    any         `json:"value,omitempty"`
+	Origin   *originJSON `json:"origin,omitempty"`
+	Reason   string      `json:"reason,omitempty"`
+}
+
 type stateJSON struct {
 	Version int              `json:"version"`
 	Type    string           `json:"type"`
@@ -255,18 +264,20 @@ type stateJSON struct {
 	Reason  string           `json:"reason,omitempty"`
 	Console *consoleJSON     `json:"console,omitempty"`
 	Strips  []stripStateJSON `json:"strips,omitempty"`
-	Changes []changeJSON     `json:"changes,omitempty"`
+	Changes *[]changeJSON    `json:"changes,omitempty"` // present (maybe empty) in every diff
+	Events  []eventJSON      `json:"events,omitempty"`
 }
 
 // encodeUpdate renders a supervisor update as a state message with sequence seq.
 func encodeUpdate(u console.Update, seq uint64, full bool) ([]byte, error) {
-	out := stateJSON{Version: contractVersion, Seq: seq, Status: u.Status.String(), Reason: u.Reason}
+	out := stateJSON{Version: contractVersion, Seq: seq, Status: u.Status.String(), Reason: u.Reason, Events: eventsJSON(u.Events)}
 	if !full {
 		out.Type = "diff"
-		out.Changes = make([]changeJSON, 0, len(u.Changes))
+		changes := make([]changeJSON, 0, len(u.Changes))
 		for _, c := range u.Changes {
-			out.Changes = append(out.Changes, changeJSON{Param: paramToJSON(c.Param), Value: valueJSON(c.Value), Origin: originToJSON(c.Origin)})
+			changes = append(changes, changeJSON{Param: paramToJSON(c.Param), Value: valueJSON(c.Value), Origin: originToJSON(c.Origin)})
 		}
+		out.Changes = &changes
 		return json.Marshal(out)
 	}
 	out.Type = "snapshot"
@@ -279,6 +290,19 @@ func encodeUpdate(u console.Update, seq uint64, full bool) ([]byte, error) {
 		})
 	}
 	return json.Marshal(out)
+}
+
+func eventsJSON(evs []console.HoldEvent) []eventJSON {
+	out := make([]eventJSON, 0, len(evs))
+	for _, ev := range evs {
+		e := eventJSON{Type: ev.Kind.String(), Param: paramToJSON(ev.Param), ClientID: ev.ClientID, Reason: ev.Reason}
+		if ev.Kind == console.HoldExternalChange {
+			o := originToJSON(ev.Origin)
+			e.Value, e.Origin = valueJSON(ev.Value), &o
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 func paramToJSON(p model.ParamRef) paramJSON {

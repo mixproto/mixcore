@@ -35,8 +35,12 @@ folder) or as a binary meter frame (`meter-frame.md`). v0 is unstable until the 
 2. `Apply` accepts only origin kinds `gesture` and `macro`. `console`/`system` give `ERR_NOT_USER_ORIGIN`.
 3. While the status is not `live`, `Apply` returns `ERR_STALE`. Nothing is queued, so nothing is replayed after a
    reconnect. The UI shows stale values dimmed and locks input.
-4. While a fader is held (`holdBegin` .. `holdEnd`), console updates for it are kept aside; on `holdEnd` the console's
-   latest value is applied and reported in a diff. The UI keeps drawing the finger position while held.
+4. Held faders (`holdBegin` .. `holdEnd`): the UI draws the finger position while held. If the desk, a scene recall
+   or another client changes that fader (anything except this client's own echo), the core at once publishes the
+   console's value, ends the gesture and reports an `externalChangeOnHeld` event with the new value (UI: "Changed at
+   the mixer: -10.0 dB"). Further `set` commands for that fader from that client return `ERR_GESTURE_ENDED` until the
+   client sends `holdBegin` (new gesture) or `holdEnd` (finger lifted). Going stale, pausing or stopping cancels every
+   active hold (`holdCancelled` event): when the status returns to `live`, no write resumes without a new `holdBegin`.
 5. Echo: a diff caused by the app's own write carries the write's origin (`kind`, `clientId`, `seq`), so the UI can tell
    its own echo from a change made at the desk.
 
@@ -51,6 +55,7 @@ these codes (details go to the log, never to the user):
 | `ERR_INVALID_VALUE` | value outside what the console accepts (for x32: a name longer than 12 characters or not printable ASCII) |
 | `ERR_NOT_USER_ORIGIN` | origin kind is not `gesture` or `macro` |
 | `ERR_STALE` | not live: connecting, stale, paused or stopped |
+| `ERR_GESTURE_ENDED` | the hold this write belongs to was ended by an external change or cancelled by a connection loss; send `holdBegin` again |
 | `ERR_UNSUPPORTED` | the console has no such parameter, or hold on a non-fader field |
 | `ERR_NOT_STARTED` | call needs `Start` first |
 | `ERR_ALREADY_STARTED` | `Start` while started |

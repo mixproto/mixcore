@@ -20,7 +20,9 @@ import (
 
 // maxEchoHistory is how many recent writes per parameter are matched against
 // pushes, so the echo of an earlier write in a fast drag is still recognised.
-const maxEchoHistory = 4
+// An unrecognised echo would look like a desk change and end the user's
+// gesture, so this covers about 300 ms of a 100 Hz drag.
+const maxEchoHistory = 32
 
 // errAlreadyRunning is returned by a second concurrent Run.
 var errAlreadyRunning = errors.New("x32: session already running")

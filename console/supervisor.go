@@ -6,9 +6,10 @@
 // loss keep the last values marked stale, reconnect with backoff and jitter,
 // re-read, then unlock input. It is the single place that enforces the write
 // gate (only user gestures and user macros write, never while stale) and the
-// held-fader rule (console updates for a fader a person is holding are applied
-// when it is released). It never queues writes: a write that cannot be sent
-// now is rejected, so nothing can be replayed after a reconnect.
+// held-fader rule: an external change (desk, scene recall, another client) of
+// a fader a person is holding is published at once and ends that gesture;
+// losing the console cancels every hold. It never queues writes: a write that
+// cannot be sent now is rejected, so nothing can be replayed after a reconnect.
 package console
 
 import (
@@ -62,7 +63,7 @@ type Change struct {
 
 // Update is what Drain returns: the current state plus what changed since
 // the previous Drain. Full means the state was replaced (connect, reconnect,
-// or too many changes to list).
+// or too many changes to list). Events are never folded into Full.
 type Update struct {
 	Seq      uint64
 	Status   Status
@@ -71,6 +72,7 @@ type Update struct {
 	State    model.State
 	Full     bool
 	Changes  []Change
+	Events   []HoldEvent
 }
 
 // Config configures a Supervisor.
@@ -89,19 +91,18 @@ type Supervisor struct {
 	cfg    Config
 	notify chan struct{}
 
-	mu       sync.Mutex
-	status   Status
-	reason   string
-	ident    driver.Identity
-	state    model.State
-	sess     driver.Session
-	held     map[model.ParamRef]map[string]struct{}
-	deferred map[model.ParamRef]Change
-	changes  []Change
-	full     bool
-	seq      uint64
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
+	mu      sync.Mutex
+	status  Status
+	reason  string
+	ident   driver.Identity
+	state   model.State
+	sess    driver.Session
+	holds   holds
+	changes []Change
+	full    bool
+	seq     uint64
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
 }
 
 // New validates cfg and returns a stopped supervisor.
@@ -123,7 +124,7 @@ func New(cfg Config) (*Supervisor, error) {
 	}
 	return &Supervisor{
 		cfg: cfg, notify: make(chan struct{}, 1),
-		held: map[model.ParamRef]map[string]struct{}{}, deferred: map[model.ParamRef]Change{},
+		holds: newHolds(),
 	}, nil
 }
 
@@ -155,6 +156,7 @@ func (s *Supervisor) Stop() {
 	cancel()
 	s.wg.Wait()
 	s.mu.Lock()
+	s.holds.cancelAll(StatusStopped.String())
 	s.setStatusLocked(StatusStopped, "stopped")
 	s.mu.Unlock()
 }
@@ -171,7 +173,8 @@ func (s *Supervisor) Drain() Update {
 	if !s.full {
 		u.Changes = s.changes
 	}
-	s.changes, s.full = nil, false
+	u.Events = s.holds.events
+	s.changes, s.full, s.holds.events = nil, false, nil
 	return u
 }
 
@@ -237,13 +240,12 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 }
 
 // adopt makes a freshly read session current: the console's snapshot replaces
-// local state (rule 1), values held aside for released faders are discarded.
+// local state (rule 1). Holds were already cancelled when the old session was lost.
 func (s *Supervisor) adopt(sess driver.Session) {
 	s.mu.Lock()
 	s.sess = sess
 	s.ident = sess.Identity()
 	s.state = sess.Snapshot()
-	s.deferred = map[model.ParamRef]Change{}
 	s.changes = nil
 	s.setStatusLocked(StatusLive, "")
 	meterReq := s.cfg.Meters
@@ -262,8 +264,9 @@ func (s *Supervisor) markStale(ctx context.Context, cause error) {
 	defer s.mu.Unlock()
 	s.sess = nil
 	if ctx.Err() != nil {
-		return // stopping: Stop sets the final status
+		return // stopping: Stop sets the final status and cancels holds
 	}
+	s.holds.cancelAll(StatusStale.String())
 	reason := "connection lost"
 	if cause != nil {
 		reason = cause.Error()
@@ -304,7 +307,7 @@ func (s *Supervisor) handleEvent(ev driver.Event) {
 		s.applyChangeLocked(Change{Param: e.Param, Value: e.Value, Origin: e.Origin})
 	case driver.StateReplaced:
 		s.state = e.State
-		s.deferred = map[model.ParamRef]Change{}
+		s.endHeldOnReplaceLocked()
 		s.full = true
 		s.signal()
 	case driver.ClientLimitHit:
@@ -315,19 +318,16 @@ func (s *Supervisor) handleEvent(ev driver.Event) {
 	}
 }
 
-// applyChangeLocked applies a console-reported value, or keeps it aside while
-// a person holds that fader (touch wins while held).
+// applyChangeLocked publishes a console-reported value at once. If it is an
+// external change of a held fader, that gesture ends (HoldExternalChange).
 func (s *Supervisor) applyChangeLocked(c Change) {
-	if len(s.held[c.Param]) > 0 {
-		s.deferred[c.Param] = c
-		return
-	}
 	next, err := s.state.With(c.Param, c.Value)
 	if err != nil {
 		s.cfg.Logger.Debug("console: change ignored", "param", c.Param.String(), "err", err)
 		return
 	}
 	s.state = next
+	s.holds.external(c)
 	if len(s.changes) >= maxPendingChanges {
 		s.full = true
 	} else if !s.full {
@@ -337,55 +337,27 @@ func (s *Supervisor) applyChangeLocked(c Change) {
 }
 
 // Apply sends one user write to the console. It never queues: while the
-// state is not live it returns driver.ErrStale (rule 3).
+// state is not live it returns driver.ErrStale (rule 3). A write for a fader
+// whose gesture was ended returns ErrGestureEnded until a new hold-begin.
 func (s *Supervisor) Apply(cmd driver.Command) error {
 	if !cmd.Origin.MayWrite() {
 		return driver.ErrNotUserOrigin // rule 2
 	}
 	s.mu.Lock()
 	sess, status := s.sess, s.status
+	ended := s.holds.isEnded(cmd.Param, cmd.Origin.ClientID)
 	s.mu.Unlock()
 	if status != StatusLive || sess == nil {
 		return driver.ErrStale
+	}
+	if ended {
+		return ErrGestureEnded
 	}
 	err := sess.Apply(cmd)
 	if errors.Is(err, driver.ErrClosed) {
 		return driver.ErrStale // the session died between the check and the call
 	}
 	return err
-}
-
-// Hold marks a fader as held (true) or released (false) by origin's client.
-// On the last release the console's latest value, kept aside while held, is
-// applied. Holding never writes.
-func (s *Supervisor) Hold(p model.ParamRef, origin driver.Origin, held bool) error {
-	if !origin.MayWrite() {
-		return driver.ErrNotUserOrigin
-	}
-	if p.Field != model.FieldFader {
-		return fmt.Errorf("console: hold %s: %w", p, driver.ErrUnsupported)
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	holders := s.held[p]
-	if held {
-		if holders == nil {
-			holders = map[string]struct{}{}
-			s.held[p] = holders
-		}
-		holders[origin.ClientID] = struct{}{}
-		return nil
-	}
-	delete(holders, origin.ClientID)
-	if len(holders) > 0 {
-		return nil
-	}
-	delete(s.held, p)
-	if c, ok := s.deferred[p]; ok {
-		delete(s.deferred, p)
-		s.applyChangeLocked(c)
-	}
-	return nil
 }
 
 // SetMeters changes the meter request now and for every future connection.

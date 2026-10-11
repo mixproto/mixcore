@@ -2,27 +2,58 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/state.schema.json",
   "title": "mixcore core API v0: StateListener.OnState(stateJSON)",
-  "description": "A snapshot replaces everything the UI holds; a diff lists changes since the previous message. seq grows by one per message; a gap never happens within one Start. Values are the console's, never the UI's.",
+  "description": "A snapshot replaces everything the UI holds; a diff lists changes since the previous message. seq grows by one per message; a gap never happens within one Start. Values are the console's, never the UI's. events report holds that ended without the user releasing them; they appear in snapshots and diffs and are never dropped by coalescing (up to 256 between two messages).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "type", "seq", "status"],
+  "required": [
+    "version",
+    "type",
+    "seq",
+    "status"
+  ],
   "properties": {
-    "version": { "$ref": "common.schema.json#/$defs/version" },
-    "type": { "enum": ["snapshot", "diff"] },
-    "seq": { "type": "integer", "minimum": 1 },
+    "version": {
+      "$ref": "common.schema.json#/$defs/version"
+    },
+    "type": {
+      "enum": [
+        "snapshot",
+        "diff"
+      ]
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1
+    },
     "status": {
-      "enum": ["stopped", "connecting", "live", "stale"],
+      "enum": [
+        "stopped",
+        "connecting",
+        "live",
+        "stale"
+      ],
       "description": "live: input unlocked. stale: connection lost, last values shown, Apply returns ERR_STALE. connecting: not yet connected since Start/Resume. stopped: Stop or Pause."
     },
-    "reason": { "type": "string", "description": "Diagnostic text for logs, never shown to users as is." },
+    "reason": {
+      "type": "string",
+      "description": "Diagnostic text for logs, never shown to users as is."
+    },
     "console": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "address": { "type": "string" },
-        "name": { "type": "string" },
-        "model": { "type": "string" },
-        "firmware": { "type": "string" }
+        "address": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "firmware": {
+          "type": "string"
+        }
       }
     },
     "strips": {
@@ -31,33 +62,152 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["kind", "faderDB", "mute", "name"],
+        "required": [
+          "kind",
+          "faderDB",
+          "mute",
+          "name"
+        ],
         "properties": {
-          "kind": { "enum": ["input", "main"] },
-          "index": { "type": "integer", "minimum": 1 },
-          "name": { "type": "string" },
-          "faderDB": { "$ref": "common.schema.json#/$defs/level" },
-          "mute": { "type": "boolean" }
+          "kind": {
+            "enum": [
+              "input",
+              "main"
+            ]
+          },
+          "index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "name": {
+            "type": "string"
+          },
+          "faderDB": {
+            "$ref": "common.schema.json#/$defs/level"
+          },
+          "mute": {
+            "type": "boolean"
+          }
         }
       }
     },
     "changes": {
       "type": "array",
-      "description": "diff only.",
+      "description": "diff only; present (possibly empty) in every diff.",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["param", "value", "origin"],
+        "required": [
+          "param",
+          "value",
+          "origin"
+        ],
         "properties": {
-          "param": { "$ref": "common.schema.json#/$defs/param" },
-          "value": { "$ref": "common.schema.json#/$defs/value" },
-          "origin": { "$ref": "common.schema.json#/$defs/origin" }
+          "param": {
+            "$ref": "common.schema.json#/$defs/param"
+          },
+          "value": {
+            "$ref": "common.schema.json#/$defs/value"
+          },
+          "origin": {
+            "$ref": "common.schema.json#/$defs/origin"
+          }
         }
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "param",
+              "clientId",
+              "value",
+              "origin"
+            ],
+            "description": "The desk, a scene recall or another client changed a parameter this client was holding. The console's value is already in state (in changes, or in the snapshot). The gesture has ended: Apply for this param from this client returns ERR_GESTURE_ENDED until a new holdBegin (or holdEnd). Suggested UI text: 'Changed at the mixer: -10.0 dB'.",
+            "properties": {
+              "type": {
+                "const": "externalChangeOnHeld"
+              },
+              "param": {
+                "$ref": "common.schema.json#/$defs/param"
+              },
+              "clientId": {
+                "type": "string"
+              },
+              "value": {
+                "$ref": "common.schema.json#/$defs/value"
+              },
+              "origin": {
+                "$ref": "common.schema.json#/$defs/origin"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "param",
+              "clientId",
+              "reason"
+            ],
+            "description": "The hold was cancelled because the console went stale or the engine was stopped/paused. No write resumes when the status returns to live: the UI must send a new holdBegin.",
+            "properties": {
+              "type": {
+                "const": "holdCancelled"
+              },
+              "param": {
+                "$ref": "common.schema.json#/$defs/param"
+              },
+              "clientId": {
+                "type": "string"
+              },
+              "reason": {
+                "enum": [
+                  "stale",
+                  "stopped"
+                ]
+              }
+            }
+          }
+        ]
       }
     }
   },
   "allOf": [
-    { "if": { "properties": { "type": { "const": "snapshot" } } }, "then": { "required": ["strips"] } },
-    { "if": { "properties": { "type": { "const": "diff" } } }, "then": { "required": ["changes"] } }
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "snapshot"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "strips"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "diff"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "changes"
+        ]
+      }
+    }
   ]
 }
