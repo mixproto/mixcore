@@ -21,7 +21,9 @@ It is the core of [Mixhand](https://mixhand.dybyskz.com), and you can use it in 
 | `driver/` | the contract every console family implements (sessions, origins, errors) |
 | `driver/x32/` | X32 / M32 family over OSC/UDP: discovery, connect and full read, subscriptions, fader law, meters |
 | `console/` | supervisor: connect, live, stale, reconnect with backoff; write gate and held-fader rule |
-| `api/` | in-process facade for apps: JSON state listener, `Apply`, `MeterFrame`, fader law |
+| `api/` | in-process facade for apps: JSON state listener, `Apply`, `MeterFrame`, fader law, `Discover`, log sink |
+| `mobile/` | the gomobile binding of `api/` (iOS, iPadOS, macOS xcframework; Android AAR) |
+| `capi/` | the c-shared binding of `api/` (Windows DLL via P/Invoke; dylib/.so for interop tests), ABI in `contracts/core-api/capi.md` |
 | `sim/x32/` | console simulator used as the test oracle, written from `docs/protocols/x32.md` only |
 | `cmd/mixsim/` | serves the simulator on real UDP ports |
 | `contracts/core-api/` | JSON Schema and binary meter frame spec of the API (v0, unstable) |
@@ -29,10 +31,13 @@ It is the core of [Mixhand](https://mixhand.dybyskz.com), and you can use it in 
 
 ## Development
 ```bash
-make tools          # pinned golangci-lint, govulncheck, benchstat into ./bin
+make tools          # pinned golangci-lint, govulncheck, benchstat, gomobile, gobind into ./bin
 make lint test      # unit tests run on an in-memory network with fake time
 make sim-test       # driver and API against the simulator on loopback UDP
 make fuzz           # every parser fuzz target, 30 s each
+make mobile-check   # gobind type check of mobile/ (no Xcode or NDK needed)
+make capi-check     # host c-shared library into build/capi + C smoke test against mixsim
+make xcframework DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer   # build/Mixcore.xcframework
 go run ./cmd/mixsim -demo   # a simulated X32 on 127.0.0.1:10023
 ```
 

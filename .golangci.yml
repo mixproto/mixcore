@@ -69,6 +69,22 @@ linters:
               desc: "the simulator is built from docs/protocols only"
             - pkg: github.com/mixproto/mixcore/meters
               desc: "the simulator is built from docs/protocols only"
+        bindings-are-thin:
+          # mobile (gomobile) and capi (c-shared) only translate types: their one mixcore import is api.
+          files: ["**/mobile/*.go", "**/capi/*.go", "!$test"]
+          deny:
+            - pkg: github.com/mixproto/mixcore/console
+              desc: "bindings import only api"
+            - pkg: github.com/mixproto/mixcore/driver
+              desc: "bindings import only api"
+            - pkg: github.com/mixproto/mixcore/internal
+              desc: "bindings import only api"
+            - pkg: github.com/mixproto/mixcore/meters
+              desc: "bindings import only api"
+            - pkg: github.com/mixproto/mixcore/model
+              desc: "bindings import only api"
+            - pkg: github.com/mixproto/mixcore/sim
+              desc: "bindings import only api"
         console-layer:
           files: ["**/console/*.go", "!$test"]
           deny:

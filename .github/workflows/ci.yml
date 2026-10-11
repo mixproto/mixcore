@@ -39,8 +39,20 @@ jobs:
         run: make test NICE=
       - name: simulator tests on loopback (-race)
         run: make sim-test NICE=
-      - name: bindability stubs
-        run: make mobile-check capi-check
+
+  bindings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: gomobile and gobind at the go.mod pins
+        run: make mobile-tools
+      - name: gomobile type check of mobile/ (gobind, objc + java)
+        run: make mobile-check
+      - name: c-shared library for linux, capitest Go tests, C smoke test against mixsim
+        run: make capi-check NICE=
 
   fuzz:
     runs-on: ubuntu-latest
