@@ -7,6 +7,7 @@ run:
   timeout: 5m
   build-tags:
     - sim
+    - slow
 
 linters:
   default: standard

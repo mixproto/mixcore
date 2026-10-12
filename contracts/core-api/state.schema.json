@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/state.schema.json",
-  "title": "mixcore core API v0.2: StateListener.OnState(stateJSON)",
+  "title": "mixcore core API v0.3: StateListener.OnState(stateJSON)",
   "description": "A snapshot replaces everything the UI holds; a diff lists changes since the previous message. seq grows by one per message; a gap never happens within one Start. Values are the console's, never the UI's. events report holds that ended without the user releasing them; they appear in snapshots and diffs and are never dropped by coalescing (up to 256 between two messages).",
   "type": "object",
   "additionalProperties": false,
@@ -57,6 +57,18 @@
       "type": "boolean",
       "description": "v0.1. True once status has been stale for 30 s (design 8.1 'Offline', a stronger label only: the core keeps retrying at the same pace). Absent means false."
     },
+    "showMode": {
+      "type": "boolean",
+      "description": "v0.3, every message: show mode is on (SR-27). Absent means off."
+    },
+    "unlockedHeadamps": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "description": "v0.3, every message while show mode is on: headamps whose Gain raise is unlocked ('Gain unlocked for ...'). An unlock ends on relock, 20 s without a command on it, stale, pause or stop (event gainUnlockEnded)."
+    },
     "console": {
       "type": "object",
       "additionalProperties": false,
@@ -92,7 +104,8 @@
             "enum": [
               "input",
               "main"
-            ]
+            ],
+            "description": "input and main only; headamps are in headamps (v0.3)."
           },
           "index": {
             "type": "integer",
@@ -117,6 +130,14 @@
           },
           "effectiveMute": {
             "$ref": "common.schema.json#/$defs/effectiveMute"
+          },
+          "headamp": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "description": "v0.3, inputs on x32 only (/-ha/NN/index, X32-F74): the headamp feeding this channel, null when its source has none (card, USB, internal: the channel has no Gain). Absent when the family does not model it (xair) or the console did not answer /-ha. Several channels may use one headamp: one Gain write changes all of them. Read-only."
           }
         }
       }
@@ -128,6 +149,70 @@
         "minimum": 1
       },
       "description": "v0.2, snapshot only, xair: input strips the family documents (16, XA-F71) that this mixer did not answer when the engine first connected (a small model, or a link too lossy to probe, XA-F72). They stay absent until Stop and Start; strips that answered once are never dropped on a reconnect. Absent when every documented input answered. UI: 'Inputs 13-16 not found on this mixer'."
+    },
+    "headamps": {
+      "type": "array",
+      "description": "v0.3, snapshot only: every headamp the core reads, with its own Gain law (CR-23). xair: mic 1..16 (fewer on XR16/XR12, XA-F73), aux 17 on the 18-channel models; XR16/XR12 line inputs are absent (numbering unverified, XA-F110). x32: local 1..32 (fewer on a model with fewer local inputs) and the AES50 headamps some channel's /-ha index points at; a patch change that brings in another one is followed by a snapshot. Changes arrive in diffs as param {strip: {kind: headamp, index}, field: gain or phantom}.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "index",
+          "gainDB",
+          "minDB",
+          "maxDB",
+          "writeMaxDB",
+          "stepDB",
+          "writable",
+          "bank",
+          "number"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "gainDB": {
+            "type": "number"
+          },
+          "minDB": {
+            "type": "number",
+            "description": "Range and console step of this headamp's law: mic (xair mic, x32 all) -12..+60 dB, 0.5 dB (X32-F71, XA-F111); line (xair aux) -12..+20 dB, 0.5 dB (XA-F112). UI step = max(1 dB, stepDB)."
+          },
+          "maxDB": {
+            "type": "number"
+          },
+          "writeMaxDB": {
+            "type": "number",
+            "description": "The highest value a write may set: one step below maxDB, because the wire maximum 1.0 is not confirmed safe to write (xair.md XA-F116 item 22, x32.md X32-F72 item 17). A set above it is ERR_INVALID_VALUE; a Gain gesture's cap stops at it. +59.5 dB mic, +19.5 dB line. If hardware (x32.md item 17, xair.md item 22) shows a family does not echo Gain writes, that family's Gain becomes read-only (writable false)."
+          },
+          "stepDB": {
+            "type": "number"
+          },
+          "writable": {
+            "type": "boolean",
+            "description": "false: shown, never written (a set is ERR_UNSUPPORTED). x32 AES50 headamps (ownership and the effect of a write unknown, X32-F76) and xair aux (line law unconfirmed, XA-F112) are read-only. The core never writes with a law it has not confirmed."
+          },
+          "bank": {
+            "enum": [
+              "local",
+              "aes50a",
+              "aes50b",
+              "aux"
+            ],
+            "description": "Where the console says this input is, for the UI label: local (x32 local XLR, xair mic), AES50 A or B (x32 stage boxes; the B numbering is unverified, X32-F70 item 16), aux (xair stereo aux)."
+          },
+          "number": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The console's own number within the bank: x32 /headamp/036 is AES50 A 05; xair /headamp/03 is local 3."
+          },
+          "phantom": {
+            "type": "boolean",
+            "description": "48 V on. Present only where the core reads it: x32 local and xair mic headamps (X32-F73, XA-F113). Read-only for now: a future show-mode gate."
+          }
+        }
+      }
     },
     "changes": {
       "type": "array",
@@ -259,6 +344,34 @@
                 "minimum": 1,
                 "maximum": 64,
                 "description": "v0.2, xair only. Present when the console pushed /-snap/index within 1 s of the burst that raised this event: the snapshot it reports as recently loaded or saved (XA-F60, 1..64). A lone /-snap/index push (for example after a save in another app) raises no event. Show it as a hint: 'Snapshot 12 at the mixer'."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "index",
+              "reason"
+            ],
+            "description": "v0.3: a Gain unlock in show mode ended (SR-27); raising Gain on that headamp is locked again. An undo of an entry made during the unlock stays allowed for 10 s.",
+            "properties": {
+              "type": {
+                "const": "gainUnlockEnded"
+              },
+              "index": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "reason": {
+                "enum": [
+                  "relock",
+                  "idle",
+                  "stale",
+                  "stopped",
+                  "showModeOff"
+                ]
               }
             }
           }

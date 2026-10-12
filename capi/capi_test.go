@@ -20,7 +20,7 @@ func TestCodeNumbers_EveryCodeHasAUniqueNumber(t *testing.T) {
 	all := []string{
 		api.CodeInvalidConfig, api.CodeInvalidCommand, api.CodeInvalidValue, api.CodeNotUserOrigin, api.CodeStale,
 		api.CodeGestureEnded, api.CodeUnsupported, api.CodeNotStarted, api.CodeAlreadyStarted, api.CodeInternal,
-		api.CodeRole, api.CodeBusy, api.CodeNetwork, api.CodeInvalidArg,
+		api.CodeRole, api.CodeBusy, api.CodeNetwork, api.CodeInvalidArg, api.CodeNeedsConfirm, api.CodeShowMode, api.CodeGainBound,
 	}
 	seen := map[int32]string{}
 	for i, c := range all {

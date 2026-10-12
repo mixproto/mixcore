@@ -61,12 +61,16 @@ type session struct {
 	caps     model.Capabilities
 	absent   map[feature]bool // set during connect, read-only afterwards
 	inputs   int              // input strips of this console (XA-F72), set during connect
-	// knownInputs is the strip count an earlier session of the same link
-	// read (0: first connect); those strips are required (XA-F72).
-	knownInputs int
+	headamps int              // unit headamps that answered, set during connect
+	extra    bool             // the extra headamp groups answered, set during connect
+	present  headampSet       // headamps read and reported (units, extras, patched in use)
+	// knownUnits are the optional unit counts an earlier session of the same
+	// link read (nil: first connect); those units are required (XA-F72).
+	knownUnits *unitCounts
 
 	mu      sync.Mutex
 	order   []int                // pending parameter indexes, first-seen order
+	rrSkip  map[int]bool         // parameters to leave out of the next re-read pass (held)
 	pending map[int]pendingWrite // latest value per parameter (coalesced)
 
 	done        chan struct{} // closed by Close
@@ -92,7 +96,14 @@ type session struct {
 	msg      osc.Message
 	sent     map[int][]sentWrite
 	known    []model.Value // newest value seen per parameter (initial read, then every change)
-	rr       rereadPass
+	// unconfirmed: Gain parameters we wrote since their last re-read; the
+	// next re-read reply is reported (Authoritative) even when it equals
+	// known, so the console layer's values in flight always end (re-review
+	// MEDIUM B; Gain echo is unverified, X32-F79, XA-F116). A push never
+	// clears it: one did, and a desk move then kept the set forever (review
+	// pass 4, HIGH 1).
+	unconfirmed map[int]bool
+	rr          rereadPass
 }
 
 var _ driver.Session = (*session)(nil)
@@ -102,8 +113,8 @@ func newSession(d *Driver, c *conn, opts driver.Options) *session {
 		name: string(d.prof.Family), prof: &d.prof,
 		timing: d.timing, params: &d.params, c: c, log: logger(opts), audit: opts.WriteAudit,
 		pending: map[int]pendingWrite{}, done: make(chan struct{}), cmdReady: make(chan struct{}, 1), meterReady: make(chan struct{}, 1),
-		rereadReady: make(chan struct{}, 1), tx: make([]byte, 0, rxBufSize), sent: map[int][]sentWrite{},
-		rr: rereadPass{asked: map[int]bool{}}, scene: newSceneState(),
+		rereadReady: make(chan struct{}, 1), tx: make([]byte, 0, rxBufSize), sent: map[int][]sentWrite{}, unconfirmed: map[int]bool{},
+		rr: rereadPass{asked: map[int]bool{}}, scene: newSceneState(), present: newHeadampSet(d.params.layout.maxHeadamp()),
 	}
 }
 
@@ -226,7 +237,7 @@ func (s *session) Run(ctx context.Context, events chan<- driver.Event) error {
 		case <-s.meterReady:
 			s.requestMeters()
 		case <-s.rereadReady:
-			s.startReread(time.Now())
+			s.requestReread(time.Now())
 		case now := <-tick.C:
 			if err := s.onTick(now); err != nil {
 				return err
@@ -300,6 +311,9 @@ func (s *session) flushPending() {
 		s.rememberSent(idx, sentWrite{arg: w.arg, origin: w.origin, at: now, changes: s.changesKnown(idx, w),
 			evidence: w.param.feature == featureCore})
 		s.markTouched(idx)
+		if w.param.conv == convGain {
+			s.unconfirmed[idx] = true
+		}
 		if s.audit != nil {
 			s.audit(driver.WriteRecord{Param: w.param.ref, Address: w.param.addr, Origin: w.origin, At: now})
 		}
@@ -310,7 +324,7 @@ func (s *session) flushPending() {
 // wrote (still in the echo history) or, without one, the newest one seen.
 func (s *session) changesKnown(idx int, w pendingWrite) bool {
 	if h := s.sent[idx]; len(h) > 0 {
-		return !sameWire(h[len(h)-1].arg, w.arg)
+		return !sameWire(w.param, h[len(h)-1].arg, w.arg)
 	}
 	v, err := fromWire(w.param, w.arg)
 	return err != nil || idx >= len(s.known) || !s.known[idx].Equal(v)
@@ -365,6 +379,9 @@ func (s *session) decodeChange(p inPacket) (driver.ParamChanged, bool) {
 		return driver.ParamChanged{}, false
 	}
 	idx := s.params.index(par.ref)
+	if par.conv == convHaIndex {
+		s.onHeadampIndex(v) // a patch change: read the headamp it now uses (X32-F74)
+	}
 	if p.viaCmd {
 		return s.rereadReply(idx, v, p.at)
 	}
@@ -383,7 +400,7 @@ func (s *session) decodeChange(p inPacket) (driver.ParamChanged, bool) {
 func (s *session) matchEcho(idx int, arg osc.Arg, at time.Time) driver.Origin {
 	h := s.sent[idx]
 	for i := len(h) - 1; i >= 0; i-- {
-		if at.Sub(h[i].at) > s.timing.EchoWindow || !sameWire(h[i].arg, arg) {
+		if at.Sub(h[i].at) > s.timing.EchoWindow || !sameWire(s.params.all[idx], h[i].arg, arg) {
 			continue
 		}
 		origin := h[i].origin
@@ -397,14 +414,16 @@ func (s *session) matchEcho(idx int, arg osc.Arg, at time.Time) driver.Origin {
 	return driver.Origin{Kind: driver.OriginConsole}
 }
 
-// sameWire compares wire values; floats match within half a fader step (X32-F41).
-func sameWire(a, b osc.Arg) bool {
+// sameWire compares wire values of p; floats match within half a step of
+// p's own law: the fader's 1023 steps (X32-F41) or the headamp's 144 or 64
+// (X32-F72, xair.md XA-F116), never one tolerance for every float.
+func sameWire(p param, a, b osc.Arg) bool {
 	if a.Type != b.Type {
 		return false
 	}
 	if a.Type == osc.TypeFloat {
-		d := float64(a.Float - b.Float)
-		return d <= 0.5/faderSteps && d >= -0.5/faderSteps
+		d, tol := a.Float-b.Float, p.halfStep()
+		return d <= tol && d >= -tol
 	}
 	return a.Equal(b)
 }

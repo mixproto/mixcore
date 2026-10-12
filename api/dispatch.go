@@ -6,6 +6,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/mixproto/mixcore/console"
 	"github.com/mixproto/mixcore/internal/safe"
@@ -41,7 +42,9 @@ func (e *Engine) dispatch(ctx context.Context, sup *console.Supervisor) {
 func (e *Engine) deliver(sup *console.Supervisor, seq *uint64) {
 	u := sup.Drain()
 	full := u.Full || e.wantFull.Swap(false)
-	if !full && len(u.Changes) == 0 && len(u.Effective) == 0 && len(u.Events) == 0 && len(u.Scenes) == 0 {
+	safetyMoved := e.safetyChanged(u)
+	if !full && len(u.Changes) == 0 && len(u.Effective) == 0 && len(u.Events) == 0 && len(u.Scenes) == 0 &&
+		len(u.UnlockEnded) == 0 && !safetyMoved {
 		return
 	}
 	box := e.lis.Load()
@@ -66,4 +69,15 @@ func (e *Engine) callListener(l StateListener, msg string) {
 		}
 	}()
 	l.OnState(msg)
+}
+
+// safetyChanged reports a change of show mode or the unlocked headamps since
+// the last delivered message (they travel in every message, v0.3).
+func (e *Engine) safetyChanged(u console.Update) bool {
+	key := fmt.Sprint(u.ShowMode, u.Unlocked)
+	if key == e.lastSafety {
+		return false
+	}
+	e.lastSafety = key
+	return true
 }

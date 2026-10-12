@@ -183,6 +183,15 @@ type Rereader interface {
 	Reread() error
 }
 
+// SelectiveRereader is a Rereader that can leave parameters out of a pass:
+// the ones a person is holding (a resting finger must not stop the recovery
+// of every other parameter, and a re-read must not end a held gesture).
+// RereadExcept is Reread without those parameters. Errors: ErrClosed.
+type SelectiveRereader interface {
+	Rereader
+	RereadExcept(skip []model.ParamRef) error
+}
+
 // Event is emitted by Session.Run.
 type Event interface{ isEvent() }
 
@@ -193,6 +202,11 @@ type ParamChanged struct {
 	Value  model.Value
 	Origin Origin
 	At     time.Time
+	// Authoritative: the console's value of a parameter we wrote and the
+	// console has not reported since, read back by the background re-read
+	// (which skips recently written parameters and drops superseded
+	// replies). It ends every value of ours still in flight (CR-23).
+	Authoritative bool
 }
 
 // StateReplaced is a full re-read (scene recall or similar).

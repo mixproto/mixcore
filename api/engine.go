@@ -73,6 +73,9 @@ type Engine struct {
 	cfg      configJSON
 	stopDisp context.CancelFunc
 	dispWG   sync.WaitGroup
+	// lastSafety is the show mode and unlock list of the last message
+	// (dispatcher goroutine only).
+	lastSafety string
 }
 
 // NewEngine returns an engine with the built-in drivers.
@@ -133,6 +136,7 @@ func (e *Engine) Start(configJSON string) (out string, err error) {
 		Meters:      driver.MeterRequest{Inputs: cfg.Meters.Inputs},
 		Logger:      e.opts.Logger,
 		RereadEvery: e.opts.RereadEvery,
+		Safety:      cfg.safety(),
 	})
 	if err != nil {
 		return "", err
@@ -242,26 +246,71 @@ func (e *Engine) requestFull() {
 }
 
 // Apply carries one user gesture (contracts/core-api/command.schema.json).
-// It returns at once; the write leaves from the session goroutine.
+// It returns at once; the write leaves from the session goroutine. The
+// phone safety rules apply exactly as for Gesture.
 func (e *Engine) Apply(commandJSON string) (err error) {
 	defer safe.RecoverAsError(&err)
 	defer func() { err = mapError(err) }()
+	_, err = e.run(commandJSON)
+	return err
+}
+
+// Gesture carries one command like Apply and returns what the core did
+// (contracts/core-api/gesture-result.schema.json, CR-22): the applied value,
+// the state (free, atWall, atCap, atCeiling, locked) and the window.
+func (e *Engine) Gesture(commandJSON string) (out string, err error) {
+	defer safe.RecoverAsError(&err)
+	defer func() { err = mapError(err) }()
+	res, err := e.run(commandJSON)
+	if err != nil {
+		return "", err
+	}
+	b, err := json.Marshal(resultJSON(res))
+	return string(b), err
+}
+
+// run parses and dispatches one command.
+func (e *Engine) run(commandJSON string) (console.Result, error) {
 	cmd, err := parseCommand(commandJSON)
 	if err != nil {
-		return err
+		return console.Result{}, err
 	}
 	sup, err := e.current()
 	if err != nil {
-		return err
+		return console.Result{}, err
 	}
 	switch cmd.kind {
-	case cmdHoldBegin, cmdHoldEnd:
-		return sup.Hold(cmd.param, cmd.origin, cmd.kind == cmdHoldBegin)
+	case cmdHoldBegin:
+		return sup.HoldWindowWith(cmd.param, cmd.origin, true, console.HoldOptions{TrackLengthPt: cmd.trackPt})
+	case cmdHoldEnd:
+		return sup.HoldWindow(cmd.param, cmd.origin, false)
 	case cmdToggle:
-		return sup.Toggle(cmd.param, cmd.origin)
+		return console.Result{}, sup.Toggle(cmd.param, cmd.origin)
+	case cmdOpenWall:
+		return sup.OpenWall(cmd.param, cmd.origin)
+	case cmdUnlock:
+		return console.Result{}, sup.Unlock(cmd.param, cmd.origin)
+	case cmdRelock:
+		return console.Result{}, sup.Relock(cmd.param, cmd.origin)
+	case cmdSlipGuard, cmdShowMode:
+		return console.Result{}, setting(sup, cmd)
 	default:
-		return sup.Apply(driver.Command{Param: cmd.param, Value: cmd.value, Origin: cmd.origin})
+		return sup.Write(console.Write{Command: driver.Command{Param: cmd.param, Value: cmd.value, Origin: cmd.origin},
+			Typed: cmd.typed, Confirmed: cmd.confirmed, Undo: cmd.undo})
 	}
+}
+
+// setting applies setSlipGuard / setShowMode; neither writes.
+func setting(sup *console.Supervisor, cmd command) error {
+	if !cmd.origin.MayWrite() {
+		return driver.ErrNotUserOrigin
+	}
+	if cmd.kind == cmdShowMode {
+		sup.SetShowMode(cmd.on)
+	} else {
+		sup.SetSlipGuard(cmd.origin.ClientID, cmd.on)
+	}
+	return nil
 }
 
 // MeterFrame returns the newest meter frame (contracts/core-api/meter-frame.md)

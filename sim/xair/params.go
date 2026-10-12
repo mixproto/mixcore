@@ -24,6 +24,12 @@ const (
 	tapMax       = 5   // section 3.3: IN, PREEQ, POSTEQ, PRE, POST, GRP
 	snapshots    = 64  // XA-F60
 	snapNameLen  = 31  // XA-F60
+	micGainSteps = 144 // XA-F111: mic gain -12 + 72 f, 145 steps
+	auxGainSteps = 64  // XA-F112: line and aux gain -12 + 32 f, 65 steps
+	auxHeadamp   = 17  // XA-F110: the stereo aux on the 18-channel models
+	// micGainZero and auxGainZero are 0 dB, the initial Gain (a choice).
+	micGainZero  = float32(24.0 / 144)
+	auxGainZero  = float32(24.0 / 64)
 	panCentre    = 0.5
 	addrSnapIdx  = "/-snap/index" // XA-F60, XA-F61: dashed form used by every client
 	addrSnapLoad = "/-snap/load"
@@ -70,6 +76,13 @@ func newParams(o Options) map[string]*oscsim.Value {
 		p[fmt.Sprintf("/config/buslink/%d-%d", pair, pair+1)] = oscsim.Switch(0)
 	}
 	addSnapshots(p)
+	for h := 1; h <= o.MicHeadamps; h++ { // XA-F110: two digits, 1-based
+		p[fmt.Sprintf("/headamp/%02d/gain", h)] = oscsim.LevelAt(micGainSteps, micGainZero)
+		p[fmt.Sprintf("/headamp/%02d/phantom", h)] = oscsim.Switch(0) // XA-F113: mic only, 1 = on
+	}
+	if o.MicHeadamps == DefaultMicHeadamps { // aux 17 on the 18-channel models only (XA-F110)
+		p[fmt.Sprintf("/headamp/%02d/gain", auxHeadamp)] = oscsim.LevelAt(auxGainSteps, auxGainZero)
+	}
 	return p
 }
 

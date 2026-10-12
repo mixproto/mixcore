@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/mixproto/mixcore/driver"
+	"github.com/mixproto/mixcore/model"
 )
 
 // DefaultRereadEvery is how often a live session re-reads the console state in
@@ -28,17 +29,31 @@ func (s *Supervisor) rereadTicker(sess driver.Session) (driver.Rereader, <-chan 
 	return rr, t.C, t.Stop
 }
 
-// reread asks the session for one read-only pass, unless the state is not
-// live or a person is holding a fader: a pass can then only end that gesture
-// on a value we already know. It never writes.
+// reread asks the session for one read-only pass while live. Held
+// parameters are left out (a resting finger keeps holdBegin open from
+// touch-down, and a re-read must not end that gesture); every other
+// parameter is still recovered. A session that cannot leave parameters out
+// skips the pass while anything is held. It never writes.
 func (s *Supervisor) reread(rr driver.Rereader) {
 	s.mu.Lock()
-	skip := s.status != StatusLive || len(s.holds.active) > 0
-	s.mu.Unlock()
-	if skip {
-		return
+	live := s.status == StatusLive
+	held := make([]model.ParamRef, 0, len(s.holds.active))
+	for k := range s.holds.active {
+		held = append(held, k.param)
 	}
-	if err := rr.Reread(); err != nil {
+	s.mu.Unlock()
+	var err error
+	switch sel, ok := rr.(driver.SelectiveRereader); {
+	case !live:
+		return
+	case ok:
+		err = sel.RereadExcept(held)
+	case len(held) > 0:
+		return
+	default:
+		err = rr.Reread()
+	}
+	if err != nil {
 		s.cfg.Logger.Debug("console: re-read", "err", err)
 	}
 }

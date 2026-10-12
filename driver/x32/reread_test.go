@@ -176,3 +176,31 @@ func TestProbe_RefusedTargetDoesNotStopTheOthers(t *testing.T) {
 		}
 	})
 }
+
+// Lead decision 2026-10-12: a requested re-read pass starts RereadGap (15 s)
+// after the previous one ended, never back to back, even when requests keep
+// coming (a supervisor ticking faster than a pass lasts: an x32 pass takes
+// over 10 s at 16 reads per second).
+func TestReread_NextPassStartsAGapAfterThePreviousEnded(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t, simx32.Options{})
+		sess := r.connect()
+		r.run(sess)
+		rr := sess.(driver.Rereader)
+		start := time.Now()
+		for time.Since(start) < 2*time.Minute {
+			_ = rr.Reread() // a request every second
+			time.Sleep(time.Second)
+		}
+		addrs := r.drv.Addresses()                                                       // read order
+		first, last := reads(r.sim, addrs[0])[1:], reads(r.sim, addrs[len(addrs)-1])[1:] // [0]: connect
+		if len(first) < 3 || len(last) < len(first)-1 {
+			t.Fatalf("%d passes started, %d ended", len(first), len(last))
+		}
+		for i := 1; i < len(first); i++ {
+			if gap := first[i].At.Sub(last[i-1].At); gap < DefaultTiming.RereadGap || gap > DefaultTiming.RereadGap+2*DefaultTiming.PingEvery {
+				t.Errorf("pass %d started %v after pass %d ended, want %v", i+1, gap, i, DefaultTiming.RereadGap)
+			}
+		}
+	})
+}

@@ -25,6 +25,7 @@ import (
 
 	"github.com/mixproto/mixcore/driver"
 	"github.com/mixproto/mixcore/driver/internal/xosc"
+	"github.com/mixproto/mixcore/model"
 )
 
 // Family is the family name of this driver.
@@ -59,6 +60,19 @@ func New(cfg Config) *Driver {
 	return &Driver{Driver: xosc.New(profile, cfg.Timing)}
 }
 
+// headamps (x32.md X32-F70..F76). Local 000..031: writable, phantom read,
+// probed (16 answer on an X32 COMPACT). AES50 A and B: read-only until
+// hardware item 21 shows what a write to a box this console may not own
+// does (lead decision 2026-10-12), and read only while a channel's /-ha
+// index points at them (X32-F74). Phantom is never written (X32-F73).
+var headamps = []xosc.HeadampGroup{
+	{Bank: model.BankLocal, First: 1, Count: localHeadamps, Role: xosc.HeadampUnit, Writable: true, Phantom: true, Law: gainLaw},
+	{Bank: model.BankAES50A, First: localHeadamps + 1, Count: aes50Headamps, Role: xosc.HeadampPatched, Law: gainLaw},
+	{Bank: model.BankAES50B, First: localHeadamps + aes50Headamps + 1, Count: aes50Headamps, Role: xosc.HeadampPatched, Law: gainLaw},
+}
+
+var gainLaw = xosc.HeadampLaw{MinDB: gainMinDB, StepDB: gainStepDB, Steps: gainSteps}
+
 // profile is the X32 family for the shared engine.
 var profile = xosc.Profile{
 	Family:         Family,
@@ -67,6 +81,7 @@ var profile = xosc.Profile{
 	Layout: xosc.Layout{
 		Inputs: inputChannels, RequiredInputs: inputChannels, MainRoot: "/main/st", MainMuteGroups: true,
 		MuteGroups: muteGroupCount, DCAs: dcaCount,
+		Headamps: headamps, HeadampAddr: headampFormat, HeadampWireOffset: headampWireOff, HeadampIndexes: inputChannels,
 	},
 	Meters: meterCodec{},
 	Markers: []xosc.Marker{

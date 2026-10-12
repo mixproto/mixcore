@@ -6,7 +6,6 @@ package console
 
 import (
 	"errors"
-	"fmt"
 	"maps"
 
 	"github.com/mixproto/mixcore/driver"
@@ -101,32 +100,6 @@ func (h *holds) cancelAll(reason string) {
 func (h *holds) isEnded(p model.ParamRef, client string) bool {
 	_, ok := h.ended[holdKey{param: p, client: client}]
 	return ok
-}
-
-// Hold starts (held = true) or ends (false) a person's gesture on a fader.
-// Both clear an ended gesture of that client. Holding never writes. A hold can
-// only begin while live (ErrStale otherwise), so no finger held through an
-// outage writes after the reconnect; ending a hold always works.
-func (s *Supervisor) Hold(p model.ParamRef, origin driver.Origin, held bool) error {
-	if !origin.MayWrite() {
-		return driver.ErrNotUserOrigin
-	}
-	if p.Field != model.FieldFader {
-		return fmt.Errorf("console: hold %s: %w", p, driver.ErrUnsupported)
-	}
-	k := holdKey{param: p, client: origin.ClientID}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if held && (s.status != StatusLive || s.limited != "") {
-		return driver.ErrStale
-	}
-	delete(s.holds.ended, k)
-	if held {
-		s.holds.active[k] = struct{}{}
-	} else {
-		delete(s.holds.active, k)
-	}
-	return nil
 }
 
 // endHeldOnReplaceLocked treats a full state replacement (scene recall) as an

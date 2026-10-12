@@ -24,12 +24,15 @@ type fakeDriver struct {
 	down      bool
 	flaky     bool // sessions are lost right after connect
 	snapshot  model.State
+	caps      model.Capabilities
+	law       driver.FaderLaw
+	selective bool // sessions implement driver.SelectiveRereader
 	sessions  []*fakeSession
 	connectAt []time.Time
 }
 
 func (d *fakeDriver) Family() driver.Family     { return "fake" }
-func (d *fakeDriver) FaderLaw() driver.FaderLaw { return nil }
+func (d *fakeDriver) FaderLaw() driver.FaderLaw { return d.law }
 
 func (d *fakeDriver) Connect(ctx context.Context, _ driver.Endpoint, _ driver.Options) (driver.Session, error) {
 	d.mu.Lock()
@@ -38,10 +41,13 @@ func (d *fakeDriver) Connect(ctx context.Context, _ driver.Endpoint, _ driver.Op
 	if d.down {
 		return nil, errRefused
 	}
-	s := &fakeSession{snapshot: d.snapshot, lost: make(chan struct{}), push: make(chan driver.Event, 16)}
+	s := &fakeSession{snapshot: d.snapshot, caps: d.caps, lost: make(chan struct{}), push: make(chan driver.Event, 16)}
 	d.sessions = append(d.sessions, s)
 	if d.flaky {
 		s.lose()
+	}
+	if d.selective {
+		return selectiveSession{s}, nil
 	}
 	return s, nil
 }
@@ -75,6 +81,7 @@ func (d *fakeDriver) attempts() []time.Time {
 
 type fakeSession struct {
 	snapshot model.State
+	caps     model.Capabilities
 	lost     chan struct{}
 	lostOnce sync.Once
 	push     chan driver.Event
@@ -84,10 +91,29 @@ type fakeSession struct {
 	closed  bool
 	meters  driver.MeterRequest
 	rereads int
+	skips   [][]model.ParamRef // RereadExcept calls (selective sessions)
+	failing error              // Apply returns it (a send that failed)
+}
+
+// failApplies makes Apply return err (nil: succeed again).
+func (s *fakeSession) failApplies(err error) {
+	s.mu.Lock()
+	s.failing = err
+	s.mu.Unlock()
+}
+
+// selectiveSession is a fakeSession that can leave held parameters out of a re-read.
+type selectiveSession struct{ *fakeSession }
+
+func (s selectiveSession) RereadExcept(skip []model.ParamRef) error {
+	s.mu.Lock()
+	s.skips = append(s.skips, skip)
+	s.mu.Unlock()
+	return s.Reread()
 }
 
 func (s *fakeSession) Identity() driver.Identity        { return driver.Identity{Name: "fake"} }
-func (s *fakeSession) Capabilities() model.Capabilities { return model.Capabilities{} }
+func (s *fakeSession) Capabilities() model.Capabilities { return s.caps }
 func (s *fakeSession) Snapshot() model.State            { return s.snapshot }
 
 func (s *fakeSession) Run(ctx context.Context, events chan<- driver.Event) error {
@@ -115,6 +141,9 @@ func (s *fakeSession) Apply(cmd driver.Command) error {
 	defer s.mu.Unlock()
 	if s.closed {
 		return driver.ErrClosed
+	}
+	if s.failing != nil {
+		return s.failing
 	}
 	s.applied = append(s.applied, cmd)
 	return nil

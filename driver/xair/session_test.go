@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -39,9 +40,9 @@ func TestConnect_ReadsFullStateAndSendsNoWrites(t *testing.T) {
 		if id.Model != "MR18V2" || id.Name != "XR18-1D-DA-B4" || id.Firmware != "1.22" || id.Address != mixerIP {
 			t.Fatalf("identity %+v", id)
 		}
-		want := model.Capabilities{InputCount: 16, HasMain: true, MuteGroups: 4, DCAs: 4, MainMuteGroups: false,
+		want := model.Capabilities{Headamps: wantHeadamps(16), InputCount: 16, HasMain: true, MuteGroups: 4, DCAs: 4, MainMuteGroups: false,
 			InputMeters: true, EchoesOwnWrites: true, MaxPushClients: 8}
-		if c := sess.Capabilities(); c != want {
+		if c := sess.Capabilities(); !reflect.DeepEqual(c, want) {
 			t.Fatalf("capabilities %+v, want %+v", c, want)
 		}
 		st := sess.Snapshot()
@@ -95,8 +96,8 @@ func TestMain_HasNoMuteGroupMembership(t *testing.T) {
 				t.Errorf("%v -> %s, want %s", addr, got, want)
 			}
 		}
-		if n := len(r.drv.Addresses()); n != 16*5+2+4+4 {
-			t.Fatalf("%d addresses; xair.md section 12 estimates 90 reads for the v1 table", n)
+		if n := len(r.drv.Addresses()); n != 16*5+2+4+4+16*2+1 {
+			t.Fatalf("%d addresses; 90 reads of the v1 table (xair.md section 12) plus 16 mic gains and phantoms and the aux gain", n)
 		}
 	})
 }
@@ -257,4 +258,18 @@ func TestMeters_Bank1PublishedInDBFS(t *testing.T) {
 			t.Fatal("meter requests are not writes")
 		}
 	})
+}
+
+// wantHeadamps describes mic headamps 1..n (XA-F111, XA-F113) and, with
+// all 16, the read-only aux 17 on the line law (XA-F110, XA-F112).
+func wantHeadamps(n int) []model.HeadampInfo {
+	out := make([]model.HeadampInfo, n)
+	for i := range out {
+		out[i] = model.HeadampInfo{Index: i + 1, Bank: model.BankLocal, Number: i + 1, MinDB: -12, MaxDB: 60, WriteMaxDB: 59.5, StepDB: 0.5,
+			Writable: true, HasPhantom: true}
+	}
+	if n == 16 {
+		out = append(out, model.HeadampInfo{Index: 17, Bank: model.BankAux, Number: 1, MinDB: -12, MaxDB: 20, WriteMaxDB: 19.5, StepDB: 0.5})
+	}
+	return out
 }

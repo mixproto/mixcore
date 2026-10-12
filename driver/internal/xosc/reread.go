@@ -20,7 +20,11 @@ const rereadBatch = ReadWindow
 // rereadPass is the owner-goroutine state of a background re-read.
 type rereadPass struct {
 	active bool
-	next   int // next parameter index to read
+	// wanted: a requested pass waits for RereadGap after endedAt.
+	wanted  bool
+	endedAt time.Time
+	skip    map[int]bool // parameters left out of the current pass (held)
+	next    int          // next parameter index to read
 	// asked holds the parameters read in the current step. The value is true
 	// once the read is superseded (see markTouched).
 	asked map[int]bool
@@ -30,12 +34,45 @@ var _ driver.Rereader = (*session)(nil)
 
 // Reread implements driver.Rereader: it asks the owner goroutine for one
 // read-only pass over every parameter and returns at once.
-func (s *session) Reread() error {
+func (s *session) Reread() error { return s.RereadExcept(nil) }
+
+var _ driver.SelectiveRereader = (*session)(nil)
+
+// RereadExcept implements driver.SelectiveRereader: one pass that leaves
+// out the given parameters (held by a person). It returns at once.
+func (s *session) RereadExcept(skip []model.ParamRef) error {
 	if s.stopped.Load() {
 		return driver.ErrClosed
 	}
+	set := map[int]bool{}
+	for _, p := range skip {
+		if _, ok := s.params.byRef(p); ok {
+			set[s.params.index(p)] = true
+		}
+	}
+	s.mu.Lock()
+	s.rrSkip = set
+	s.mu.Unlock()
 	signal(s.rereadReady)
 	return nil
+}
+
+// requestReread starts a requested pass, or defers it while a pass runs
+// or until RereadGap after the previous pass ended (onTick starts it).
+func (s *session) requestReread(now time.Time) {
+	if s.rr.active || (!s.rr.endedAt.IsZero() && now.Sub(s.rr.endedAt) < s.timing.RereadGap) {
+		s.rr.wanted = true
+		return
+	}
+	s.startReread(now)
+}
+
+// rereadDue starts a deferred pass once the gap after the last one passed.
+func (s *session) rereadDue(now time.Time) {
+	if s.rr.wanted && !s.rr.active && now.Sub(s.rr.endedAt) >= s.timing.RereadGap {
+		s.rr.wanted = false
+		s.startReread(now)
+	}
 }
 
 // startReread begins a pass unless one is running.
@@ -44,7 +81,11 @@ func (s *session) startReread(now time.Time) {
 		return
 	}
 	s.rr.active, s.rr.next = true, 0
+	s.mu.Lock()
+	s.rr.skip, s.rrSkip = s.rrSkip, nil
+	s.mu.Unlock()
 	s.passStarted()
+	s.live.lastStep = now // this is the pass's first step: the next one waits PingEvery, or its replies would be dropped
 	s.rereadStep(now)
 }
 
@@ -64,7 +105,7 @@ func (s *session) rereadStep(now time.Time) {
 	}
 	for sent := 0; sent < rereadBatch && s.rr.next < len(s.params.all); s.rr.next++ {
 		idx := s.rr.next
-		if s.writtenRecently(idx, now) || s.isAbsent(s.params.all[idx]) {
+		if s.writtenRecently(idx, now) || s.isAbsent(s.params.all[idx]) || s.rr.skip[idx] {
 			continue // a gesture is moving it (its echo keeps us in sync), or the console lacks it
 		}
 		s.sendRead(s.params.all[idx].addr)
@@ -72,7 +113,7 @@ func (s *session) rereadStep(now time.Time) {
 		sent++
 	}
 	if s.rr.next >= len(s.params.all) {
-		s.rr.active, s.lim.evaluate = false, true
+		s.rr.active, s.lim.evaluate, s.rr.endedAt = false, true, now
 	}
 }
 
@@ -107,19 +148,27 @@ func (s *session) markTouched(idx int) {
 // rereadReply handles a packet from the write socket, which can only be the
 // reply to a re-read. It reports a change only for an outstanding, untouched
 // read whose value differs from the newest one seen: the push of that change
-// was lost, so it is a console change.
+// was lost, so it is a console change. A Gain we wrote since its last
+// re-read is reported even unchanged, flagged Authoritative: whatever was
+// pushed meanwhile, this is the console's value now.
 func (s *session) rereadReply(idx int, v model.Value, at time.Time) (driver.ParamChanged, bool) {
 	touched, ok := s.rr.asked[idx]
 	if !ok || touched {
 		return driver.ParamChanged{}, false
 	}
 	delete(s.rr.asked, idx)
-	if idx < len(s.known) && s.known[idx].Equal(v) {
+	wrote := s.unconfirmed[idx]
+	delete(s.unconfirmed, idx)
+	unchanged := idx < len(s.known) && s.known[idx].Equal(v)
+	if unchanged && !wrote {
 		return driver.ParamChanged{}, false
 	}
 	s.remember(idx, v)
-	s.lim.passFound = true // the push of this change never reached us
-	return driver.ParamChanged{Param: s.params.all[idx].ref, Value: v, Origin: driver.Origin{Kind: driver.OriginConsole}, At: at}, true
+	if !unchanged {
+		s.lim.passFound = true // the push of this change never reached us
+	}
+	return driver.ParamChanged{Param: s.params.all[idx].ref, Value: v, Origin: driver.Origin{Kind: driver.OriginConsole}, At: at,
+		Authoritative: wrote}, true
 }
 
 // remember records the newest value seen for idx.

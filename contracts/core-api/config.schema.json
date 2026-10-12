@@ -1,23 +1,109 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/config.schema.json",
-  "title": "mixcore core API v0.2: Start(configJSON)",
+  "title": "mixcore core API v0.3: Start(configJSON)",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "family", "host"],
+  "required": [
+    "version",
+    "family",
+    "host"
+  ],
   "properties": {
-    "version": { "$ref": "common.schema.json#/$defs/version" },
-    "family": { "enum": ["x32", "xair"], "description": "x32: X32/M32 family (docs/protocols/x32.md). xair (v0.2): X Air / M Air family, XR12, XR16, XR18, X18, MR12, MR18 including V2 units (docs/protocols/xair.md)." },
-    "host": { "type": "string", "description": "Console IP address (IPv4 or IPv6 literal, no hostname).", "minLength": 2, "maxLength": 64 },
-    "port": { "type": "integer", "minimum": 1, "maximum": 65535, "description": "Omitted: the family default (x32: 10023, xair: 10024)." },
+    "version": {
+      "$ref": "common.schema.json#/$defs/version"
+    },
+    "family": {
+      "enum": [
+        "x32",
+        "xair"
+      ],
+      "description": "x32: X32/M32 family (docs/protocols/x32.md). xair (v0.2): X Air / M Air family, XR12, XR16, XR18, X18, MR12, MR18 including V2 units (docs/protocols/xair.md)."
+    },
+    "host": {
+      "type": "string",
+      "description": "Console IP address (IPv4 or IPv6 literal, no hostname).",
+      "minLength": 2,
+      "maxLength": 64
+    },
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535,
+      "description": "Omitted: the family default (x32: 10023, xair: 10024)."
+    },
     "meters": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "inputs": { "type": "boolean" } }
+      "properties": {
+        "inputs": {
+          "type": "boolean"
+        }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "v0.3, phone safety (docs/design/phone-safety.md). Defaults for every client of this engine; setSlipGuard and setShowMode change them at run time without a write.",
+      "properties": {
+        "slipGuard": {
+          "type": "boolean",
+          "default": false,
+          "description": "SR-26 'Stop faders every 6 dB' for this device class: on for phones, off for tablet and desktop. Show mode never changes it."
+        },
+        "showMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "SR-27: the UI restores the per-console setting it stored on the device."
+        },
+        "monitorCeiling": {
+          "description": "SR-28, CR-25: this engine is a monitor seat. Every fader write is capped at the engineer's latest value + headroomDB (0..10, default 6), never below that value; sends are not modelled yet; 'off' or absent: no ceiling; null is refused (ERR_INVALID_CONFIG). The hub will carry it per client in the pairing token.",
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "headroomDB": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 10,
+                  "default": 6
+                }
+              }
+            },
+            {
+              "const": "off"
+            }
+          ]
+        }
+      }
     }
   },
   "examples": [
-    { "version": 0, "family": "x32", "host": "192.168.1.62", "meters": { "inputs": true } },
-    { "version": 0, "family": "xair", "host": "192.168.1.1", "meters": { "inputs": true } }
+    {
+      "version": 0,
+      "family": "x32",
+      "host": "192.168.1.62",
+      "meters": {
+        "inputs": true
+      }
+    },
+    {
+      "version": 0,
+      "family": "xair",
+      "host": "192.168.1.1",
+      "meters": {
+        "inputs": true
+      }
+    },
+    {
+      "version": 0,
+      "family": "xair",
+      "host": "192.168.1.1",
+      "safety": {
+        "slipGuard": true,
+        "showMode": false
+      }
+    }
   ]
 }

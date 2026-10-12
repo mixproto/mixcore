@@ -26,9 +26,19 @@ const (
 	cmdHoldBegin    = "holdBegin"
 	cmdHoldEnd      = "holdEnd"
 	cmdToggle       = "toggle"
+	cmdOpenWall     = "openWall"     // v0.3
+	cmdUnlock       = "unlock"       // v0.3
+	cmdRelock       = "relock"       // v0.3
+	cmdSlipGuard    = "setSlipGuard" // v0.3
+	cmdShowMode     = "setShowMode"  // v0.3
+	ceilingOff      = "off"
+	jsonNull        = "null"
+	maxHeadroomDB   = 10.0
 	fieldEffective  = "effectiveMute"
 	maxGroupNumber  = 32 // largest group number a membership list may name
 	maxClientIDLen  = 128
+	maxTrackPt      = 10000 // command.schema.json trackLengthPt maximum
+	minTrackPt      = 50    // and minimum: no phone control is shorter (review pass 4, MEDIUM 3)
 )
 
 var errVersion = errors.New("unsupported contract version")
@@ -41,6 +51,14 @@ type configJSON struct {
 	Meters  struct {
 		Inputs bool `json:"inputs"`
 	} `json:"meters"`
+	Safety safetyJSON `json:"safety"`
+}
+
+// safetyJSON is config.schema.json safety (v0.3).
+type safetyJSON struct {
+	SlipGuard      bool            `json:"slipGuard"`
+	ShowMode       bool            `json:"showMode"`
+	MonitorCeiling json.RawMessage `json:"monitorCeiling,omitempty"`
 }
 
 type stripJSON struct {
@@ -60,19 +78,27 @@ type originJSON struct {
 }
 
 type commandJSON struct {
-	Version *int            `json:"version"`
-	Type    string          `json:"type"`
-	Param   paramJSON       `json:"param"`
-	Value   json.RawMessage `json:"value,omitempty"`
-	Origin  originJSON      `json:"origin"`
+	Version   *int            `json:"version"`
+	Type      string          `json:"type"`
+	Param     *paramJSON      `json:"param"`
+	Value     json.RawMessage `json:"value,omitempty"`
+	Origin    originJSON      `json:"origin"`
+	Typed     *bool           `json:"typed"`     // v0.3, set only
+	Confirmed *bool           `json:"confirmed"` // v0.3, set only
+	Undo      *bool           `json:"undo"`      // v0.3, set only
+	// TrackLengthPt: v0.3, holdBegin only, optional (review pass 3, MEDIUM 2).
+	TrackLengthPt *float64 `json:"trackLengthPt"`
 }
 
 // command is a parsed, validated Apply input.
 type command struct {
-	kind   string
-	param  model.ParamRef
-	value  model.Value
-	origin driver.Origin
+	kind                   string
+	param                  model.ParamRef
+	value                  model.Value
+	origin                 driver.Origin
+	typed, confirmed, undo bool    // set only (v0.3)
+	on                     bool    // setSlipGuard, setShowMode
+	trackPt                float64 // holdBegin: track length in pt, 0 = not given
 }
 
 func decodeStrict(data string, v any) error {
@@ -107,7 +133,39 @@ func parseConfig(data string) (configJSON, error) {
 	if c.Port < 0 || c.Port > math.MaxUint16 {
 		return c, codeErr(CodeInvalidConfig, fmt.Errorf("port %d", c.Port))
 	}
+	if _, err := c.Safety.monitor(); err != nil {
+		return c, codeErr(CodeInvalidConfig, err)
+	}
 	return c, nil
+}
+
+// monitor parses monitorCeiling: absent or "off" -> nil; {headroomDB} with
+// a default of 6 dB, 0..10 (SR-28). null is refused: it would otherwise
+// decode as {} and switch the ceiling on.
+func (s safetyJSON) monitor() (*console.MonitorCeiling, error) {
+	raw := bytes.TrimSpace(s.MonitorCeiling)
+	if len(raw) == 0 || string(raw) == `"`+ceilingOff+`"` {
+		return nil, nil
+	}
+	if string(raw) == jsonNull {
+		return nil, errors.New(`monitorCeiling: null; use "off" or {headroomDB}`)
+	}
+	var m struct {
+		HeadroomDB *float64 `json:"headroomDB"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&m); err != nil {
+		return nil, fmt.Errorf("monitorCeiling: %w", err)
+	}
+	h := 6.0 // SR-28 default headroom
+	if m.HeadroomDB != nil {
+		h = *m.HeadroomDB
+	}
+	if math.IsNaN(h) || h < 0 || h > maxHeadroomDB {
+		return nil, fmt.Errorf("monitorCeiling headroomDB %v outside 0..%v", h, maxHeadroomDB)
+	}
+	return &console.MonitorCeiling{HeadroomDB: h}, nil
 }
 
 func parseCommand(data string) (command, error) {
@@ -118,26 +176,58 @@ func parseCommand(data string) (command, error) {
 	if c.Version == nil || *c.Version != contractVersion {
 		return command{}, codeErr(CodeInvalidCommand, errVersion)
 	}
-	if c.Type != cmdSet && c.Type != cmdHoldBegin && c.Type != cmdHoldEnd && c.Type != cmdToggle {
-		return command{}, codeErr(CodeInvalidCommand, fmt.Errorf("type %q", c.Type))
-	}
-	p, err := parseParam(c.Param)
-	if err != nil {
-		return command{}, err
-	}
 	o, err := parseOrigin(c.Origin)
 	if err != nil {
 		return command{}, err
 	}
-	cmd := command{kind: c.Type, param: p, origin: o}
+	cmd := command{kind: c.Type, origin: o}
+	if (c.Typed != nil || c.Confirmed != nil || c.Undo != nil) && c.Type != cmdSet {
+		return command{}, codeErr(CodeInvalidCommand, errors.New("typed, confirmed and undo go with set only"))
+	}
+	if c.TrackLengthPt != nil {
+		if c.Type != cmdHoldBegin || !(*c.TrackLengthPt >= minTrackPt && *c.TrackLengthPt <= maxTrackPt) {
+			return command{}, codeErr(CodeInvalidCommand, fmt.Errorf("trackLengthPt goes with holdBegin, %v <= pt <= %v", minTrackPt, maxTrackPt))
+		}
+		cmd.trackPt = *c.TrackLengthPt
+	}
+	switch c.Type {
+	case cmdSlipGuard, cmdShowMode:
+		return parseSetting(c, cmd)
+	case cmdSet, cmdHoldBegin, cmdHoldEnd, cmdToggle, cmdOpenWall, cmdUnlock, cmdRelock:
+	default:
+		return command{}, codeErr(CodeInvalidCommand, fmt.Errorf("type %q", c.Type))
+	}
+	if c.Param == nil {
+		return command{}, codeErr(CodeInvalidCommand, errors.New("param is required"))
+	}
+	if cmd.param, err = parseParam(*c.Param); err != nil {
+		return command{}, err
+	}
 	if c.Type != cmdSet {
 		if len(c.Value) != 0 {
-			return command{}, codeErr(CodeInvalidCommand, errors.New("hold and toggle commands carry no value"))
+			return command{}, codeErr(CodeInvalidCommand, errors.New("only set and settings carry a value"))
 		}
 		return cmd, nil
 	}
-	if cmd.value, err = parseValue(p.Field, c.Value); err != nil {
+	cmd.typed, cmd.confirmed, cmd.undo = isTrue(c.Typed), isTrue(c.Confirmed), isTrue(c.Undo)
+	if (cmd.typed || cmd.confirmed) && o.Kind != driver.OriginGesture {
+		return command{}, codeErr(CodeInvalidCommand, errors.New("typed and confirmed need origin gesture (SR-31 bounds macros)"))
+	}
+	if cmd.value, err = parseValue(cmd.param.Field, c.Value); err != nil {
 		return command{}, err
+	}
+	return cmd, nil
+}
+
+func isTrue(b *bool) bool { return b != nil && *b }
+
+// parseSetting parses setSlipGuard / setShowMode: a boolean value, no param.
+func parseSetting(c commandJSON, cmd command) (command, error) {
+	if c.Param != nil {
+		return command{}, codeErr(CodeInvalidCommand, errors.New("settings carry no param"))
+	}
+	if err := json.Unmarshal(c.Value, &cmd.on); err != nil || len(c.Value) == 0 {
+		return command{}, codeErr(CodeInvalidCommand, fmt.Errorf("%s needs a boolean value", c.Type))
 	}
 	return cmd, nil
 }
@@ -176,9 +266,14 @@ func parseValue(f model.Field, raw json.RawMessage) (model.Value, error) {
 		err error
 	)
 	switch f {
-	case model.FieldFader:
+	case model.FieldFader, model.FieldGain:
 		v, err = parseLevel(raw)
-	case model.FieldMute:
+	case model.FieldHeadamp:
+		var n int
+		if err = json.Unmarshal(raw, &n); err == nil {
+			v, err = model.Index(n)
+		}
+	case model.FieldMute, model.FieldPhantom:
 		var b bool
 		if err = json.Unmarshal(raw, &b); err == nil {
 			v = model.Bool(b)
@@ -217,6 +312,14 @@ func parseLevel(raw json.RawMessage) (model.Value, error) {
 	return model.Level(db)
 }
 
+// indexJSON renders a strip index; 0 (none) is null.
+func indexJSON(n int) any {
+	if n == 0 {
+		return nil
+	}
+	return n
+}
+
 // levelJSON renders a level for JSON, which has no infinity.
 func levelJSON(db float64) any {
 	if math.IsInf(db, -1) {
@@ -234,6 +337,9 @@ func valueJSON(v model.Value) any {
 	}
 	if m, ok := v.Mask(); ok {
 		return model.MaskMembers(m)
+	}
+	if n, ok := v.Index(); ok {
+		return indexJSON(n)
 	}
 	s, _ := v.Text()
 	return s
@@ -257,6 +363,8 @@ type stripStateJSON struct {
 	MuteGroups    *[]int             `json:"muteGroups,omitempty"`
 	DCAs          *[]int             `json:"dcas,omitempty"`
 	EffectiveMute *effectiveMuteJSON `json:"effectiveMute,omitempty"`
+	// v0.3, x32 inputs: the headamp feeding the strip, null when none.
+	Headamp json.RawMessage `json:"headamp,omitempty"`
 }
 
 type changeJSON struct {
@@ -277,6 +385,7 @@ type eventJSON struct {
 	Confidence       string      `json:"confidence,omitempty"`
 	Signals          []string    `json:"signals,omitempty"`
 	HighlightedScene *int        `json:"highlightedScene,omitempty"`
+	Index            *int        `json:"index,omitempty"`       // v0.3 gainUnlockEnded
 	LoadedScene      *int        `json:"loadedScene,omitempty"` // v0.2
 }
 
@@ -291,9 +400,12 @@ type stateJSON struct {
 	Offline       bool             `json:"offline,omitempty"`
 	Limited       bool             `json:"limited,omitempty"`
 	LimitedReason string           `json:"limitedReason,omitempty"`
+	ShowMode      bool             `json:"showMode,omitempty"`         // v0.3
+	Unlocked      []int            `json:"unlockedHeadamps,omitempty"` // v0.3
 	Console       *consoleJSON     `json:"console,omitempty"`
 	Strips        []stripStateJSON `json:"strips,omitempty"`
 	AbsentInputs  []int            `json:"absentInputs,omitempty"` // v0.2, snapshot only
+	Headamps      []headampJSON    `json:"headamps,omitempty"`     // v0.3, snapshot only
 	MuteGroups    []groupStateJSON `json:"muteGroups,omitempty"`   // v0.1, snapshot only
 	DCAs          []groupStateJSON `json:"dcas,omitempty"`         // v0.1, snapshot only
 	Changes       *[]changeJSON    `json:"changes,omitempty"`      // present (maybe empty) in every diff
@@ -303,8 +415,11 @@ type stateJSON struct {
 // encodeUpdate renders a supervisor update as a state message with sequence seq.
 func encodeUpdate(u console.Update, seq uint64, full bool) ([]byte, error) {
 	out := stateJSON{Version: contractVersion, Seq: seq, Status: u.Status.String(), Reason: u.Reason,
-		Events:  append(eventsJSON(u.Events), sceneEventsJSON(u.Scenes)...),
-		Offline: u.Offline, Limited: u.Limited, LimitedReason: u.LimitedReason}
+		Events:  append(append(eventsJSON(u.Events), sceneEventsJSON(u.Scenes)...), unlockEventsJSON(u.UnlockEnded)...),
+		Offline: u.Offline, Limited: u.Limited, LimitedReason: u.LimitedReason, ShowMode: u.ShowMode}
+	if u.ShowMode {
+		out.Unlocked = u.Unlocked
+	}
 	if !u.StaleSince.IsZero() {
 		out.StaleSinceMs = u.StaleSince.UnixMilli()
 	}
@@ -323,6 +438,7 @@ func encodeUpdate(u console.Update, seq uint64, full bool) ([]byte, error) {
 	out.Console = &consoleJSON{Address: id.Address, Name: id.Name, Model: id.Model, Firmware: id.Firmware}
 	out.Strips = stripsJSON(u.State, u.Capabilities)
 	out.AbsentInputs = absentInputsJSON(u.Capabilities)
+	out.Headamps = headampsJSON(u.State, u.Capabilities)
 	out.MuteGroups, out.DCAs = groupStatesJSON(u.State.MuteGroups()), groupStatesJSON(u.State.DCAs())
 	return json.Marshal(out)
 }

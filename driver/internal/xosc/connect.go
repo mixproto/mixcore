@@ -63,6 +63,7 @@ func (s *session) capabilities() model.Capabilities {
 	c := model.Capabilities{
 		InputCount: s.inputs, AbsentInputs: l.Inputs - s.inputs, HasMain: true, InputMeters: true,
 		EchoesOwnWrites: true, MaxPushClients: s.prof.MaxPushClients,
+		Headamps: s.headampInfos(), InputHeadamps: l.HeadampIndexes > 0 && !s.absent[featureHeadampIndex],
 	}
 	if !s.absent[featureMuteGroups] {
 		c.MuteGroups = l.MuteGroups
@@ -77,7 +78,8 @@ func (s *session) capabilities() model.Capabilities {
 // isAbsent reports whether p belongs to a feature or an input strip this
 // console did not answer for (never faked).
 func (s *session) isAbsent(p param) bool {
-	return s.absent[p.feature] || p.ref.Strip.Kind == model.StripInput && p.ref.Strip.Index > s.inputs
+	return s.absent[p.feature] || p.ref.Strip.Kind == model.StripInput && p.ref.Strip.Index > s.inputs ||
+		p.headamp != 0 && !s.present.has(p.headamp)
 }
 
 // next waits up to wait for a packet. ok is false on timeout.
@@ -174,6 +176,9 @@ func (s *session) buildState(values []model.Value) (model.State, error) {
 	}
 	l := s.params.layout
 	st = st.WithGroups(groupCount(s.absent[featureMuteGroups], l.MuteGroups), groupCount(s.absent[featureDCAs], l.DCAs))
+	if st, err = st.WithHeadamps(s.stateHeadamps()); err != nil {
+		return model.State{}, err
+	}
 	for i, p := range s.params.all {
 		if s.isAbsent(p) {
 			continue

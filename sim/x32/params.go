@@ -18,6 +18,13 @@ const (
 	dcaGroups     = 8    // X32-F37
 	muteGroupMask = 63   // X32-F36: 6-bit membership bitmap
 	dcaMask       = 255  // X32-F38: 8-bit membership bitmap
+	headamps      = 128  // X32-F70: /headamp/000..127
+	gainSteps     = 144  // X32-F72: k/144, 0.5 dB
+	// gainZero is 0 dB (k = 24), the simulator's initial Gain (a choice).
+	gainZero    = float32(24.0 / 144)
+	haIndexes   = 32  // X32-F74: /-ha/00..31 = ch 01..32 (32..39 aux in not simulated)
+	noHeadamp   = -1  // X32-F74: the source has no headamp
+	maxHeadampN = 127 // X32-F70
 	// Scene marker range: a simulator choice. X32-F61 documents an index of
 	// the cue, scene or snippet lists (0..99), -1 is accepted as "none".
 	minScene = -1
@@ -47,6 +54,13 @@ func newParams() map[string]*oscsim.Value {
 	}
 	for d := 1; d <= dcaGroups; d++ {
 		p[fmt.Sprintf("/dca/%d/on", d)] = oscsim.Switch(1) // X32-F37: 0 = DCA muted
+	}
+	for h := 0; h < headamps; h++ { // X32-F70: three digits, 0-based
+		p[fmt.Sprintf("/headamp/%03d/gain", h)] = oscsim.LevelAt(gainSteps, gainZero) // X32-F71, X32-F72
+		p[fmt.Sprintf("/headamp/%03d/phantom", h)] = oscsim.Switch(0)                 // X32-F73: 1 = on
+	}
+	for ch := 0; ch < haIndexes; ch++ { // default patch (a choice): ch N uses local headamp N
+		p[fmt.Sprintf("/-ha/%02d/index", ch)] = oscsim.IntRange(noHeadamp, maxHeadampN, int32(ch))
 	}
 	p[addrPrepos] = oscsim.IntRange(minScene, maxScene, 0) // X32-F61
 	p[addrUndoTime] = oscsim.Text(nameMaxLen)              // X32-F62

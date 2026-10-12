@@ -81,6 +81,13 @@ func TestABI_StartApplyMetersDiscoverWithCMemory(t *testing.T) {
 	if code := testApply(strings.Replace(cmd, "gesture", "system", 1)); code != 4 {
 		t.Fatalf("MixApply with a system origin = %d, want MIX_ERR_NOT_USER_ORIGIN", code)
 	}
+	if res, code := testGesture(strings.Replace(cmd, "-10", "-12", 1)); code != 0 || !strings.Contains(res, `"state":"free"`) {
+		t.Fatalf("MixGesture = %d, %q", code, res)
+	}
+	typed := `{"version":0,"type":"set","param":{"strip":{"kind":"input","index":1},"field":"fader"},"value":0,"typed":true,"origin":{"kind":"gesture","clientId":"abi","seq":2}}`
+	if res, code := testGesture(typed); code != 15 || res != "" {
+		t.Fatalf("typed raise without confirmed = %d %q, want MIX_ERR_NEEDS_CONFIRM", code, res)
+	}
 
 	waitFor(t, "a meter frame", func() bool { b, _ := testMeterFrame(536); return len(b) == 24+34*4 })
 	if _, n := testMeterFrame(10); n != 24+34*4 {
@@ -101,7 +108,7 @@ func TestABI_StartApplyMetersDiscoverWithCMemory(t *testing.T) {
 	if code := MixRequestSnapshot(); code != 0 {
 		t.Fatalf("MixRequestSnapshot = %d", code)
 	}
-	if n := len(sim.Writes()); n != 1 {
-		t.Fatalf("console received %d writes, want exactly the one gesture", n)
+	if n := len(sim.Writes()); n != 2 {
+		t.Fatalf("console received %d writes, want exactly the two gestures (Apply, Gesture)", n)
 	}
 }

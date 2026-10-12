@@ -30,6 +30,7 @@ const (
 	KindBool                       // on/off
 	KindText                       // UTF-8 text
 	KindMask                       // group membership: bit n-1 set = member of group n
+	KindIndex                      // index of another strip, 0 = none (an input's headamp)
 )
 
 // Value is an immutable engineering-unit value. The zero Value is invalid.
@@ -39,6 +40,7 @@ type Value struct {
 	on   bool
 	text string
 	mask uint32
+	n    int
 }
 
 // Level returns a level in dB. -inf means fully off. NaN and +inf are invalid,
@@ -64,6 +66,14 @@ func Text(s string) (Value, error) {
 // Mask returns a group-membership value: bit n-1 set means member of group n.
 func Mask(m uint32) Value { return Value{kind: KindMask, mask: m} }
 
+// Index returns a strip index value; 0 means none. Negative is invalid.
+func Index(n int) (Value, error) {
+	if n < 0 {
+		return Value{}, fmt.Errorf("index %d: %w", n, ErrInvalidValue)
+	}
+	return Value{kind: KindIndex, n: n}, nil
+}
+
 // Kind returns the value kind (0 for the invalid zero Value).
 func (v Value) Kind() ValueKind { return v.kind }
 
@@ -75,6 +85,9 @@ func (v Value) Bool() (bool, bool) { return v.on, v.kind == KindBool }
 
 // Mask returns the membership bits if v is a mask.
 func (v Value) Mask() (uint32, bool) { return v.mask, v.kind == KindMask }
+
+// Index returns the strip index (0 = none) if v is an index.
+func (v Value) Index() (int, bool) { return v.n, v.kind == KindIndex }
 
 // Text returns the text if v is text.
 func (v Value) Text() (string, bool) { return v.text, v.kind == KindText }
@@ -93,6 +106,8 @@ func (v Value) String() string {
 		return fmt.Sprintf("%q", v.text)
 	case KindMask:
 		return fmt.Sprintf("mask %b", v.mask)
+	case KindIndex:
+		return fmt.Sprintf("index %d", v.n)
 	default:
 		return "<invalid>"
 	}

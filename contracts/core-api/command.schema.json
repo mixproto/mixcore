@@ -1,14 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/command.schema.json",
-  "title": "mixcore core API v0.1: Apply(commandJSON)",
-  "description": "One user gesture. set writes a value; holdBegin/holdEnd mark a fader as held by a finger (no write). Only origin kinds gesture and macro are accepted; console and system are rejected with ERR_NOT_USER_ORIGIN. A set for a fader whose hold was ended by an external change or by losing the console is rejected with ERR_GESTURE_ENDED until the same client sends holdBegin or holdEnd for it. v0.1: toggle (field mute only, no value) reads the console's current value in the core and writes the inverse as an absolute value; it is the way to toggle a mute group or a DCA mute. muteGroups, dcas and effectiveMute cannot be written (ERR_UNSUPPORTED / ERR_INVALID_COMMAND).",
+  "title": "mixcore core API v0.3: Apply(commandJSON) and Gesture(commandJSON)",
+  "description": "One user gesture. set writes a value; holdBegin/holdEnd mark a fader as held by a finger (no write). Only origin kinds gesture and macro are accepted; console and system are rejected with ERR_NOT_USER_ORIGIN. A set for a fader whose hold was ended by an external change or by losing the console is rejected with ERR_GESTURE_ENDED until the same client sends holdBegin or holdEnd for it. v0.1: toggle (field mute only, no value) reads the console's current value in the core and writes the inverse as an absolute value; it is the way to toggle a mute group or a DCA mute. muteGroups, dcas and effectiveMute cannot be written (ERR_UNSUPPORTED / ERR_INVALID_COMMAND). v0.3 (phone safety, docs/design/phone-safety.md): every set inside a hold is a gesture candidate the core clamps to the gesture window (slip guard, Gain caps, monitor ceiling, CR-22); openWall re-opens a slip-guard wall after the UI measured a rest; Gain writes are bounded to 6 dB from the console value (CR-23); typed raises over 6 dB need confirmed (CR-26); show mode locks raising Gain (CR-24). setSlipGuard and setShowMode change settings and never write.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "version",
     "type",
-    "param",
     "origin"
   ],
   "properties": {
@@ -20,8 +19,14 @@
         "set",
         "holdBegin",
         "holdEnd",
-        "toggle"
-      ]
+        "toggle",
+        "openWall",
+        "unlock",
+        "relock",
+        "setSlipGuard",
+        "setShowMode"
+      ],
+      "description": "v0.3 adds: openWall (param, after a 300 ms rest at a slip-guard wall: the next upward move continues from the wall, CR-22; the core checks the 300 ms of stillness itself, candidates within 0.5 dB of fader travel, and keeps the state atWall before that); unlock and relock (param {strip: headamp, field: gain}: the UI measured the 1 s 'Hold to adjust' in show mode / the sheet closed, CR-24); setSlipGuard (value boolean: 'Stop faders every 6 dB' for this origin's clientId, SR-26); setShowMode (value boolean: show mode for this engine, SR-27). None of them writes to the console."
     },
     "param": {
       "$ref": "common.schema.json#/$defs/param"
@@ -31,6 +36,24 @@
     },
     "origin": {
       "$ref": "common.schema.json#/$defs/origin"
+    },
+    "typed": {
+      "type": "boolean",
+      "description": "v0.3, set only: the value was typed on a keypad (or is an undo the user confirmed, SR-31). Typed entry is exempt from gesture windows and from the Gain 6 dB bound, but a raise of more than 6 dB needs confirmed (CR-26). Only with origin kind gesture (a person types); from a macro it is ERR_INVALID_COMMAND, because SR-31 bounds macros."
+    },
+    "confirmed": {
+      "type": "boolean",
+      "description": "v0.3, set only, with typed: the user confirmed the big raise ('Raise ... from -20.0 to -2.0 dB?'). Without it a typed raise of more than 6 dB returns ERR_NEEDS_CONFIRM. Only with origin kind gesture."
+    },
+    "trackLengthPt": {
+      "type": "number",
+      "minimum": 50,
+      "maximum": 10000,
+      "description": "v0.3, holdBegin only, optional: the length of the control's track on screen in pt (Apple) or dp (Android), so the core can check the rest before openWall in the spec's own unit: the finger stays within 9 pt (wall.restSpeed 30 pt/s for wall.dwell 300 ms, phone-safety.md 4.1) for 300 ms, but never more than 2 dB of fader travel: a track length only makes the check stricter. Without it the core allows 2 dB of fader travel. Below 50 pt it is ERR_INVALID_COMMAND. Example: portrait 490, landscape 152 on a 6.1 inch phone."
+    },
+    "undo": {
+      "type": "boolean",
+      "description": "v0.3, set only: this write undoes an earlier entry. In show mode an undo that raises Gain is allowed for 10 s after the relock of the unlock it was made in, only back to a value Gain had before an entry of that unlock (SR-27); it is still bounded to 6 dB unless typed and confirmed (SR-31)."
     }
   },
   "allOf": [
@@ -78,6 +101,24 @@
     },
     {
       "if": {
+        "not": {
+          "properties": {
+            "type": {
+              "const": "holdBegin"
+            }
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "trackLengthPt"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
         "properties": {
           "type": {
             "const": "toggle"
@@ -97,6 +138,138 @@
         "not": {
           "required": [
             "value"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "set",
+              "holdBegin",
+              "holdEnd",
+              "toggle",
+              "openWall",
+              "unlock",
+              "relock"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "param"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "setSlipGuard",
+              "setShowMode"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "value"
+        ],
+        "properties": {
+          "value": {
+            "type": "boolean"
+          }
+        },
+        "not": {
+          "required": [
+            "param"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "unlock",
+              "relock"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "param": {
+            "properties": {
+              "field": {
+                "const": "gain"
+              },
+              "strip": {
+                "properties": {
+                  "kind": {
+                    "const": "headamp"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "not": {
+          "required": [
+            "value"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "openWall"
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "value"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "not": {
+          "properties": {
+            "type": {
+              "const": "set"
+            }
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "typed"
+              ]
+            },
+            {
+              "required": [
+                "confirmed"
+              ]
+            },
+            {
+              "required": [
+                "undo"
+              ]
+            }
           ]
         }
       }
@@ -163,6 +336,7 @@
         },
         "field": "fader"
       },
+      "trackLengthPt": 490,
       "origin": {
         "kind": "gesture",
         "clientId": "ios-1",
@@ -200,6 +374,94 @@
         "kind": "gesture",
         "clientId": "ios-1",
         "seq": 47
+      }
+    },
+    {
+      "version": 0,
+      "type": "set",
+      "param": {
+        "strip": {
+          "kind": "input",
+          "index": 1
+        },
+        "field": "fader"
+      },
+      "value": -2,
+      "typed": true,
+      "confirmed": true,
+      "origin": {
+        "kind": "gesture",
+        "clientId": "ios-1",
+        "seq": 48
+      }
+    },
+    {
+      "version": 0,
+      "type": "openWall",
+      "param": {
+        "strip": {
+          "kind": "input",
+          "index": 1
+        },
+        "field": "fader"
+      },
+      "origin": {
+        "kind": "gesture",
+        "clientId": "ios-1",
+        "seq": 49
+      }
+    },
+    {
+      "version": 0,
+      "type": "set",
+      "param": {
+        "strip": {
+          "kind": "headamp",
+          "index": 3
+        },
+        "field": "gain"
+      },
+      "value": 33.5,
+      "origin": {
+        "kind": "gesture",
+        "clientId": "ios-1",
+        "seq": 50
+      }
+    },
+    {
+      "version": 0,
+      "type": "unlock",
+      "param": {
+        "strip": {
+          "kind": "headamp",
+          "index": 3
+        },
+        "field": "gain"
+      },
+      "origin": {
+        "kind": "gesture",
+        "clientId": "ios-1",
+        "seq": 51
+      }
+    },
+    {
+      "version": 0,
+      "type": "setShowMode",
+      "value": true,
+      "origin": {
+        "kind": "gesture",
+        "clientId": "ios-1",
+        "seq": 52
+      }
+    },
+    {
+      "version": 0,
+      "type": "setSlipGuard",
+      "value": true,
+      "origin": {
+        "kind": "gesture",
+        "clientId": "ios-1",
+        "seq": 53
       }
     }
   ]

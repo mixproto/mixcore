@@ -33,6 +33,7 @@ const (
 	DefaultInputChannels   = 16                    // XA-F71: vendor tables, every model
 	DefaultBuses           = 6                     // XA-F71
 	DefaultNameMaxLen      = 12                    // section 3.2: X32 rule kept until test item 14
+	DefaultMicHeadamps     = 16                    // XA-F73
 )
 
 // Options configure the simulator. Zero values take the documented defaults.
@@ -73,6 +74,11 @@ type Options struct {
 	Buses         int
 	// NameMaxLen: [TO-VERIFY] longest stored strip name (test item 14).
 	NameMaxLen int
+	// MicHeadamps: /headamp/01..NN/gain and /phantom answer (XA-F73: 16 on
+	// 18-channel models, 8 on XR16, 4 on XR12). Default 16. With 16 the
+	// aux /headamp/17/gain answers too (line law, XA-F110, XA-F112); line
+	// inputs of XR16/XR12 are not simulated (numbering unverified).
+	MicHeadamps int
 	// UnknownAddresses are parameters this mixer does not know: reads get no
 	// reply and writes are not applied (XA-F03). A test option.
 	UnknownAddresses []string
@@ -92,6 +98,7 @@ func (o Options) withDefaults() Options {
 	o.InputChannels = min(cmpOr(o.InputChannels, DefaultInputChannels), DefaultInputChannels)
 	o.Buses = min(cmpOr(o.Buses, DefaultBuses), DefaultBuses)
 	o.NameMaxLen = cmpOr(o.NameMaxLen, DefaultNameMaxLen)
+	o.MicHeadamps = min(cmpOr(o.MicHeadamps, DefaultMicHeadamps), DefaultMicHeadamps)
 	if o.Logger == nil {
 		o.Logger = slog.New(slog.DiscardHandler)
 	}

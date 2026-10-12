@@ -30,6 +30,9 @@ const (
 	CodeBusy           = "ERR_BUSY"             // a discovery is already running
 	CodeNetwork        = "ERR_NETWORK"          // no socket could be opened or no probe sent (discovery result)
 	CodeInvalidArg     = "ERR_INVALID_ARGUMENT" // bindings only: NULL pointer or bad length from native code
+	CodeNeedsConfirm   = "ERR_NEEDS_CONFIRM"    // v0.3: typed raise over 6 dB without confirmed (CR-26)
+	CodeShowMode       = "ERR_SHOW_MODE"        // v0.3: locked in show mode (CR-24)
+	CodeGainBound      = "ERR_GAIN_BOUND"       // v0.3: Gain write over the 6 dB bound (CR-23)
 )
 
 // Error carries a stable code for the bindings and the cause for logs.
@@ -65,6 +68,14 @@ func mapError(err error) error {
 		return err
 	case errors.Is(err, console.ErrGestureEnded):
 		return codeErr(CodeGestureEnded, err)
+	case errors.Is(err, console.ErrNeedsConfirm):
+		return codeErr(CodeNeedsConfirm, err)
+	case errors.Is(err, console.ErrShowMode):
+		return codeErr(CodeShowMode, err)
+	case errors.Is(err, console.ErrGainBound):
+		return codeErr(CodeGainBound, err)
+	case errors.Is(err, console.ErrTypedOrigin):
+		return codeErr(CodeInvalidCommand, err)
 	case errors.Is(err, driver.ErrNotUserOrigin):
 		return codeErr(CodeNotUserOrigin, err)
 	case errors.Is(err, driver.ErrStale), errors.Is(err, driver.ErrClosed):

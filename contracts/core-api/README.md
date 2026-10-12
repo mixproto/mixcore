@@ -1,4 +1,4 @@
-# mixcore core API, contract v0.2
+# mixcore core API, contract v0.3
 
 The in-process API that every app uses to drive a console (`api.Engine` in Go; the `mobile` gomobile wrapper and the
 `capi` c-shared wrapper expose the same calls). Structured data crosses the boundary as JSON strings (schemas in this
@@ -38,9 +38,48 @@ Per-family facts the apps need (no field carries them yet):
   the console's own push and only next to a burst of changed values (`loadedScene`; a lone push, e.g. after a save,
   raises nothing); it never loads, saves, names or deletes a snapshot, and no command here can make it do so, so slot 64
   (another app's data, XA-F63) is never touched.
+**v0.3 is backwards compatible with v0.2** (additions only). It moves the phone safety rules of
+`dybyskz-mix/docs/design/phone-safety.md` (SR-21 to SR-31, CR-22 to CR-27) into the core, so Apple, Android and Windows
+behave the same and a UI bug cannot bypass them:
+
+| Area | Addition | Design ref |
+|---|---|---|
+| Gesture window | every `set` inside a hold is a candidate the core clamps: slip guard (6 dB above the start, floor -16 dB, upward only), Gain caps (+3 / -6 dB, never open), monitor ceiling; `openWall` after a rest; new call `Gesture` answers the applied value, `state` and window | CR-22, SR-24, SR-26 |
+| Gain | strip kind `headamp`, fields `gain` and `phantom` (read-only), input field `headamp` (x32); snapshot `headamps` with each headamp's own law, `writable`, `bank` and `number` (x32 and xair); every Gain write bounded to 6 dB from the console value except typed entry, `ERR_GAIN_BOUND` | CR-23, SR-31 |
+| Typed raises | command flags `typed`, `confirmed`; a typed raise over 6 dB without `confirmed` is `ERR_NEEDS_CONFIRM` | CR-26, SR-30 |
+| Show mode | `setShowMode`, `unlock`, `relock`; raising Gain is `ERR_SHOW_MODE` unless unlocked; `showMode`, `unlockedHeadamps`, event `gainUnlockEnded` in state | CR-24, SR-27 |
+| Monitor ceilings | config `safety.monitorCeiling`: faders stop at the engineer's latest value + headroom, never below it; sends not modelled yet | CR-25, SR-28 |
+| Settings | config `safety.slipGuard` and command `setSlipGuard` per client (device class) | SR-26 |
+| Fixtures | `fixtures/gesture-paths.json`: the AC-PS touch paths as data for the core and every UI | CR-27 |
+
 - **Small models**: an XR12 or XR16 that does not answer for an input strip connects with fewer input strips (XA-F72);
   the snapshot lists the missing ones in `absentInputs`. The UI takes the number of strips from the snapshot, never from
   the model name. The first connect of an engine probes the optional strips once; reconnects reuse the answer.
+- **Headamps** (v0.3): Gain lives on the headamp (the physical input), not on the channel. Each snapshot entry carries
+  its own law (`minDB`, `maxDB`, `stepDB`) and `writable`; the core never writes with a law it has not confirmed.
+
+  | Family | Headamps | Index | Law | Writable | Phantom read |
+  |---|---|---|---|---|---|
+  | xair | mic `/headamp/01..16` (8 on XR16, 4 on XR12, probed) | NN | -12..+60 dB, 0.5 dB (k/144) | yes | yes |
+  | xair | aux `/headamp/17`, 18-channel models only | 17 | -12..+20 dB, 0.5 dB (k/64) | no: law unconfirmed (XA-F112) | no |
+  | xair | XR16/XR12 line inputs | - | absent: numbering unverified (XA-F110) | - | - |
+  | x32 | local `/headamp/000..031` (probed) | NNN + 1 | -12..+60 dB, 0.5 dB (k/144) | yes | yes |
+  | x32 | AES50 A `032..079`, B `080..127`, only those a channel's `/-ha` index points at | NNN + 1 | same | no: ownership unknown (X32-F76) | no |
+
+  The wire maximum (`maxDB`, f = 1.0) is read but never written until hardware confirms it (xair.md item 22, x32.md
+  item 17; XS10 avoids it): each entry's `writeMaxDB` is the top a write may reach (+59.5 mic, +19.5 line); a set above
+  it is `ERR_INVALID_VALUE`, and a Gain gesture's cap stops there. Rule (lead decision, review pass 4): if hardware
+  (x32.md item 17, xair.md item 22) shows that a family does not echo Gain writes, that family's Gain becomes read-only
+  (`writable: false`): the in-flight bound would otherwise rest on re-reads alone.
+
+  The index is a model number, never UI text: the UI names a headamp by `bank` and `number` ("Local 1", "AES50 A 05",
+  "Aux"). On x32 an input's `headamp` field says which headamp feeds it (`null`: none, the channel has no Gain); xair
+  does not model it yet, so a UI there names headamps only. **Trim** (x32 `/ch/NN/preamp/trim`, -18..+18 dB) is not
+  modelled and not bounded by the core yet (follow-up; it needs the same Gain rules).
+- **Connect time** (lead decision, 2026-10-12): against the simulator on loopback, status `live` within 2 s at p95 for
+  both families, headamp reads included (`api` test `TestConnectTime_*`, which fails above 3 s to leave CI a margin).
+  The 5 s connect timeout stays the hard failure. Reconnect: all input back within 2 s after the link returns (SR-05),
+  measured by `TestConnectTime_ReconnectLiveWithin2s` behind the `slow` build tag (`make sim-test` runs it).
 
 ## Calls
 
@@ -54,6 +93,7 @@ Per-family facts the apps need (no field carries them yet):
 | `SetStateListener(l)` | `StateListener` with `OnState(stateJSON string)` | | no. The next message is a full snapshot |
 | `RequestSnapshot()` | | | **no**: the next listener message is a full snapshot |
 | `Apply(commandJSON)` | `command.schema.json` | error code | **no**: validates and hands the write to the session goroutine; never waits on the network |
+| `Gesture(commandJSON)` (v0.3) | `command.schema.json` | `gesture-result.schema.json`, or an error code | **no**: the same command and rules as `Apply`; answers what the core applied (value, `free` / `atWall` / `atCap` / `atCeiling` / `locked`, window) so the UI draws it and plays the haptic |
 | `MeterFrame()` | | bytes, `meter-frame.md` | **never blocks**: copies the newest frame under a lock that is never held across I/O |
 | `FaderPosition(db)` | dB (`-inf` allowed) | position 0..1 | **never blocks**: pure function of the family's fader law |
 | `FaderDB(position)` | position 0..1 | dB (`-inf` at 0) | **never blocks**: pure |
@@ -91,14 +131,73 @@ Per-family facts the apps need (no field carries them yet):
    client sends `holdBegin` (new gesture) or `holdEnd` (finger lifted). Going stale, pausing or stopping cancels every
    active hold (`holdCancelled` event): when the status returns to `live`, no write resumes without a new `holdBegin`.
    A scene recall detected at the console (v0.1 event `sceneRecalledAtConsole`) ends every held fader as an external
-   change, whether or not that fader's own update has arrived yet.
+   change, whether or not that fader's own update has arrived yet. A report of the value the state already has (for
+   example the core's re-read of an unchanged Gain) is not a change and never ends a hold.
 5. Echo: a diff caused by the app's own write carries the write's origin (`kind`, `clientId`, `seq`), so the UI can tell
    its own echo from a change made at the desk. A write of another client (another `clientId` through the same engine,
    or a MixLink client) carries that client's origin and is an external change for everyone else's holds.
-6. Background re-read: while live, the core re-reads the console state every 15 s (read-only, paced) to recover a
+6. Background re-read: while live, the core re-reads the console state (read-only, paced at 16 reads per second); the
+   next pass starts 15 s after the previous one ended, so passes never run back to back. It recovers a
    change whose push was lost. Only values that differ from the last one seen reach the listener, as ordinary diffs with
-   origin `console`. A pass is skipped while any fader is held, and parameters with a recent write of ours are not
-   re-read. It never writes.
+   origin `console`. v0.3: parameters that are held (`holdBegin` without `holdEnd`, also a resting finger) and parameters with a
+   recent write of ours are left out of a pass; everything else is still re-read. It never writes.
+
+7. **Gesture window (v0.3, CR-22).** `holdBegin` opens a window for that client and parameter; every `set` of that
+   client on that parameter until `holdEnd` is a candidate the core clamps, so no value ever moves past the window in
+   one write, whatever the UI computed:
+   - **Slip guard** (faders, when `slipGuard` is on for the client, SR-26): the value stops at `max(start, -16) + 6` dB
+     (from `-inf` the first stop is -10 dB); downward is never stopped. After the UI measured a 300 ms rest at the wall it
+     sends `openWall`: accepted only after the finger has been still at the wall for 300 ms (`wall.dwell`, checked in the
+     core). Still means the candidates stay within 9 pt of the track (`wall.restSpeed` 30 pt/s x 300 ms, phone-safety.md
+     4.1) when `holdBegin` carried `trackLengthPt` (50..10000 pt) and that is smaller than 2 dB of fader travel below the
+     wall, else within those 2 dB; a larger move restarts
+     the 300 ms, and earlier the result stays `atWall`. The core re-anchors (the next upward move
+     continues from the wall value, no jump) and sets the next wall 6 dB higher. Show mode never changes it.
+   - **Gain caps** (headamp gain, every client, SR-24): `[start - 6, start + 3]` dB within the range; never opens.
+   - **Monitor ceiling** (`safety.monitorCeiling`, SR-28): every fader write of this engine (channel, bus, main; a
+     musician's `My level` is the bus fader) stops at the engineer's latest value + headroom, and never below that
+     value; it never opens and we never lower a value to meet it. Sends are not in the model yet (no send field in
+     core-api v0.3), so SR-28's "each send" is not enforced: a monitor seat must not get send control until the send
+     field lands with its ceiling (follow-up, same rule).
+   Typed entry (`typed`), steps and nudges outside a hold are not windowed (the ceiling and the Gain bound still apply).
+8. **Gain bound (CR-23, SR-31).** No Gain write moves more than 6 dB from the console's current value, whatever sent it
+   (gesture, stepper, undo, macro, another client through the same core): `ERR_GAIN_BOUND`. Only `typed` (after
+   `confirmed` for a raise over 6 dB) may move further; scene recall happens at the console and is never refused.
+   A Gain value outside the console's range is `ERR_INVALID_VALUE`, never clamped. The bound also holds against every
+   Gain value in flight: each value sent that no console report has matched yet (at most 8 per headamp; a ninth is
+   `ERR_GAIN_BOUND`, but inside a hold the candidate stays at the latest value sent with state `atCap` and no write,
+   never an error mid-drag). Show mode's raise check uses the lowest of the console value and those values. There is no
+   timer, because Gain echo is unverified (X32-F79, XA-F116): a report within half a step of an in-flight value ends
+   that value; any other report only updates the console value; the core's own re-read of a Gain it wrote ends them
+   all; stale, a reconnect, Stop, Pause or a failed send end them too. A set of the console value while other values
+   are in flight is sent, never skipped; a set is skipped (`written: false`) only when it repeats the latest value
+   sent, no report of that parameter arrived since, and less than an echo window (2 s) has passed: a drag held at a cap
+   on a console that does not echo sends the cap once, while a return to an earlier value or the same value after a
+   report is sent.
+9. **Typed raises (CR-26, SR-30).** A `typed` set that raises a fader or Gain by more than 6 dB from the console value
+   returns `ERR_NEEDS_CONFIRM` unless `confirmed`; the UI shows `Raise ... from {from} to {to}?` and resends with
+   `confirmed: true`. Lowering never asks.
+10. **Show mode (CR-24, SR-27).** `setShowMode` writes nothing. While on, raising Gain is `ERR_SHOW_MODE` (lowering stays
+    live, also inside a hold: the window stops at the start with state `locked`). `unlock` (after the UI's 1 s hold)
+    allows raising Gain on that headamp until `relock`, 20 s without a command on it, stale, pause or stop
+    (event `gainUnlockEnded`). For 10 s after the relock an `undo` set may raise Gain on that headamp, but only back
+    to a value Gain had before an entry of that unlock (within half a step of that headamp's law: the start of the hold, else the value in
+    flight, else the console value); any other raise is `ERR_SHOW_MODE`.
+    Show mode survives reconnects; the UI restores it at `Start` from `safety.showMode`. Future gates (no such command
+    exists in the core yet, each gets `ERR_SHOW_MODE` when added): 48 V phantom, polarity, EQ/GEQ `Flat`, `Mute all in
+    this bank`, scene store, overwrite and delete, routing. Scene recall stays live.
+11. **Write origins (open question 46).** The core tells apart: our own writes and their echoes (origin `gesture` /
+    `macro` with the `clientId` of the client that sent them, matched in the driver's echo window) and everything the
+    console reports (`console`: the surface, another app, MIDI, a scene recall, power-on). It cannot tell the surface
+    from another app, nor another Mixhand device connected directly to the console from the surface. So the monitor
+    ceiling's "engineer's latest value" is every value except the writes of a monitor client of this core; with
+    several monitor devices on one bus that are not behind one hub, one device's writes count as the engineer's for
+    the others. The hub must add: a `clientId` per paired device on every write, the role and `monitorCeiling` per
+    client from the pairing token (`SetClientSafety` in Go), and all monitor devices of a bus behind it.
+12. **Scope: one engine.** Client ids, show mode, unlocks and their undo grace, holds and the monitor ceiling live in
+    one engine (one `Start`). The core does not authenticate `clientId`: any caller of the engine may name any id.
+    Until the hub binds each `clientId` to a paired session (hub requirement, ADR-0008), these are per-device rules,
+    not per-person ones; two apps on two devices connected directly to one console each have their own show mode.
 
 ## Error codes
 `Apply`, `Start`, `Stop`, `Pause`, `Resume` and `RequestSnapshot` return an error whose message is exactly one of
@@ -120,12 +219,15 @@ these codes (details go to the log, never to the user):
 | `ERR_BUSY` | `Discover` while a probe is running |
 | `ERR_NETWORK` | discovery result only: no socket could be opened or every probe send was refused (e.g. Local Network access denied) |
 | `ERR_INVALID_ARGUMENT` | C binding only: a NULL pointer or a negative length from native code |
+| `ERR_NEEDS_CONFIRM` | v0.3: a `typed` raise of more than 6 dB without `confirmed` (CR-26); nothing was written |
+| `ERR_SHOW_MODE` | v0.3: show mode locks this write (raising Gain without an unlock, CR-24); nothing was written |
+| `ERR_GAIN_BOUND` | v0.3: a Gain write more than 6 dB from the console value without `typed` (CR-23); nothing was written |
 
 ## Bindings
 
 Both bindings expose the calls above and nothing else; behaviour is identical because both only translate types.
 
-Both bindings are unchanged by v0.2: the family is a string inside the config JSON, the meter frame carries its own `n`.
+Both bindings are unchanged by v0.2: the family is a string inside the config JSON, the meter frame carries its own `n`. v0.3 adds one call, `Gesture`, and three error codes to both.
 
 **gomobile (`mobile/`, `make xcframework`, AAR by the Android build).** One package, one engine per process. Names:
 
@@ -134,8 +236,9 @@ Both bindings are unchanged by v0.2: the family is a string inside the config JS
 | `Start` | `MobileStart(_ configJSON: String?, _ error: NSErrorPointer) -> String` | `Mobile.start(String): String` throws `Exception` |
 | `Stop`, `Pause`, `Resume`, `RequestSnapshot` | `MobileStop(_ error: NSErrorPointer) -> Bool` (same shape) | `Mobile.stop()` throws `Exception` (same shape) |
 | `Apply`, `Discover` | `MobileApply(_ json: String?, _ error: NSErrorPointer) -> Bool` | `Mobile.apply(String)` throws `Exception` |
+| `Gesture` (v0.3) | `MobileGesture(_ json: String?, _ error: NSErrorPointer) -> String` | `Mobile.gesture(String): String` throws `Exception` |
 | `MeterFrame` | `MobileMeterFrame() -> Data?` | `Mobile.meterFrame(): ByteArray` |
-| `ReadMeterFrame` (v0.1) | `MobileReadMeterFrame(_ dst: Data?) -> Int`: pass `buf as Data` where `buf` is one `NSMutableData(length: MobileMeterFrameMaxBytes)` kept for the life of the view; the frame is written into `buf` (a plain Swift `Data`, or `Data(referencing:)`, is copied by the binding and receives nothing) | `Mobile.readMeterFrame(ByteArray): Long`, one `ByteArray(Mobile.MeterFrameMaxBytes.toInt())` reused; the JNI layer copies the bytes back |
+| `ReadMeterFrame` (v0.1) | `MobileReadMeterFrame(_ dst: Data?) -> Int`: pass `buf as Data` where `buf` is one `NSMutableData(length: MobileMeterFrameMaxBytes)` kept for the life of the view; the frame is written into `buf` (a plain Swift `Data`, or `Data(referencing:)`, is copied by the binding and receives nothing). Write the cast **inline in the call**, `MobileReadMeterFrame(buf as Data)`: `let d = buf as Data` followed by `MobileReadMeterFrame(d)` bridges to a copy and the frame never reaches `buf` (Apple review, S2c) | `Mobile.readMeterFrame(ByteArray): Long`, one `ByteArray(Mobile.MeterFrameMaxBytes.toInt())` reused; the JNI layer copies the bytes back |
 | `FaderPosition`, `FaderDB` | `MobileFaderPosition(_ db: Double) -> Double` | `Mobile.faderPosition(Double): Double` |
 | `MeterScale` (v0.1) | `MobileMeterScale() -> String` | `Mobile.meterScale(): String` |
 | `MeterPosition`, `FaderStep`, `MeterRelease` (v0.1) | `MobileMeterPosition(_ dbfs: Double) -> Double`, `MobileFaderStep(_ db: Double, _ deltaDB: Double) -> Double`, `MobileMeterRelease(_ shownDB: Double, _ inputDB: Double, _ elapsedMs: Double) -> Double` | `Mobile.meterPosition(Double): Double`, `Mobile.faderStep(Double, Double): Double`, `Mobile.meterRelease(Double, Double, Double): Double` |
@@ -143,7 +246,7 @@ Both bindings are unchanged by v0.2: the family is a string inside the config JS
 | `SetDiscoveryListener` | `MobileSetDiscoveryListener(_ l: MobileDiscoveryListenerProtocol?)` | `Mobile.setDiscoveryListener(DiscoveryListener)` |
 | `SetLogSink` | `MobileSetLogSink(_ s: MobileLogSinkProtocol?, _ minLevel: Int)` | `Mobile.setLogSink(LogSink, Long)` |
 | `SetSocketBinder` | not used on Apple | `Mobile.setSocketBinder(SocketBinder)`; `bindSocket(fd: Long)` throws to refuse |
-| codes, levels | `MobileErrStale`, ..., `MobileLogInfo`, `MobileMeterFrameMaxBytes` | `Mobile.ErrStale`, ..., `Mobile.LogInfo`, `Mobile.MeterFrameMaxBytes` |
+| codes, levels | `MobileErrStale`, `MobileErrNeedsConfirm`, `MobileErrShowMode`, `MobileErrGainBound` (v0.3), ..., `MobileLogInfo`, `MobileMeterFrameMaxBytes` | `Mobile.ErrStale`, ..., `Mobile.LogInfo`, `Mobile.MeterFrameMaxBytes` |
 
 Swift imports these C-style functions with a trailing `NSErrorPointer`; they do **not** `throw`. On failure the
 `NSError` has domain `go`, code 1 and `localizedDescription` equal to the stable code (`ERR_STALE`, ...). Java/Kotlin

@@ -23,6 +23,17 @@ const (
 	dcaCount = 4
 	// snapshots: /-snap/index is 1..64 (XA-F60).
 	snapshots = 64
+	// micHeadamps: /headamp/01..16 are the mic preamps (XA-F110, XA-F73).
+	micHeadamps = 16
+	// auxHeadamp: /headamp/17, the stereo aux on the 18-channel models (XA-F110).
+	auxHeadamp = 17
+	// Gain laws (XA-F111, XA-F112): dB = -12 + 72 f in 144 steps (mic),
+	// dB = -12 + 32 f in 64 steps (line, aux), both 0.5 dB.
+	gainMinDB     = -12.0
+	gainStepDB    = 0.5
+	micGainSteps  = 144
+	auxGainSteps  = 64
+	headampFormat = "/headamp/%02d" // two digits, 1-based (XA-F110)
 
 	meterBank1    = "/meters/1"    // XA-F53
 	addrSnapIndex = "/-snap/index" // XA-F60, XA-F61: the dashed path every client uses

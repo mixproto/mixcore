@@ -313,3 +313,29 @@ func sourcePorts(r *rig) []string {
 	slices.Sort(out)
 	return out
 }
+
+// driver.SelectiveRereader: a pass leaves out the held parameters and
+// re-reads every other one (a resting finger must not stop the recovery).
+func TestReread_ExceptHeldParameters(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t, simxair.Options{})
+		sess := r.connect()
+		r.run(sess)
+		time.Sleep(time.Millisecond) // after the connect's own reads
+		t0 := time.Now()
+		if err := sess.(driver.SelectiveRereader).RereadExcept([]model.ParamRef{ref(1, model.FieldFader)}); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(10 * time.Second)
+		reads := map[string]int{}
+		for _, e := range r.sim.Log() {
+			if e.Class == simxair.ClassRead && !e.At.Before(t0) {
+				reads[e.Address]++
+			}
+		}
+		if reads["/ch/01/mix/fader"] != 0 || reads["/ch/02/mix/fader"] != 1 || reads["/ch/01/mix/on"] != 1 {
+			t.Fatalf("reads after the call: ch1 fader %d, ch2 fader %d, ch1 on %d",
+				reads["/ch/01/mix/fader"], reads["/ch/02/mix/fader"], reads["/ch/01/mix/on"])
+		}
+	})
+}
