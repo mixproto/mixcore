@@ -270,7 +270,7 @@ rule therefore behaves exactly as with a console; there is no fake UI path.
 |---|---|---|
 | 1 | `StartDemo({"version":0,"family":"xair"})` | returns `{"version":0,"family":"xair","host":"127.0.0.1","port":52113,"name":"Demo"}` |
 | 2 | `Start({"version":0,"family":"xair","host":"127.0.0.1","port":52113,"meters":{"inputs":true}})` | as for any console; the session description and **every state message** carry `"demo": true` |
-| 3 | `Stop()`, then `StopDemo()` | `StopDemo()` alone also stops a session that targets the demo |
+| 3 | `Stop()`, then `StopDemo()` | `StopDemo()` alone also stops a session that targets the demo; like `Stop`, never call it from inside `OnState` |
 
 Rules the core keeps:
 - **Loopback only.** The demo's socket is bound to `127.0.0.1`; the session to it uses sockets bound to `127.0.0.1`
