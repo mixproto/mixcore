@@ -15,6 +15,10 @@
     "version": {
       "$ref": "common.schema.json#/$defs/version"
     },
+    "demo": {
+      "type": "boolean",
+      "description": "Demo mixer: true in every message (snapshot and diff) of a session to the built-in demo mixer (StartDemo). The UI shows the Demo pill and the banner 'Demo mixer: changes go nowhere' (design 6.3) and never offers it as a real console. Everything else (status, gestures, echo, meters, safety rules) behaves as with a console. Absent means a real console."
+    },
     "type": {
       "enum": [
         "snapshot",

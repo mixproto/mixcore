@@ -108,6 +108,8 @@ behave the same and a UI bug cannot bypass them:
 | `MeterPosition(dbfs)` (v0.1) | dBFS (`-inf` allowed) | position 0..1 on the meter scale | **never blocks**: pure |
 | `MeterRelease(shownDB, inputDB, elapsedMs)` (v0.1) | shown and new level in dBFS, ms since the last tick | level to show | **never blocks**: pure (`meter-frame.md`) |
 | `FaderStep(db, deltaDB)` (v0.1) | level (`-inf` allowed), step in dB (+1, -1, +0.1, +5, ...) | next level | **never blocks**: pure. Up from `-inf` gives -60 dB; down from -60 dB or below gives `-inf`; otherwise the level rounded to 0.1 dB plus the step, rounded to 0.1 dB, at most the top of the family's fader law (x32 and xair: +10 dB). A step of 0 or NaN returns the level unchanged |
+| `StartDemo(requestJSON)` (demo) | `demo.schema.json` | `demo-mixer.schema.json`, or an error code | **no**: binds one loopback UDP socket and starts the simulator on goroutines; `ERR_ALREADY_STARTED` while a demo runs, `ERR_NETWORK` if the loopback socket cannot be opened |
+| `StopDemo()` (demo) | | | bounded: stops the session first when it is the demo's, then the simulator; frees the port and joins every demo goroutine. `ERR_NOT_STARTED` when no demo runs |
 
 `FaderPosition`/`FaderDB` use 64-bit floats, which carry `-inf` natively (Swift `-Double.infinity`, Kotlin
 `Double.NEGATIVE_INFINITY`, C# `double.NegativeInfinity`). NaN input gives position 0 / `-inf`.
@@ -220,7 +222,7 @@ these codes (details go to the log, never to the user):
 | `ERR_INTERNAL` | a bug; recovered panic |
 | `ERR_ROLE` | reserved for MixLink roles (not emitted in v0) |
 | `ERR_BUSY` | `Discover` while a probe is running |
-| `ERR_NETWORK` | discovery result only: no socket could be opened or every probe send was refused (e.g. Local Network access denied) |
+| `ERR_NETWORK` | discovery result: no socket could be opened or every probe send was refused (e.g. Local Network access denied); `StartDemo`: the loopback socket could not be opened |
 | `ERR_INVALID_ARGUMENT` | C binding only: a NULL pointer or a negative length from native code |
 | `ERR_NEEDS_CONFIRM` | v0.3: a `typed` raise of more than 6 dB without `confirmed` (CR-26); nothing was written |
 | `ERR_SHOW_MODE` | v0.3: show mode locks this write (raising Gain without an unlock, CR-24); nothing was written |
@@ -256,3 +258,38 @@ Swift imports these C-style functions with a trailing `NSErrorPointer`; they do 
 gets an `Exception` whose `message` is the code. Callback objects are retained by Go until replaced or cleared with nil.
 
 **c-shared (`capi/`, `make capi-check`)**: the C ABI, numeric status codes and memory rules are in `capi.md`.
+
+## Demo mixer (additive; the contract version stays 0)
+
+The welcome screen's `Try the demo mixer` (design `mix-v1.md` 6.1, 6.3) runs the real mixing UI with no console. The core
+starts the family's **console simulator** (`sim/x32`, `sim/xair`, the same test oracles the drivers are tested against)
+inside the app process and the app connects to it with a normal `Start`. Every screen, gesture, echo, meter and safety
+rule therefore behaves exactly as with a console; there is no fake UI path.
+
+| Step | Call | Notes |
+|---|---|---|
+| 1 | `StartDemo({"version":0,"family":"xair"})` | returns `{"version":0,"family":"xair","host":"127.0.0.1","port":52113,"name":"Demo"}` |
+| 2 | `Start({"version":0,"family":"xair","host":"127.0.0.1","port":52113,"meters":{"inputs":true}})` | as for any console; the session description and **every state message** carry `"demo": true` |
+| 3 | `Stop()`, then `StopDemo()` | `StopDemo()` alone also stops a session that targets the demo |
+
+Rules the core keeps:
+- **Loopback only.** The demo's socket is bound to `127.0.0.1`; the session to it uses sockets bound to `127.0.0.1`
+  (without the Android `SocketBinder`, so the demo works with no network at all). Both refuse to send to, and drop
+  packets from, any address that is not loopback.
+- **Never a real console.** `Discover` never lists the demo, even when `127.0.0.1` and its port are probed as a manual
+  host. `demo` is set by the core from the running demo's family, host and port, never by the app; a `Start` to the
+  demo's address with another family is `ERR_INVALID_CONFIG`.
+- **Nothing runs unless started.** No goroutine, socket or timer exists before `StartDemo` or after `StopDemo`.
+- **Content.** Named channels of a small church or club band (Kick, Snare, Hi-Hat, Toms, Bass, Gtr L/R, Keys, Vox 1-3,
+  Pastor mic, Ac Gtr, Playback L/R; x32 adds overheads, choir, host mic, click, talkback, spares), faders and mutes set,
+  mute groups (Drums, Band, Vox, Speech; Speech engaged, so Pastor mic shows `muted by mute group 4`) and DCAs
+  (Drums, Band, Vox, Playback). Meters move like a song at 120 BPM (kick and snare hits, hi-hat eighths, tom fills,
+  sung phrases), input meters pre-fader and Main L/R from the faders, mutes and pans of the mix. xair also seeds
+  colours, pans, bus names and monitor sends (pre-fader), which reach the UI once the model carries them.
+- **Desk changes** (`deskChanges: true`): every 30 s one fader moves by itself (origin `console`), so `Changed at the
+  mixer` and the held-fader rule (README safety rule 4) can be seen. Off by default.
+- **UI copy** comes from the app (`demo.banner`: "Demo mixer: changes go nowhere", pill `Demo`); never show `name`.
+
+Binding names: Swift `MobileStartDemo(_ json: String?, _ error: NSErrorPointer) -> String`,
+`MobileStopDemo(_ error: NSErrorPointer) -> Bool`; Kotlin `Mobile.startDemo(String): String`, `Mobile.stopDemo()` (throw
+`Exception` with the code); C `MixStartDemo` / `MixStopDemo` (`capi.md`).

@@ -14,6 +14,7 @@
       "required": ["host", "port"],
       "properties": { "host": { "type": "string" }, "port": { "type": "integer" } }
     },
-    "faderLaw": { "enum": ["x32", "xair"], "description": "Which law FaderPosition/FaderDB implement. xair (v0.2) is the same four-segment law as x32, -inf..+10 dB (XA-F40), named after its family." }
+    "faderLaw": { "enum": ["x32", "xair"], "description": "Which law FaderPosition/FaderDB implement. xair (v0.2) is the same four-segment law as x32, -inf..+10 dB (XA-F40), named after its family." },
+    "demo": { "type": "boolean", "description": "Demo mixer: true when Start targeted the running demo mixer (StartDemo, demo.schema.json), which the core tells by family, host and port. Absent means a real console." }
   }
 }
