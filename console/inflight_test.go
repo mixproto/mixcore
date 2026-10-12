@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mixproto/mixcore/driver"
+	"github.com/mixproto/mixcore/model"
 )
 
 // Review pass 3, HIGH 1 (lead design): per headamp a set of in-flight
@@ -188,6 +189,25 @@ func TestHold_ReportOfTheSameValueKeepsTheHold(t *testing.T) {
 		pushGain(t, drv, 30, desk, false) // a real desk move still ends it
 		if _, err := sup.Write(set(gain3, lvl(t, 31), gesture)); !errors.Is(err, ErrGestureEnded) {
 			t.Fatalf("after a desk move: %v", err)
+		}
+	})
+}
+
+// Review pass 3, LOW 3: a grab at +60 dB (read from the console, above the
+// writable top +59.5) has its upper cap at the start: holding or pushing
+// up writes nothing, never a step down to +59.5.
+func TestGain_GrabAboveTheWritableTopNeverWritesDown(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		st, _ := stateWith(-6).WithHeadamps([]model.Headamp{{Index: 1}, {Index: 2}, {Index: 3, GainDB: 60}})
+		sup, drv := startSafe(t, SafetyConfig{}, st)
+		w, _ := sup.HoldWindow(gain3, gesture, true)
+		for _, c := range []float64{60, 61, 60} {
+			if r, _ := sup.Write(set(gain3, lvl(t, c), gesture)); r.Written || dbIn(t, r) != 60 {
+				t.Fatalf("candidate %v: applied %v written %v (cap %v)", c, dbIn(t, r), r.Written, w.Window.CapUp)
+			}
+		}
+		if n := len(drv.session(0).writes()); n != 0 || w.Window.CapUp != 60 {
+			t.Fatalf("%d writes, cap %v", n, w.Window.CapUp)
 		}
 	})
 }
