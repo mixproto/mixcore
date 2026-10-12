@@ -74,6 +74,8 @@ func mapError(err error) error {
 		return codeErr(CodeShowMode, err)
 	case errors.Is(err, console.ErrGainBound):
 		return codeErr(CodeGainBound, err)
+	case errors.Is(err, console.ErrTypedOrigin):
+		return codeErr(CodeInvalidCommand, err)
 	case errors.Is(err, driver.ErrNotUserOrigin):
 		return codeErr(CodeNotUserOrigin, err)
 	case errors.Is(err, driver.ErrStale), errors.Is(err, driver.ErrClosed):

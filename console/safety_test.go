@@ -366,3 +366,19 @@ func TestSlipGuard_OpenWallNeedsTheRest(t *testing.T) {
 		}
 	})
 }
+
+// Review MEDIUM 5: only a person types. A macro (or any non-gesture origin)
+// claiming typed would skip the Gain bound SR-31 puts on macros.
+func TestTyped_OnlyFromAGesture(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, drv := startSafe(t, SafetyConfig{}, safetyState(-6))
+		w := set(gain3, lvl(t, 45), macro)
+		w.Typed, w.Confirmed = true, true
+		if _, err := sup.Write(w); !errors.Is(err, ErrTypedOrigin) {
+			t.Fatalf("typed macro: %v", err)
+		}
+		if n := len(drv.session(0).writes()); n != 0 {
+			t.Fatalf("%d writes", n)
+		}
+	})
+}

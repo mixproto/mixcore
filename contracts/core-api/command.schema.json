@@ -39,11 +39,11 @@
     },
     "typed": {
       "type": "boolean",
-      "description": "v0.3, set only: the value was typed on a keypad (or is an undo the user confirmed, SR-31). Typed entry is exempt from gesture windows and from the Gain 6 dB bound, but a raise of more than 6 dB needs confirmed (CR-26)."
+      "description": "v0.3, set only: the value was typed on a keypad (or is an undo the user confirmed, SR-31). Typed entry is exempt from gesture windows and from the Gain 6 dB bound, but a raise of more than 6 dB needs confirmed (CR-26). Only with origin kind gesture (a person types); from a macro it is ERR_INVALID_COMMAND, because SR-31 bounds macros."
     },
     "confirmed": {
       "type": "boolean",
-      "description": "v0.3, set only, with typed: the user confirmed the big raise ('Raise ... from -20.0 to -2.0 dB?'). Without it a typed raise of more than 6 dB returns ERR_NEEDS_CONFIRM."
+      "description": "v0.3, set only, with typed: the user confirmed the big raise ('Raise ... from -20.0 to -2.0 dB?'). Without it a typed raise of more than 6 dB returns ERR_NEEDS_CONFIRM. Only with origin kind gesture."
     },
     "undo": {
       "type": "boolean",

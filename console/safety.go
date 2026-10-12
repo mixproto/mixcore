@@ -21,6 +21,9 @@ var (
 	ErrShowMode = errors.New("console: locked in show mode")
 	// ErrGainBound: a Gain write more than 6 dB from the console value (CR-23).
 	ErrGainBound = errors.New("console: Gain write over the 6 dB bound")
+	// ErrTypedOrigin: only a person types; Typed or Confirmed from another
+	// origin (a macro) would skip the bound SR-31 puts on macros.
+	ErrTypedOrigin = errors.New("console: typed entry needs a gesture origin")
 )
 
 // MonitorCeiling makes a client a monitor seat (SR-28, CR-25): its level

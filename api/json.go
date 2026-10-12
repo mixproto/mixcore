@@ -194,6 +194,9 @@ func parseCommand(data string) (command, error) {
 		return cmd, nil
 	}
 	cmd.typed, cmd.confirmed, cmd.undo = isTrue(c.Typed), isTrue(c.Confirmed), isTrue(c.Undo)
+	if (cmd.typed || cmd.confirmed) && o.Kind != driver.OriginGesture {
+		return command{}, codeErr(CodeInvalidCommand, errors.New("typed and confirmed need origin gesture (SR-31 bounds macros)"))
+	}
 	if cmd.value, err = parseValue(cmd.param.Field, c.Value); err != nil {
 		return command{}, err
 	}

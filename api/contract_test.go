@@ -141,6 +141,9 @@ func FuzzParseCommand(f *testing.F) {
 			}
 			return
 		}
+		if (c.typed || c.confirmed) && c.origin.Kind != driver.OriginGesture {
+			t.Fatalf("typed/confirmed accepted from origin %s", c.origin.Kind)
+		}
 		if c.kind != cmdSet && (c.typed || c.confirmed || c.undo) {
 			t.Fatalf("%s accepted with typed/confirmed/undo", c.kind)
 		}

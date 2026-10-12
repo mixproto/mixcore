@@ -196,3 +196,13 @@ func TestSafety_SnapshotHeadamps(t *testing.T) {
 		}
 	})
 }
+
+// Review MEDIUM 5 at the API: typed (or confirmed) from a macro is refused.
+func TestSafety_TypedNeedsAGestureOrigin(t *testing.T) {
+	for _, flags := range []string{`,"typed":true`, `,"typed":true,"confirmed":true`, `,"confirmed":true`} {
+		cmd := `{"version":0,"type":"set","param":` + gain3 + `,"value":45` + flags + `,"origin":{"kind":"macro","clientId":"ui"}}`
+		if _, err := parseCommand(cmd); CodeOf(err) != CodeInvalidCommand {
+			t.Errorf("%s: %v", flags, err)
+		}
+	}
+}

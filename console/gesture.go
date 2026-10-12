@@ -30,6 +30,9 @@ func (s *Supervisor) Write(w Write) (Result, error) {
 	if !w.Origin.MayWrite() {
 		return Result{}, driver.ErrNotUserOrigin // rule 2
 	}
+	if (w.Typed || w.Confirmed) && w.Origin.Kind != driver.OriginGesture {
+		return Result{}, ErrTypedOrigin
+	}
 	sess, res, err := s.prepare(&w)
 	if err != nil || !res.Written {
 		return res, err
