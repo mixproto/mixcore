@@ -24,7 +24,10 @@ const (
 	bankInputs  = "/meters/1"
 	// bankInputsAlt is the unslashed spelling printed in the command table (X32-F52).
 	bankInputsAlt     = "meters/1"
+	bankBuses         = "/meters/2"
 	meterBank1Values  = 96 // X32-F51: 32 inputs + 32 gate GR + 32 dynamics GR
+	meterBank2Values  = 49 // X32-F55: 16 buses, 6 matrices, main L, R, M/C, 24 GR
+	bank2MainL        = 22 // X32-F55
 	infoServerVersion = "V2.05"
 	infoServerName    = "osc-server"
 	minTimeFactor     = 1
@@ -157,16 +160,21 @@ func (s *Sim) touchSlot(now time.Time, from netip.AddrPort, xremote bool) {
 // registerMeters starts or renews the input meter stream (X32-F50..F52).
 func (s *Sim) registerMeters(now time.Time, from netip.AddrPort, m *osc.Message) {
 	bank, ok := m.StringArg(0)
-	if !ok || (bank != bankInputs && bank != bankInputsAlt) {
+	switch {
+	case !ok:
+		return
+	case bank == bankInputsAlt:
+		bank = bankInputs
+	case bank != bankInputs && bank != bankBuses:
 		return // other banks are not modelled
 	}
 	tf := int32(minTimeFactor)
 	if v, ok := m.IntArg(1); ok && v >= minTimeFactor && v <= maxTimeFactor {
 		tf = v
 	}
-	sub := meterSub{addr: from, expires: now.Add(s.opts.MeterTTL), interval: s.opts.MeterInterval * time.Duration(tf), next: now}
+	sub := meterSub{addr: from, bank: bank, expires: now.Add(s.opts.MeterTTL), interval: s.opts.MeterInterval * time.Duration(tf), next: now}
 	for i := range s.meterSubs {
-		if s.meterSubs[i].addr == from {
+		if s.meterSubs[i].addr == from && s.meterSubs[i].bank == bank {
 			sub.next = s.meterSubs[i].next
 			s.meterSubs[i] = sub
 			return
@@ -225,14 +233,15 @@ func (s *Sim) Value(addr string) (osc.Arg, bool) {
 	return v.arg(), true
 }
 
-// appendMeterBlob encodes bank 1 as described in X32-F53: little-endian count,
-// then little-endian float32 values.
-func appendMeterBlob(dst []byte, inputs []float32) []byte {
-	dst = binary.LittleEndian.AppendUint32(dst, meterBank1Values)
-	for i := range meterBank1Values {
+// appendMeterBlob encodes a bank as described in X32-F53: little-endian
+// count, then count little-endian float32 values; values beyond len(levels)
+// are 0.
+func appendMeterBlob(dst []byte, count int, levels []float32) []byte {
+	dst = binary.LittleEndian.AppendUint32(dst, uint32(count))
+	for i := range count {
 		var v float32
-		if i < len(inputs) {
-			v = inputs[i]
+		if i < len(levels) {
+			v = levels[i]
 		}
 		dst = binary.LittleEndian.AppendUint32(dst, math.Float32bits(v))
 	}

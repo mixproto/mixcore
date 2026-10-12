@@ -56,6 +56,10 @@ type Options struct {
 	// true lets every sending port hold a slot for SubscriptionTTL, although
 	// only /xremote ports receive pushes.
 	SlotForAnySender bool
+	// PushSceneMarkers: [UNVERIFIED] X32-F60 variant. False (default) makes a
+	// scene recall push only the changed parameters; true also sets and pushes
+	// /-show/prepos/current and /-undo/time (X32-F61, X32-F62).
+	PushSceneMarkers bool
 	MeterTTL         time.Duration // X32-F50
 	MeterInterval    time.Duration // X32-F50
 	Logger           *slog.Logger
@@ -125,6 +129,7 @@ type ClientSlot struct {
 
 type meterSub struct {
 	addr     netip.AddrPort
+	bank     string
 	expires  time.Time
 	interval time.Duration
 	next     time.Time
@@ -140,6 +145,7 @@ type Sim struct {
 	subs      []subscriber
 	meterSubs []meterSub
 	levels    [inputChannels]float32 // linear input meter levels (X32-F54)
+	mainLR    [2]float32             // linear Main L/R meter levels (X32-F55)
 	log       []Entry
 	nWrites   int
 	maxSlots  int
@@ -307,6 +313,13 @@ func (s *Sim) MaxSlotsUsed() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.maxSlots
+}
+
+// SetMainLevels sets the linear Main L/R meter levels of bank 2 (X32-F55).
+func (s *Sim) SetMainLevels(l, r float32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mainLR = [2]float32{l, r}
 }
 
 // SetInputLevels sets the linear meter levels of input channels 1..n (1.0 = 0 dBFS, X32-F54).
