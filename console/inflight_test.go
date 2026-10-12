@@ -169,3 +169,25 @@ func TestInFlight_DragPastTheCapWithoutEchoSendsTheCapOnce(t *testing.T) {
 		}
 	})
 }
+
+// Review pass 3, LOW 4: a report equal to the value the state already has
+// (an authoritative re-read of an unchanged Gain, or any repeat) is not an
+// external change: it never ends a hold.
+func TestHold_ReportOfTheSameValueKeepsTheHold(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, drv := startSafe(t, SafetyConfig{}, safetyState(-6))
+		_, _ = sup.HoldWindow(gain3, gesture, true)
+		_ = sup.Drain()
+		pushGain(t, drv, 32.5, desk, true)
+		if u := sup.Drain(); len(u.Events) != 0 {
+			t.Fatalf("events %+v", u.Events)
+		}
+		if _, err := sup.Write(set(gain3, lvl(t, 33), gesture)); err != nil {
+			t.Fatalf("the hold must go on: %v", err)
+		}
+		pushGain(t, drv, 30, desk, false) // a real desk move still ends it
+		if _, err := sup.Write(set(gain3, lvl(t, 31), gesture)); !errors.Is(err, ErrGestureEnded) {
+			t.Fatalf("after a desk move: %v", err)
+		}
+	})
+}

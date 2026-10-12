@@ -128,7 +128,8 @@ behave the same and a UI bug cannot bypass them:
    client sends `holdBegin` (new gesture) or `holdEnd` (finger lifted). Going stale, pausing or stopping cancels every
    active hold (`holdCancelled` event): when the status returns to `live`, no write resumes without a new `holdBegin`.
    A scene recall detected at the console (v0.1 event `sceneRecalledAtConsole`) ends every held fader as an external
-   change, whether or not that fader's own update has arrived yet.
+   change, whether or not that fader's own update has arrived yet. A report of the value the state already has (for
+   example the core's re-read of an unchanged Gain) is not a change and never ends a hold.
 5. Echo: a diff caused by the app's own write carries the write's origin (`kind`, `clientId`, `seq`), so the UI can tell
    its own echo from a change made at the desk. A write of another client (another `clientId` through the same engine,
    or a MixLink client) carries that client's origin and is an external change for everyone else's holds.

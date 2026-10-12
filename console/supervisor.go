@@ -478,13 +478,16 @@ func (s *Supervisor) handleEvent(ev driver.Event) {
 // external change of a held fader, that gesture ends (HoldExternalChange).
 func (s *Supervisor) applyChangeLocked(c Change) {
 	_, known := s.state.Strip(c.Param.Strip)
+	prev, had := s.state.Value(c.Param)
 	next, err := s.state.With(c.Param, c.Value)
 	if err != nil {
 		s.cfg.Logger.Debug("console: change ignored", "param", c.Param.String(), "err", err)
 		return
 	}
 	s.state = next
-	s.holds.external(c)
+	if !had || !prev.Equal(c.Value) { // a report of the value we already had moved nothing (review pass 3, LOW 4)
+		s.holds.external(c)
+	}
 	s.safe.noteChange(c)
 	if c.Param.Field == model.FieldGain {
 		s.safe.noteReport(c, s.halfStepDB(c.Param.Strip.Index)) // review pass 3, HIGH 1
