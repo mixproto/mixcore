@@ -209,9 +209,7 @@ func (s *Supervisor) gainRulesLocked(w Write, cur, v float64, st GestureState, w
 		}
 		v, st = cur+math.Copysign(gainBoundDB, v-cur), StateAtCap
 	}
-	if v != cur {
-		s.safe.unlocks.noteEntry(h)
-	}
+	s.safe.unlocks.noteEntry(h) // any accepted Gain write during an unlock is an entry (undo grace)
 	return v, st, windowOf(win), nil
 }
 

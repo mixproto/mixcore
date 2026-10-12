@@ -175,3 +175,19 @@ func TestMonitorCeiling_NeverLowersAValue(t *testing.T) {
 		}
 	})
 }
+
+// An entry made during an unlock keeps its undo grace even when the write
+// left before the echo of the previous one (the value we knew was stale).
+func TestShowMode_UndoGraceWithoutEcho(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, _ := startSafe(t, SafetyConfig{ShowMode: true}, safetyState(-6))
+		_ = sup.Unlock(gain3, gesture)
+		if _, err := sup.Write(set(gain3, lvl(t, 32.5), gesture)); err != nil { // equal to what we know
+			t.Fatal(err)
+		}
+		_ = sup.Relock(gain3, gesture)
+		if _, err := sup.Write(undo(t, 33.5)); err != nil {
+			t.Fatalf("undo within the grace: %v", err)
+		}
+	})
+}
