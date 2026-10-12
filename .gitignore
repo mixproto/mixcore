@@ -12,3 +12,6 @@ coverage.out
 bench.out
 go.work
 go.work.sum
+# mixcapture sessions hold personal data and never belong here (docs/tools/mixcapture.md)
+research/
+captures/
