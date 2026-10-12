@@ -182,3 +182,37 @@ func percentiles(d []time.Duration) [4]time.Duration {
 	at := func(q float64) time.Duration { return s[min(int(q*float64(len(s))), len(s)-1)] }
 	return [4]time.Duration{at(0.50), at(0.95), at(0.99), s[len(s)-1]}
 }
+
+// An x32 session carries the main strip's mute-group membership end to end:
+// /main/st/grp/mute (X32-F36) -> Capabilities.MainMuteGroups -> the main
+// strip's muteGroups in the snapshot and its effectiveMute (xair omits it).
+func TestSimLoopback_X32MainCarriesMuteGroups(t *testing.T) {
+	l := newLoop(t)
+	if err := l.sim.SurfaceSet("/main/st/grp/mute", osc.Int(1<<2)); err != nil { // main in mute group 3
+		t.Fatal(err)
+	}
+	if err := l.sim.SurfaceSet("/config/mute/3", osc.Int(1)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.eng.Start(l.cfg); err != nil {
+		t.Fatal(err)
+	}
+	l.waitStatus(t, "live")
+	if err := l.eng.RequestSnapshot(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		st := l.rec.last()
+		if st.Type == "snapshot" && len(st.Strips) == 33 {
+			main := st.Strips[32]
+			if main.Kind != "main" || main.MuteGroups == nil || len(*main.MuteGroups) != 1 || (*main.MuteGroups)[0] != 3 ||
+				main.EffectiveMute == nil || !main.EffectiveMute.Muted {
+				t.Fatalf("main = %+v", main)
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("no 33-strip snapshot; last %+v", l.rec.last())
+}
