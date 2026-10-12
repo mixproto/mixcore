@@ -16,7 +16,6 @@ import (
 
 // JSON limits and scores.
 const (
-	maxJSONBuffer   = 1 << 20
 	maxJSONDepth    = 32
 	maxJSONLeaves   = 4096
 	scoreJSON       = 70
@@ -45,7 +44,8 @@ func (JSON) Name() string { return "json" }
 func (JSON) Detect(_ netpkt.Transport, samples [][]byte) int {
 	all := joined(samples)
 	covered, n := 0, 0
-	scanObjects(all, func(obj []byte) {
+	var sc objectScanner
+	sc.feed(all, func(obj []byte) {
 		if json.Valid(obj) {
 			covered += len(obj)
 			n++
@@ -58,68 +58,71 @@ func (JSON) Detect(_ netpkt.Transport, samples [][]byte) int {
 }
 
 // NewStream implements Decoder.
-func (JSON) NewStream(netpkt.Transport, []byte) Stream {
-	return &jsonStream{buf: buffer{max: maxJSONBuffer}}
-}
+func (JSON) NewStream(netpkt.Transport, []byte) Stream { return &jsonStream{} }
 
-type jsonStream struct{ buf buffer }
+type jsonStream struct{ sc objectScanner }
 
 func (s *jsonStream) Feed(chunk []byte, emit func(Message)) {
-	if !s.buf.add(chunk) {
-		return
-	}
-	used := scanObjects(s.buf.b, func(obj []byte) { flattenJSON(obj, obj, emit) })
-	s.buf.consume(used)
+	s.sc.feed(chunk, func(obj []byte) { flattenJSON(obj, obj, emit) })
 }
 
-// scanObjects calls fn for every complete top-level {...} in b and returns
-// how many bytes are done with (an unfinished object is kept).
-func scanObjects(b []byte, fn func([]byte)) int {
-	done := 0
-	for {
-		start := bytes.IndexByte(b[done:], '{')
-		if start < 0 {
-			return len(b)
-		}
-		start += done
-		end, ok := objectEnd(b, start)
-		if !ok {
-			if end < 0 { // too deep: skip this brace
-				done = start + 1
-				continue
+// objectScanner finds top-level {...} objects in a byte stream. Its state
+// (nesting depth, inside a string, after a backslash) survives between
+// feeds, so every byte is looked at once: linear in the stream, whatever the
+// chunking. Bytes outside objects are skipped. An object deeper than
+// maxJSONDepth or longer than maxPendingJSON is abandoned and the scan
+// resumes after it.
+type objectScanner struct {
+	obj   []byte // the pending object so far; empty while searching
+	depth int
+	inStr bool
+	esc   bool
+}
+
+// maxPendingJSON caps the bytes held for one unfinished object.
+const maxPendingJSON = 64 << 10
+
+func (sc *objectScanner) feed(b []byte, fn func([]byte)) {
+	for _, c := range b {
+		if sc.depth == 0 {
+			if c == '{' {
+				sc.obj, sc.depth = append(sc.obj[:0], c), 1
 			}
-			return start
+			continue
 		}
-		fn(b[start:end])
-		done = end
+		sc.obj = append(sc.obj, c)
+		if sc.step(c) {
+			fn(sc.obj)
+			sc.reset()
+			continue
+		}
+		if sc.depth > maxJSONDepth || len(sc.obj) > maxPendingJSON {
+			sc.reset()
+		}
 	}
 }
 
-// objectEnd returns the index after the brace matching b[start]. ok=false
-// with end>=0 means the object is not complete yet; end<0 means too deep.
-func objectEnd(b []byte, start int) (int, bool) {
-	depth, inStr := 0, false
-	for i := start; i < len(b); i++ {
-		c := b[i]
-		switch {
-		case inStr && c == '\\':
-			i++
-		case c == '"':
-			inStr = !inStr
-		case inStr:
-		case c == '{' || c == '[':
-			depth++
-			if depth > maxJSONDepth {
-				return -1, false
-			}
-		case c == '}' || c == ']':
-			depth--
-			if depth == 0 {
-				return i + 1, true
-			}
-		}
+// step advances the state by one byte of an object; true when it closed.
+func (sc *objectScanner) step(c byte) bool {
+	switch {
+	case sc.esc:
+		sc.esc = false
+	case sc.inStr && c == '\\':
+		sc.esc = true
+	case c == '"':
+		sc.inStr = !sc.inStr
+	case sc.inStr:
+	case c == '{' || c == '[':
+		sc.depth++
+	case c == '}' || c == ']':
+		sc.depth--
+		return sc.depth == 0
 	}
-	return 0, false
+	return false
+}
+
+func (sc *objectScanner) reset() {
+	sc.obj, sc.depth, sc.inStr, sc.esc = sc.obj[:0], 0, false, false
 }
 
 // flattenJSON emits one message per leaf of doc; false if doc is not JSON.

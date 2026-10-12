@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"go.uber.org/goleak"
 
@@ -259,3 +260,28 @@ func TestChoose(t *testing.T) {
 		t.Fatal("ByName accepted an unknown decoder")
 	}
 }
+
+// Regression (go-reviewer M1): an object that never closes was rescanned from
+// its start on every chunk (quadratic: 128 KiB took 20 s). The scan state now
+// survives feeds and a pending object is capped, so the stream stays linear
+// and recovers for the next object.
+func TestJSONUnclosedObjectIsLinearAndCapped(t *testing.T) {
+	const total, chunk = 128 << 10, 1 // one byte per segment, the reviewer's worst case
+	stream := append([]byte(`{"a":"`), bytes.Repeat([]byte("x"), total)...)
+	s := JSON{}.NewStream(netpkt.TCP, nil)
+	start := time.Now()
+	for i := 0; i < len(stream); i += chunk {
+		s.Feed(stream[i:min(i+chunk, len(stream))], func(Message) {})
+	}
+	if d := time.Since(start); d > jsonTimeBudget {
+		t.Fatalf("feeding %d KiB of an unclosed object took %s (budget %s)", total>>10, d, jsonTimeBudget)
+	}
+	// The oversized object was dropped; a later object still decodes.
+	got := feedAll(s, [][]byte{[]byte(`"} {"path":"a/b","value":3}`)})
+	if len(got) != 1 || got[0].String() != "a/b = 3" {
+		t.Fatalf("after the dropped object: %d messages, first %.80s", len(got), got)
+	}
+}
+
+// jsonTimeBudget is generous for -race; the quadratic scan needed ~20 s.
+const jsonTimeBudget = 2 * time.Second
