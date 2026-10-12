@@ -21,7 +21,11 @@ type direction uint8
 const (
 	downOnly direction = iota + 1 // fader level, mix/on (1 = on): never above the snapshot
 	upOnly                        // mute group state (1 = engaged = muting): never below it
+	anyText                       // a channel name: changes no sound, any printable ASCII
 )
+
+// maxProbeName is the longest name mixprobe writes (xair.md test item 14).
+const maxProbeName = 32
 
 // restoreRounds: a lost packet or a console still booting gets more tries.
 const restoreRounds = 3
@@ -49,14 +53,20 @@ type guard struct {
 	w      *rawClient // write socket: never sends /xremote
 }
 
-func newGuard(w *rawClient, channels []int, muteGroup int) *guard {
+func newGuard(w *rawClient, cfg config) *guard {
 	g := &guard{w: w}
-	for _, ch := range channels {
+	for _, ch := range cfg.channels {
 		g.params = append(g.params,
 			&guarded{addr: fmt.Sprintf("/ch/%02d/mix/fader", ch), dir: downOnly},
 			&guarded{addr: fmt.Sprintf("/ch/%02d/mix/on", ch), dir: downOnly})
 	}
-	g.params = append(g.params, &guarded{addr: fmt.Sprintf("/config/mute/%d", muteGroup), dir: upOnly})
+	g.params = append(g.params, &guarded{addr: fmt.Sprintf("/config/mute/%d", cfg.muteGroup), dir: upOnly})
+	if cfg.fam.name == "xair" && len(cfg.channels) > 0 {
+		first, last := cfg.channels[0], cfg.channels[len(cfg.channels)-1]
+		g.params = append(g.params,
+			&guarded{addr: xairSendAddr(first), dir: downOnly},                      // test item 8
+			&guarded{addr: fmt.Sprintf("/ch/%02d/config/name", last), dir: anyText}) // test item 14
+	}
 	return g
 }
 
@@ -121,6 +131,8 @@ func safeDirection(p *guarded, a osc.Arg) bool {
 		return a.Int <= p.snap.Int
 	case a.Type == osc.TypeInt && p.dir == upOnly:
 		return a.Int >= p.snap.Int
+	case a.Type == osc.TypeString && p.dir == anyText:
+		return true
 	default:
 		return false
 	}
@@ -141,9 +153,12 @@ func (g *guard) touchAll() {
 	}
 }
 
-// inDomain: switches are 0 or 1 (X32-F33, X32-F35), levels 0..1 (X32-F32).
+// inDomain: switches are 0 or 1 (X32-F33, X32-F35), levels 0..1 (X32-F32),
+// names printable ASCII up to maxProbeName characters.
 func inDomain(a osc.Arg) bool {
 	switch a.Type {
+	case osc.TypeString:
+		return len(a.Bytes) <= maxProbeName && printable(a.Bytes)
 	case osc.TypeInt:
 		return a.Int == 0 || a.Int == 1
 	case osc.TypeFloat:
@@ -227,4 +242,13 @@ func (g *guard) restoreOne(p *guarded, wait time.Duration) restoreResult {
 		p.dirty = false
 	}
 	return r
+}
+
+func printable(b []byte) bool {
+	for _, c := range b {
+		if c < 0x20 || c > 0x7e {
+			return false
+		}
+	}
+	return true
 }

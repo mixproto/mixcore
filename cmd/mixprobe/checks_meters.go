@@ -38,12 +38,22 @@ type meterRun struct {
 
 // requestMeters asks for a bank on a fresh socket and collects for d.
 func (p *prober) requestMeters(ctx context.Context, bank, reply string, d time.Duration) (meterRun, error) {
+	return p.requestMeterArgs(ctx, reply, d, osc.String(bank))
+}
+
+// requestMeterForm sends /meters with args (the first is the bank, whose
+// address the replies carry) on a fresh socket and collects for d.
+func (p *prober) requestMeterForm(ctx context.Context, d time.Duration, args ...osc.Arg) (meterRun, error) {
+	return p.requestMeterArgs(ctx, string(args[0].Bytes), d, args...)
+}
+
+func (p *prober) requestMeterArgs(ctx context.Context, reply string, d time.Duration, args ...osc.Arg) (meterRun, error) {
 	c, err := openRaw(ctx, p.cfg.listen, p.cfg.console)
 	if err != nil {
 		return meterRun{}, err
 	}
 	defer c.close()
-	if err := c.send("/meters", osc.String(bank)); err != nil {
+	if err := c.send("/meters", args...); err != nil {
 		return meterRun{}, err
 	}
 	msgs, err := c.collect(d)

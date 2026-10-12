@@ -136,8 +136,8 @@ func (p *prober) startEngine(ctx context.Context, metersOn bool) (*api.Engine, *
 	eng := api.NewEngineWith(api.Options{ListenPacket: p.cfg.listen})
 	rec := &engineRec{}
 	eng.SetStateListener(rec)
-	cfg := fmt.Sprintf(`{"version":0,"family":"x32","host":%q,"port":%d,"meters":{"inputs":%t}}`,
-		p.cfg.console.Addr().String(), p.cfg.console.Port(), metersOn)
+	cfg := fmt.Sprintf(`{"version":0,"family":%q,"host":%q,"port":%d,"meters":{"inputs":%t}}`,
+		p.cfg.fam.name, p.cfg.console.Addr().String(), p.cfg.console.Port(), metersOn)
 	t0 := time.Now()
 	if _, err := eng.Start(cfg); err != nil {
 		eng.Close()

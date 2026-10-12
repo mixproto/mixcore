@@ -18,7 +18,6 @@ const (
 	quietWindow     = 20 * time.Second // a quiet console must stay live this long (X32-F25)
 	slotExpiry      = 11 * time.Second // a dropped /xremote slot is free after 10 s (X32-F20)
 	reconnectCycles = 20
-	extraClients    = 4 // fills the four slots next to ours, plus one (X32-F21)
 )
 
 // engineChecks runs the checks that use the real mixcore engine.
@@ -87,7 +86,7 @@ func (p *prober) checkReconnectSlots(ctx context.Context, eng *api.Engine, rec *
 	if err == nil {
 		var served []bool
 		if served, err = p.whoIsServed(ctx, eng, rec, ch, clients); err == nil {
-			p.add(slotFinding(served))
+			p.add(slotFinding(served, p.cfg.fam.pushClients))
 		}
 	}
 	for _, c := range clients {
@@ -122,10 +121,12 @@ func (p *prober) reconnectCycles(ctx context.Context, eng *api.Engine, rec *engi
 	return worst, nil
 }
 
-// fillSlots opens raw clients that each send /xremote, one after the other.
+// fillSlots opens raw clients that each send /xremote, one after the other:
+// as many as the console has push slots, so they fill the slots next to
+// ours plus one (X32-F21: 4, XA-F21: 8).
 func (p *prober) fillSlots(ctx context.Context) ([]*rawClient, error) {
 	var out []*rawClient
-	for range extraClients {
+	for range p.cfg.fam.pushClients {
 		c, err := p.subscriber(ctx)
 		if err != nil {
 			return out, err
@@ -170,7 +171,9 @@ func hasChange(m recMsg, ch int, field, origin string) bool {
 	return false
 }
 
-func slotFinding(served []bool) Finding {
+// slotFinding judges who got the push: the engine (index 0) and limit-1 raw
+// clients must, the last raw client (the newcomer) must not.
+func slotFinding(served []bool, limit int) Finding {
 	names := []string{"mixcore engine"}
 	for i := 1; i < len(served); i++ {
 		names = append(names, fmt.Sprintf("raw client %d", i))
@@ -179,22 +182,23 @@ func slotFinding(served []bool) Finding {
 	for i, s := range served {
 		got = append(got, fmt.Sprintf("%s=%t", names[i], s))
 	}
-	f := Finding{ID: "client-slots", Facts: []string{"X32-F21", "X32-F28"}, Title: "the engine holds one slot; a fifth /xremote client gets no pushes",
+	f := Finding{ID: "client-slots", Facts: []string{"X32-F21", "X32-F28"},
+		Title:  fmt.Sprintf("the engine holds one slot; client %d (/xremote) gets no pushes", limit+1),
 		Detail: strings.Join(got, ", ")}
 	n := len(served)
 	switch {
-	case served[0] && served[1] && served[2] && served[3] && !served[n-1]:
+	case n == limit+1 && allTrue(served[:limit]) && !served[n-1]:
 		f.Status = Confirmed
-		f.Detail += ": four push clients incl. ours, the newcomer ignored, the write socket takes no slot"
-	case served[0] && !served[3]:
+		f.Detail += fmt.Sprintf(": %d push clients incl. ours, the newcomer ignored, the write socket takes no slot", limit)
+	case served[0] && !served[limit-1]:
 		f.Status = Refuted
-		f.Detail += ": only three raw clients fit next to the engine: its write socket takes a slot, or another app is still connected"
+		f.Detail += fmt.Sprintf(": only %d raw clients fit next to the engine: its write socket takes a slot, or another app is still connected", limit-2)
 	case !served[0] && served[n-1]:
 		f.Status = Refuted
 		f.Detail += ": the oldest client (ours) lost its slot to the newcomer (evict-oldest policy)"
 	case allTrue(served):
 		f.Status = Refuted
-		f.Detail += ": more than four push clients are served (contradiction C8: 10 or 16)"
+		f.Detail += fmt.Sprintf(": more than %d push clients are served", limit)
 	default:
 		f.Status = Inconclusive
 	}

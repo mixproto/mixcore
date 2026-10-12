@@ -78,7 +78,7 @@ func allowedAddrs() []string {
 }
 
 func (l *lab) config(p Prompter, out io.Writer) config {
-	return config{console: netip.MustParseAddrPort(consoleIP + ":10023"), channels: []int{1, 2, 3, 4, 5, 6, 7, 8}, muteGroup: 6,
+	return config{fam: families["x32"], console: netip.MustParseAddrPort(consoleIP + ":10023"), channels: []int{1, 2, 3, 4, 5, 6, 7, 8}, muteGroup: 6,
 		listen: l.net.Host(labIP), prompt: p, out: out}
 }
 
@@ -246,10 +246,10 @@ func TestSlotFinding_Patterns(t *testing.T) {
 		{[]bool{true, true, true, true, false}, Confirmed, "newcomer ignored"},
 		{[]bool{true, true, true, false, false}, Refuted, "write socket takes a slot"},
 		{[]bool{false, true, true, true, true}, Refuted, "evict"},
-		{[]bool{true, true, true, true, true}, Refuted, "more than four"},
+		{[]bool{true, true, true, true, true}, Refuted, "more than 4"},
 		{[]bool{false, false, false, false, false}, Inconclusive, ""},
 	} {
-		f := slotFinding(tc.served)
+		f := slotFinding(tc.served, 4)
 		if f.Status != tc.want || !strings.Contains(f.Detail, tc.says) {
 			t.Errorf("%v: %s %q", tc.served, f.Status, f.Detail)
 		}
@@ -274,7 +274,7 @@ func TestParseArgs_SafetyAndChannels(t *testing.T) {
 			t.Errorf("%v: err = %v", tc.args, err)
 		}
 	}
-	chs, _ := parseChannels("1,3,30-32")
+	chs, _ := parseChannels("1,3,30-32", 32)
 	if len(chs) != 5 || chs[4] != 32 {
 		t.Fatalf("channels = %v", chs)
 	}
@@ -393,15 +393,15 @@ func TestTerminal_StepsAndQuestions(t *testing.T) {
 func TestFindConsole_DiscoverAndHost(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		l := newLab(t, simx32.Options{})
-		ap, err := findConsole(context.Background(), options{discover: true}, l.net.Host(labIP), io.Discard)
+		ap, err := findConsole(context.Background(), options{fam: families["x32"], discover: true}, l.net.Host(labIP), io.Discard)
 		if err != nil || ap.String() != consoleIP+":10023" {
 			t.Fatalf("discover: %v %v", ap, err)
 		}
-		if _, err := findConsole(context.Background(), options{host: "x32.local", port: 10023}, nil, io.Discard); !errors.Is(err, errUsage) {
+		if _, err := findConsole(context.Background(), options{fam: families["x32"], host: "x32.local", port: 10023}, nil, io.Discard); !errors.Is(err, errUsage) {
 			t.Fatalf("hostname: %v", err)
 		}
 		l.sim.Pause()
-		if _, err := findConsole(context.Background(), options{discover: true}, l.net.Host(labIP), io.Discard); !errors.Is(err, errUsage) {
+		if _, err := findConsole(context.Background(), options{fam: families["x32"], discover: true}, l.net.Host(labIP), io.Discard); !errors.Is(err, errUsage) {
 			t.Fatalf("nothing found: %v", err)
 		}
 	})
@@ -418,7 +418,7 @@ func TestRestore_ReportsWhatCouldNotBeVerified(t *testing.T) {
 		}
 		defer w.close()
 		var out bytes.Buffer
-		p := &prober{cfg: config{out: &out}, guard: newGuard(w, []int{1}, 6)}
+		p := &prober{cfg: config{out: &out}, guard: newGuard(w, config{fam: families["x32"], channels: []int{1}, muteGroup: 6})}
 		if err := p.guard.snapshot(replyWait); err != nil {
 			t.Fatal(err)
 		}

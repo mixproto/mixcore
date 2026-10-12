@@ -3,20 +3,25 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // Command mixprobe runs a guided hardware session against a real X32/M32
-// family console on a lab network. It identifies the console, snapshots every
-// parameter it may change, checks the facts of docs/protocols/x32.md that
-// software can check, asks the operator for physical steps (move a fader,
-// recall a scene, unplug the cable, reboot), restores the snapshot (also on
-// Ctrl-C) and writes report.md and report.json.
+// family console, or (-family xair) an X Air / M Air mixer, on a lab network.
+// It identifies the console, snapshots every parameter it may change, checks
+// the facts of docs/protocols/x32.md or xair.md that software can check (for
+// xair: the items section 13 marks "mixprobe", read-only ones first), asks
+// the operator for physical steps (change a fader, recall a scene, unplug the
+// cable, reboot), restores the snapshot (also on Ctrl-C) and writes report.md
+// and report.json.
 //
 //	mixprobe --lab -host 192.168.1.62 [-channels 1-8] [-mutegroup 6] [-out dir]
-//	mixprobe --lab -discover
+//	mixprobe --lab -family xair -host 192.168.1.1 [-channels 1-8] [-mutegroup 4]
+//	mixprobe --lab [-family xair] -discover
 //
 // Safety: it refuses to run without --lab, asks for the amplifiers to be off
 // first, changes only the faders and mutes of the chosen input channels and
 // one mute group, moves faders only down from their snapshot value (and
 // back), only mutes (never unmutes beyond the snapshot) and only engages the
-// mute group (never releases one the snapshot had engaged).
+// mute group (never releases one the snapshot had engaged). For xair it may
+// also lower one bus send of the first allowed channel and rename the last
+// allowed channel (both restored).
 package main
 
 import (
@@ -35,16 +40,13 @@ import (
 	"time"
 
 	"github.com/mixproto/mixcore/driver"
-	"github.com/mixproto/mixcore/driver/x32"
 )
 
 const (
-	defaultChannels  = "1-8"
-	defaultMuteGroup = 6
-	maxChannel       = 32
-	maxMuteGroup     = 6
-	discoverWait     = 2 * time.Second
-	exitUsage        = 2
+	defaultChannels = "1-8"
+	defaultFamily   = "x32"
+	discoverWait    = 2 * time.Second
+	exitUsage       = 2
 )
 
 var errUsage = errors.New("mixprobe: usage")
@@ -69,6 +71,7 @@ func osListen(ctx context.Context, network, address string) (net.PacketConn, err
 
 // options are the parsed command line.
 type options struct {
+	fam       family
 	lab       bool
 	host      string
 	port      int
@@ -82,13 +85,14 @@ func parseArgs(args []string, stderr io.Writer) (options, error) {
 	fs := flag.NewFlagSet("mixprobe", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var o options
-	var chans string
+	var chans, fam string
+	fs.StringVar(&fam, "family", defaultFamily, "console family: x32 or xair")
 	fs.BoolVar(&o.lab, "lab", false, "required: confirms this console is on a lab network with the amplifiers off")
 	fs.StringVar(&o.host, "host", "", "console IP address")
-	fs.IntVar(&o.port, "port", x32.DefaultPort, "console UDP port")
+	fs.IntVar(&o.port, "port", 0, "console UDP port (default: the family's, 10023 or 10024)")
 	fs.BoolVar(&o.discover, "discover", false, "find the console with an /xinfo broadcast instead of -host")
 	fs.StringVar(&chans, "channels", defaultChannels, "input channels mixprobe may change, e.g. 1-8 or 1,3,5")
-	fs.IntVar(&o.muteGroup, "mutegroup", defaultMuteGroup, "mute group mixprobe may engage (1-6)")
+	fs.IntVar(&o.muteGroup, "mutegroup", 0, "mute group mixprobe may engage (x32 1-6, default 6; xair 1-4, default 4)")
 	fs.StringVar(&o.outDir, "out", "", "report directory (default mixprobe-<time>)")
 	if err := fs.Parse(args); err != nil {
 		return o, fmt.Errorf("%w: %w", errUsage, err)
@@ -96,12 +100,18 @@ func parseArgs(args []string, stderr io.Writer) (options, error) {
 	if !o.lab {
 		return o, fmt.Errorf("%w: refusing to run without --lab (a lab console, amplifiers off)", errUsage)
 	}
+	var ok bool
+	if o.fam, ok = families[fam]; !ok {
+		return o, fmt.Errorf("%w: -family %q is not x32 or xair", errUsage, fam)
+	}
+	o.port = cmpOr(o.port, o.fam.defaultPort)
+	o.muteGroup = cmpOr(o.muteGroup, o.fam.defaultMuteGroup)
 	var err error
-	if o.channels, err = parseChannels(chans); err != nil {
+	if o.channels, err = parseChannels(chans, o.fam.maxChannel); err != nil {
 		return o, err
 	}
-	if o.muteGroup < 1 || o.muteGroup > maxMuteGroup {
-		return o, fmt.Errorf("%w: -mutegroup %d is not 1..%d", errUsage, o.muteGroup, maxMuteGroup)
+	if o.muteGroup < 1 || o.muteGroup > o.fam.maxMuteGroup {
+		return o, fmt.Errorf("%w: -mutegroup %d is not 1..%d", errUsage, o.muteGroup, o.fam.maxMuteGroup)
 	}
 	if (o.host == "") == !o.discover {
 		return o, fmt.Errorf("%w: give exactly one of -host or -discover", errUsage)
@@ -112,8 +122,15 @@ func parseArgs(args []string, stderr io.Writer) (options, error) {
 	return o, nil
 }
 
-// parseChannels accepts "1-8", "3" and "1,3,5" with channels 1..32.
-func parseChannels(s string) ([]int, error) {
+func cmpOr(v, def int) int {
+	if v == 0 {
+		return def
+	}
+	return v
+}
+
+// parseChannels accepts "1-8", "3" and "1,3,5" with channels 1..maxChannel.
+func parseChannels(s string, maxChannel int) ([]int, error) {
 	var out []int
 	for part := range strings.SplitSeq(s, ",") {
 		lo, hi, isRange := strings.Cut(strings.TrimSpace(part), "-")
@@ -143,7 +160,7 @@ func runMain(ctx context.Context, args []string, in io.Reader, out io.Writer, li
 	if err != nil {
 		return err
 	}
-	cfg := config{console: console, channels: o.channels, muteGroup: o.muteGroup, listen: listen,
+	cfg := config{fam: o.fam, console: console, channels: o.channels, muteGroup: o.muteGroup, listen: listen,
 		prompt: newTerminal(in, out), out: out}
 	return runAndReport(ctx, cfg, o.outDir)
 }
@@ -166,7 +183,7 @@ func findConsole(ctx context.Context, o options, listen driver.ListenPacketFunc,
 		}
 		return netip.AddrPortFrom(ip.Unmap(), uint16(o.port)), nil
 	}
-	found, err := x32.Probe(ctx, listen, x32.BroadcastTargets(), discoverWait)
+	found, err := o.fam.probe(ctx, listen, o.fam.broadcast(), discoverWait)
 	if err != nil {
 		return netip.AddrPort{}, fmt.Errorf("mixprobe: discovery: %w", err)
 	}
