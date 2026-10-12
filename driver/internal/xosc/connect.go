@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-package x32
+package xosc
 
 import (
 	"context"
@@ -16,8 +16,9 @@ import (
 )
 
 const (
-	// readWindow caps reads in flight during the initial read (X32-F07).
-	readWindow = 16
+	// ReadWindow caps reads in flight during the initial read and is the
+	// batch size of a background re-read step (X32-F07, XA-F05).
+	ReadWindow = 16
 	// optionalReadTries: a parameter of an optional feature that got no reply
 	// to this many reads is taken as unknown to this console (X32-F06), and
 	// its feature is absent for the session.
@@ -27,8 +28,9 @@ const (
 )
 
 var (
-	errNoReply     = errors.New("x32: console did not answer")
-	errBadIdentity = errors.New("x32: malformed /xinfo reply")
+	// ErrNoReply: the console did not answer /xinfo or the initial read in time.
+	ErrNoReply     = errors.New("console did not answer")
+	errBadIdentity = errors.New("malformed /xinfo reply")
 )
 
 // connect identifies the console, registers for pushes and reads the full
@@ -50,19 +52,27 @@ func (s *session) connect(ctx context.Context) error {
 	return nil
 }
 
-// capabilities of this console as far as it answered (X32-F35..F38).
+// capabilities of this console as far as it answered (X32-F35..F38, XA-F72).
 func (s *session) capabilities() model.Capabilities {
+	l := s.params.layout
 	c := model.Capabilities{
-		InputCount: inputChannels, HasMain: true, InputMeters: true,
-		EchoesOwnWrites: true, MaxPushClients: maxPushClients,
+		InputCount: s.inputs, HasMain: true, InputMeters: true,
+		EchoesOwnWrites: true, MaxPushClients: s.prof.MaxPushClients,
 	}
 	if !s.absent[featureMuteGroups] {
-		c.MuteGroups = muteGroupCount
+		c.MuteGroups = l.MuteGroups
+		c.MainMuteGroups = l.MainMuteGroups
 	}
 	if !s.absent[featureDCAs] {
-		c.DCAs = dcaCount
+		c.DCAs = l.DCAs
 	}
 	return c
+}
+
+// isAbsent reports whether p belongs to a feature or an input strip this
+// console did not answer for (never faked).
+func (s *session) isAbsent(p param) bool {
+	return s.absent[p.feature] || p.ref.Strip.Kind == model.StripInput && p.ref.Strip.Index > s.inputs
 }
 
 // next waits up to wait for a packet. ok is false on timeout.
@@ -79,7 +89,7 @@ func (s *session) next(ctx context.Context, wait time.Duration) (inPacket, bool,
 	case <-s.done:
 		return inPacket{}, false, driver.ErrClosed
 	case <-ctx.Done():
-		return inPacket{}, false, fmt.Errorf("%w: %w", errNoReply, context.Cause(ctx))
+		return inPacket{}, false, fmt.Errorf("%w: %w", ErrNoReply, context.Cause(ctx))
 	}
 }
 
@@ -96,13 +106,13 @@ func (s *session) identify(ctx context.Context) (driver.Identity, error) {
 				continue
 			}
 			s.lastPong = p.at
-			return parseXinfo(&s.msg)
+			return ParseXinfo(&s.msg)
 		}
 	}
 }
 
-// parseXinfo reads /xinfo ,ssss ip name model firmware (X32-F10).
-func parseXinfo(m *osc.Message) (driver.Identity, error) {
+// ParseXinfo reads /xinfo ,ssss ip name model firmware (X32-F10, XA-F10).
+func ParseXinfo(m *osc.Message) (driver.Identity, error) {
 	var f [xinfoArgs]string
 	for i := range f {
 		v, ok := m.StringArg(i)
@@ -144,24 +154,45 @@ func (s *session) readAll(ctx context.Context) (model.State, error) {
 		s.retryReads(rs) // also while pushes keep arriving, or a lost reply is never re-requested
 	}
 	s.known = rs.values
+	s.inputs = s.answeredInputs(rs)
 	s.absent = s.absentFeatures(rs)
 	return s.buildState(rs.values)
 }
 
-// absentFeatures lists the features with a parameter the console did not answer.
+// answeredInputs is the number of input strips that answered: the inputs
+// below the first optional strip with an unanswered name, fader or mute
+// (XA-F72). Strips above it are absent for the session, so the model's
+// inputs stay numbered 1..n.
+func (s *session) answeredInputs(rs *readState) int {
+	n := s.params.layout.Inputs
+	for i, p := range s.params.all {
+		if rs.gaveUp[i] && p.strip != 0 && p.feature == featureCore {
+			n = min(n, p.strip-1)
+		}
+	}
+	if n < s.params.layout.Inputs {
+		s.log.Info(s.name+": console does not answer some input strips; they are absent for this session", "inputs", n)
+	}
+	return n
+}
+
+// absentFeatures lists the features with a parameter the console did not
+// answer. Parameters of absent input strips do not count: a missing strip
+// must not switch mute groups or DCAs off for the strips that exist.
 func (s *session) absentFeatures(rs *readState) map[feature]bool {
 	out := map[feature]bool{}
 	for i, p := range s.params.all {
-		if rs.gaveUp[i] && !out[p.feature] {
-			out[p.feature] = true
-			s.log.Info("x32: console does not answer a parameter; feature off for this session", "addr", p.addr)
+		if !rs.gaveUp[i] || out[p.feature] || p.feature == featureCore || p.strip > s.inputs {
+			continue
 		}
+		out[p.feature] = true
+		s.log.Info(s.name+": console does not answer a parameter; feature off for this session", "addr", p.addr)
 	}
 	return out
 }
 
 func (s *session) requestMore(rs *readState) {
-	for rs.flight < readWindow && rs.next < len(rs.have) {
+	for rs.flight < ReadWindow && rs.next < len(rs.have) {
 		i := rs.next
 		rs.next++
 		if rs.have[i] {
@@ -180,8 +211,8 @@ func (s *session) retryReads(rs *readState) {
 		if rs.have[i] || rs.sentAt[i].IsZero() || now.Sub(rs.sentAt[i]) < s.timing.ReadRetryEvery {
 			continue
 		}
-		if s.params.all[i].feature != featureCore && rs.tries[i] >= optionalReadTries {
-			rs.have[i], rs.gaveUp[i] = true, true // unknown to this console (X32-F06)
+		if s.params.all[i].optional() && rs.tries[i] >= optionalReadTries {
+			rs.have[i], rs.gaveUp[i] = true, true // unknown to this console (X32-F06, XA-F72)
 			rs.left--
 			rs.flight--
 			continue
@@ -223,7 +254,7 @@ func (s *session) acceptRead(rs *readState, p inPacket) {
 // buildState makes the snapshot from the values read. Parameters of absent
 // features are left out: a missing feature is absent, never faked.
 func (s *session) buildState(values []model.Value) (model.State, error) {
-	inputs := make([]model.Strip, inputChannels)
+	inputs := make([]model.Strip, s.inputs)
 	for i := range inputs {
 		inputs[i].Ref = model.StripRef{Kind: model.StripInput, Index: i + 1}
 	}
@@ -232,13 +263,14 @@ func (s *session) buildState(values []model.Value) (model.State, error) {
 	if err != nil {
 		return model.State{}, err
 	}
-	st = st.WithGroups(groupCount(s.absent[featureMuteGroups], muteGroupCount), groupCount(s.absent[featureDCAs], dcaCount))
+	l := s.params.layout
+	st = st.WithGroups(groupCount(s.absent[featureMuteGroups], l.MuteGroups), groupCount(s.absent[featureDCAs], l.DCAs))
 	for i, p := range s.params.all {
-		if s.absent[p.feature] {
+		if s.isAbsent(p) {
 			continue
 		}
 		if st, err = st.With(p.ref, values[i]); err != nil {
-			return model.State{}, fmt.Errorf("x32: %s: %w", p.addr, err)
+			return model.State{}, fmt.Errorf("%s: %s: %w", s.name, p.addr, err)
 		}
 	}
 	return st, nil

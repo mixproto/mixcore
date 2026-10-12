@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-package x32
+package xosc
 
 import (
 	"context"
@@ -26,10 +26,7 @@ type link struct {
 	closed bool
 }
 
-var (
-	_ driver.LinkOpener = (*Driver)(nil)
-	_ driver.Link       = (*link)(nil)
-)
+var _ driver.Link = (*link)(nil)
 
 // OpenLink implements driver.LinkOpener: it opens the subscription and the
 // write socket once. Nothing is sent until Connect.
@@ -39,11 +36,11 @@ func (d *Driver) OpenLink(ctx context.Context, ep driver.Endpoint, opts driver.O
 }
 
 func (d *Driver) openLink(ctx context.Context, ep driver.Endpoint, opts driver.Options) (*link, error) {
-	console, err := resolve(ep)
+	console, err := d.resolve(ep)
 	if err != nil {
 		return nil, err
 	}
-	c, err := openConn(ctx, console, opts)
+	c, err := openConn(ctx, &d.prof, console, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +63,7 @@ func (l *link) Connect(ctx context.Context) (_ driver.Session, err error) {
 	ctx, cancel := context.WithTimeout(ctx, l.drv.timing.ConnectTimeout)
 	defer cancel()
 	if err := s.connect(ctx); err != nil {
-		return nil, fmt.Errorf("x32: connect %s: %w", l.c.console, err)
+		return nil, fmt.Errorf("%s: connect %s: %w", l.drv.prof.Family, l.c.console, err)
 	}
 	return s, nil
 }
@@ -110,7 +107,7 @@ func (l *link) release(s *session) {
 // Err implements driver.Link.
 func (l *link) Err() error {
 	if err := l.c.failure(); err != nil {
-		return fmt.Errorf("x32: link broken: %w", err)
+		return fmt.Errorf("%s: link broken: %w", l.drv.prof.Family, err)
 	}
 	return nil
 }

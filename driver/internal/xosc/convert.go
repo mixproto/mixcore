@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-package x32
+package xosc
 
 import (
 	"errors"
@@ -14,19 +14,21 @@ import (
 	"github.com/mixproto/mixcore/model"
 )
 
-// Fader law, docs/protocols/x32.md X32-F40..F43.
+// Fader law, docs/protocols/x32.md X32-F40..F43; the same law and steps on
+// X Air (XA-F40, XA-F41).
 const (
 	faderMaxDB = 10.0
 	faderMinDB = -90.0
 	// faderSteps: valid wire values are k/1023, k = 0..1023 (X32-F41).
 	faderSteps = 1023.0
-	// nameMaxLen is the longest channel name the console stores (X32-F31).
+	// nameMaxLen is the longest channel name the console stores (X32-F31);
+	// X Air keeps the X32 rule until hardware test item 14 (XA section 3.2).
 	nameMaxLen = 12
 )
 
 // errBadWire marks a value from the console that does not fit the documented
 // encoding. Such a message is dropped, never guessed.
-var errBadWire = errors.New("x32: value outside the documented encoding")
+var errBadWire = errors.New("value outside the documented encoding")
 
 // Segments of the X32 level law: position p in [lo, hi) maps to dB = slope*p + offset.
 var faderSegments = [...]struct{ lo, slope, offset float64 }{
@@ -71,7 +73,7 @@ func dbToPosition(db float64) float64 {
 // faderToDB converts a wire float from the console to dB.
 func faderToDB(f float32) (float64, error) {
 	if math.IsNaN(float64(f)) {
-		return 0, fmt.Errorf("x32 fader NaN: %w", errBadWire)
+		return 0, fmt.Errorf("fader NaN: %w", errBadWire)
 	}
 	return positionToDB(float64(f)), nil
 }
@@ -80,7 +82,7 @@ func faderToDB(f float32) (float64, error) {
 // console step (X32-F41).
 func dbToFader(db float64) (float32, error) {
 	if math.IsNaN(db) {
-		return 0, fmt.Errorf("x32 fader: NaN dB: %w", model.ErrInvalidValue)
+		return 0, fmt.Errorf("fader: NaN dB: %w", model.ErrInvalidValue)
 	}
 	k := math.Round(dbToPosition(db) * faderSteps)
 	return float32(k / faderSteps), nil
@@ -109,14 +111,14 @@ func switchToWire(c conv, muted bool) int32 {
 
 func switchFromWire(c conv, v int32) (bool, error) {
 	if v != 0 && v != 1 {
-		return false, fmt.Errorf("x32 switch %d: %w", v, errBadWire)
+		return false, fmt.Errorf("switch %d: %w", v, errBadWire)
 	}
 	return (v == 1) == (c == convEngaged), nil
 }
 
 func maskFromWire(p param, v int32) (model.Value, error) {
 	if v < 0 || v > p.maxMask {
-		return model.Value{}, fmt.Errorf("x32 %s bitmap %d: %w", p.addr, v, errBadWire)
+		return model.Value{}, fmt.Errorf("%s bitmap %d: %w", p.addr, v, errBadWire)
 	}
 	return model.Mask(uint32(v)), nil
 }
@@ -124,11 +126,11 @@ func maskFromWire(p param, v int32) (model.Value, error) {
 // nameToWire accepts at most 12 printable ASCII characters (X32-F31).
 func nameToWire(s string) (string, error) {
 	if len(s) > nameMaxLen {
-		return "", fmt.Errorf("x32 name longer than %d characters: %w", nameMaxLen, model.ErrInvalidValue)
+		return "", fmt.Errorf("name longer than %d characters: %w", nameMaxLen, model.ErrInvalidValue)
 	}
 	for i := range len(s) {
 		if s[i] < 0x20 || s[i] > 0x7e {
-			return "", fmt.Errorf("x32 name: only printable ASCII is verified: %w", model.ErrInvalidValue)
+			return "", fmt.Errorf("name: only printable ASCII is verified: %w", model.ErrInvalidValue)
 		}
 	}
 	return s, nil
@@ -139,7 +141,7 @@ func nameFromWire(b []byte) string { return strings.ToValidUTF8(string(b), "�"
 // toWire converts an engineering value to the OSC argument for p.
 func toWire(p param, v model.Value) (osc.Arg, error) {
 	if v.Kind() != p.ref.Field.ValueKind() {
-		return osc.Arg{}, fmt.Errorf("x32 %s: value kind %d: %w", p.addr, v.Kind(), model.ErrInvalidValue)
+		return osc.Arg{}, fmt.Errorf("%s: value kind %d: %w", p.addr, v.Kind(), model.ErrInvalidValue)
 	}
 	switch p.conv {
 	case convLevel:
@@ -154,14 +156,14 @@ func toWire(p param, v model.Value) (osc.Arg, error) {
 		n, err := nameToWire(s)
 		return osc.String(n), err
 	default: // membership is read-only (Apply refuses it before)
-		return osc.Arg{}, fmt.Errorf("x32 %s is read-only: %w", p.addr, model.ErrInvalidValue)
+		return osc.Arg{}, fmt.Errorf("%s is read-only: %w", p.addr, model.ErrInvalidValue)
 	}
 }
 
 // fromWire converts an OSC argument for p to an engineering value.
 func fromWire(p param, a osc.Arg) (model.Value, error) {
 	if a.Type != p.typ {
-		return model.Value{}, fmt.Errorf("x32 %s: wire type %q: %w", p.addr, byte(a.Type), errBadWire)
+		return model.Value{}, fmt.Errorf("%s: wire type %q: %w", p.addr, byte(a.Type), errBadWire)
 	}
 	switch p.conv {
 	case convLevel:

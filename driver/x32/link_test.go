@@ -33,7 +33,7 @@ func sourcePorts(sim *simx32.Sim) (all, xremote map[netip.AddrPort]bool) {
 	all, xremote = map[netip.AddrPort]bool{}, map[netip.AddrPort]bool{}
 	for _, e := range sim.Log() {
 		all[e.From] = true
-		if e.Address == addrXremote {
+		if e.Address == "/xremote" {
 			xremote[e.From] = true
 		}
 	}

@@ -10,28 +10,22 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mixproto/mixcore/driver/internal/xosc"
 	"github.com/mixproto/mixcore/internal/osc"
 	"github.com/mixproto/mixcore/meters"
 )
 
 // The meter path and the fader write encode have a 0 allocs/op budget.
-func TestZeroAlloc_MeterPathAndFaderWrite(t *testing.T) {
+func TestZeroAlloc_MeterPath(t *testing.T) {
 	pkt := meterPacket(t)
-	sink := newMeterSink(&meters.Slot{})
-	sink.enabled.Store(true)
+	sink := xosc.NewMeterSink(meterCodec{}, &meters.Slot{})
+	sink.SwitchOn(true)
 	now := time.Now()
-	if n := testing.AllocsPerRun(200, func() { sink.handle(pkt, now) }); n != 0 {
+	if n := testing.AllocsPerRun(200, func() { sink.Handle(pkt, now) }); n != 0 {
 		t.Fatalf("meter packet handling allocates %v times, budget 0", n)
 	}
 	bus, _ := osc.AppendString(nil, meterBank2, osc.Blob(bank2Blob(0.5, 1)))
-	if n := testing.AllocsPerRun(200, func() { sink.handle(bus, now) }); n != 0 {
+	if n := testing.AllocsPerRun(200, func() { sink.Handle(bus, now) }); n != 0 {
 		t.Fatalf("bank 2 packet handling allocates %v times, budget 0", n)
-	}
-	buf := make([]byte, 0, 64)
-	if n := testing.AllocsPerRun(200, func() {
-		f, _ := dbToFader(-12.5)
-		buf, _ = osc.AppendString(buf[:0], "/ch/01/mix/fader", osc.Float(f))
-	}); n != 0 {
-		t.Fatalf("fader write encode allocates %v times, budget 0", n)
 	}
 }

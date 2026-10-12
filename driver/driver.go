@@ -219,15 +219,16 @@ type ClientLimitCleared struct{}
 
 // Scene recall confidences and signals (SceneRecalled).
 const (
-	ConfidenceHigh   = "high"   // a burst and the undo checkpoint
-	ConfidenceMedium = "medium" // the undo checkpoint alone
+	ConfidenceHigh   = "high"   // a burst and the family's recall marker
+	ConfidenceMedium = "medium" // the recall marker alone
 	ConfidenceLow    = "low"    // a burst alone
 
 	SignalBurst            = "burst"            // many parameters pushed within a short window
-	SignalUndoTime         = "undoTime"         // the console's undo checkpoint changed
-	SignalHighlightedScene = "highlightedScene" // the highlighted scene changed (a hint, never a signal alone)
+	SignalUndoTime         = "undoTime"         // x32: the console's undo checkpoint changed
+	SignalHighlightedScene = "highlightedScene" // x32: the highlighted scene changed (a hint, never a signal alone)
+	SignalSnapshotIndex    = "snapshotIndex"    // xair: the console pushed its loaded snapshot number
 
-	NoScene = -1 // HighlightedScene when the console did not report one
+	NoScene = -1 // HighlightedScene or LoadedScene when the console did not report one
 )
 
 // SceneRecalled means a scene (snapshot) was recalled at the console, as far
@@ -236,7 +237,8 @@ const (
 type SceneRecalled struct {
 	Confidence       string
 	Signals          []string
-	HighlightedScene int // NoScene when unknown; never "the loaded scene" unless the family says so
+	HighlightedScene int // NoScene when unknown; never "the loaded scene"
+	LoadedScene      int // NoScene when unknown; set only by families whose marker names the loaded scene (xair)
 	At               time.Time
 }
 

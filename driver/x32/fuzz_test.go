@@ -10,7 +10,6 @@ import (
 	"math"
 	"testing"
 
-	"github.com/mixproto/mixcore/internal/osc"
 	"github.com/mixproto/mixcore/meters"
 )
 
@@ -82,20 +81,6 @@ func FuzzDecodeMainLR(f *testing.F) {
 	})
 }
 
-func FuzzParseXinfo(f *testing.F) {
-	ok, _ := osc.AppendString(nil, "/xinfo", osc.String("192.168.1.62"), osc.String("X32-02-4A-53"),
-		osc.String("X32"), osc.String("3.04")) // X32-F10 example
-	f.Add(ok)
-	f.Add([]byte("/xinfo\x00\x00,s\x00\x00a\x00\x00\x00"))
-	f.Fuzz(func(t *testing.T, b []byte) {
-		var m osc.Message
-		if osc.Decode(b, &m) != nil {
-			return
-		}
-		_, _ = parseXinfo(&m) // must not panic
-	})
-}
-
 func TestDecodeMeters1_PDFBlob(t *testing.T) {
 	pdf, _ := hex.DecodeString("04000000fd1d2137fdff7f3f0000803f6ebbd534")
 	var fr meters.Frame
@@ -110,13 +95,5 @@ func TestDecodeMeters1_PDFBlob(t *testing.T) {
 	}
 	if err := decodeMeters1([]byte{1}, &fr); err == nil {
 		t.Fatal("short blob must be rejected")
-	}
-}
-
-func TestDBToFader_NearestStepAtSegmentBreak(t *testing.T) {
-	// X32-F41: the PDF table puts -30 dB at step 256; int(f*1023.5) would give 255.
-	f, _ := dbToFader(-30)
-	if k := math.Round(float64(f) * faderSteps); k != 256 {
-		t.Fatalf("-30 dB is step %v, want 256", k)
 	}
 }

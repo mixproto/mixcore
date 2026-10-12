@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-package x32
+package xosc
 
 import (
 	"time"
@@ -36,7 +36,7 @@ func (s *session) onPush() {
 	s.lim.unechoed, s.lim.unpushedPasses, s.lim.pushInPass = 0, 0, true
 	if s.lim.limited {
 		s.lim.limited = false
-		s.log.Info("x32: updates arrive again")
+		s.log.Info(s.name + ": updates arrive again")
 		s.emit(driver.ClientLimitCleared{})
 		s.startReread(time.Now()) // changes made while we were not served were never pushed
 	}
@@ -89,6 +89,6 @@ func (s *session) limit(reason string) {
 		return
 	}
 	s.lim.limited = true
-	s.log.Info("x32: console does not send us updates (client limit)", "reason", reason, "limit", maxPushClients)
-	s.emit(driver.ClientLimitHit{Limit: maxPushClients, Reason: reason})
+	s.log.Info(s.name+": console does not send us updates (client limit)", "reason", reason, "limit", s.prof.MaxPushClients)
+	s.emit(driver.ClientLimitHit{Limit: s.prof.MaxPushClients, Reason: reason})
 }

@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-package x32
+package xosc
 
 import (
 	"fmt"
@@ -31,10 +31,10 @@ func (s *session) onTick(now time.Time) error {
 		rx = s.live.since
 	}
 	if silent := now.Sub(rx); silent > s.timing.StaleAfter {
-		return fmt.Errorf("x32: no packet for %s: %w", silent.Round(time.Millisecond), driver.ErrConnectionLost)
+		return fmt.Errorf("%s: no packet for %s: %w", s.name, silent.Round(time.Millisecond), driver.ErrConnectionLost)
 	}
 	if silent := now.Sub(s.lastPong); silent > s.timing.DeadAfter {
-		return fmt.Errorf("x32: no /xinfo reply for %s: %w", silent.Round(time.Millisecond), driver.ErrConnectionLost)
+		return fmt.Errorf("%s: no /xinfo reply for %s: %w", s.name, silent.Round(time.Millisecond), driver.ErrConnectionLost)
 	}
 	quiet := now.Sub(rx) >= s.timing.QuietProbeAfter && now.Sub(s.live.lastProbe) >= s.timing.QuietProbeAfter
 	if quiet || now.Sub(s.live.lastProbe) >= s.timing.PingEvery {
