@@ -169,7 +169,7 @@ func (s *session) rereadReply(idx int, v model.Value, at time.Time) (driver.Para
 		s.lim.passFound = true // the push of this change never reached us
 	}
 	return driver.ParamChanged{Param: s.params.all[idx].ref, Value: v, Origin: driver.Origin{Kind: driver.OriginConsole}, At: at,
-		Authoritative: wrote}, true
+		Authoritative: wrote, OwnWrite: ownReadBack}, true
 }
 
 // isOwnValue reports whether a re-read value is the last value we sent,
