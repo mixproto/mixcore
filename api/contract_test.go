@@ -142,7 +142,7 @@ func FuzzParseCommand(f *testing.F) {
 			}
 			return
 		}
-		if c.trackPt != 0 && (c.kind != cmdHoldBegin || !(c.trackPt > 0 && c.trackPt <= maxTrackPt)) {
+		if c.trackPt != 0 && (c.kind != cmdHoldBegin || !(c.trackPt >= minTrackPt && c.trackPt <= maxTrackPt)) {
 			t.Fatalf("trackLengthPt %v accepted on %s", c.trackPt, c.kind)
 		}
 		if (c.typed || c.confirmed) && c.origin.Kind != driver.OriginGesture {

@@ -300,3 +300,15 @@ func TestSafety_InFlightSetRecoversAfterOneRereadPass(t *testing.T) {
 		}
 	})
 }
+
+// Review pass 4, MEDIUM 3: a track shorter than 50 pt is not a phone
+// control; the parser refuses it.
+func TestHoldBegin_TrackLengthFloor(t *testing.T) {
+	hb := `{"version":0,"type":"holdBegin","param":{"strip":{"kind":"input","index":1},"field":"fader"},"trackLengthPt":TRACK,"origin":{"kind":"gesture"}}`
+	for track, ok := range map[string]bool{"50": true, "49.9": false, "1": false, "0.001": false} {
+		_, err := parseCommand(strings.Replace(hb, "TRACK", track, 1))
+		if ok != (err == nil) || (!ok && CodeOf(err) != CodeInvalidCommand) {
+			t.Errorf("trackLengthPt %s: %v", track, err)
+		}
+	}
+}

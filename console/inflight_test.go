@@ -7,6 +7,7 @@ package console
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"testing"
 	"testing/synctest"
@@ -305,4 +306,44 @@ func TestInFlight_SameValueAfterAReportIsSent(t *testing.T) {
 			t.Fatalf("typed 33.5 after the desk moved to 30: written %v, %v, writes %v", r.Written, err, gainWrites(drv))
 		}
 	})
+}
+
+// Review pass 4, MEDIUM 3: a track length can only make the rest check
+// stricter. A finger pushed past the wall at 12.5 dB/s for 0.8 s (to +9
+// dB, below the top of the track, where a finger really stops), with the
+// UI asking openWall on every frame, opens no wall with a track of 1.0 or
+// 0.001 pt (the API refuses those; Go hosts can still pass them), none,
+// or 490 pt.
+func TestSlipGuard_PushOpensNoWallWhateverTheTrack(t *testing.T) {
+	for _, track := range []float64{1.0, 0.001, 0, 490} {
+		t.Run(fmt.Sprint(track), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				drv := &fakeDriver{snapshot: safetyState(-6), caps: gainCaps, law: linearLaw{}}
+				sup, err := New(Config{Driver: drv, Rand: func() float64 { return 0.5 }, Options: driver.Options{Meters: &meters.Slot{}},
+					Safety: SafetyConfig{Client: ClientSafety{SlipGuard: true}}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := sup.Start(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(sup.Stop)
+				synctest.Wait()
+				_, _ = sup.HoldWindowWith(ch1Fader, gesture, true, HoldOptions{TrackLengthPt: track})
+				opened, finger, wall := 0, -1.0, 0.0
+				for range 100 { // 0.8 s of 8 ms frames, +0.1 dB each
+					finger += 0.1
+					_, _ = sup.Write(set(ch1Fader, lvl(t, finger), gesture))
+					if r, _ := sup.OpenWall(ch1Fader, gesture); r.Window != nil && r.Window.WallUp > wall {
+						opened, wall = opened+1, r.Window.WallUp // the wall moved up: it opened
+					}
+					time.Sleep(8 * time.Millisecond)
+				}
+				t.Logf("track %v pt: %d walls opened", track, opened)
+				if opened != 0 {
+					t.Errorf("track %v pt: a pushed finger opened %d walls", track, opened)
+				}
+			})
+		})
+	}
 }

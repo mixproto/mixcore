@@ -38,6 +38,7 @@ const (
 	maxGroupNumber  = 32 // largest group number a membership list may name
 	maxClientIDLen  = 128
 	maxTrackPt      = 10000 // command.schema.json trackLengthPt maximum
+	minTrackPt      = 50    // and minimum: no phone control is shorter (review pass 4, MEDIUM 3)
 )
 
 var errVersion = errors.New("unsupported contract version")
@@ -184,8 +185,8 @@ func parseCommand(data string) (command, error) {
 		return command{}, codeErr(CodeInvalidCommand, errors.New("typed, confirmed and undo go with set only"))
 	}
 	if c.TrackLengthPt != nil {
-		if c.Type != cmdHoldBegin || !(*c.TrackLengthPt > 0 && *c.TrackLengthPt <= maxTrackPt) {
-			return command{}, codeErr(CodeInvalidCommand, fmt.Errorf("trackLengthPt goes with holdBegin, 0 < pt <= %v", maxTrackPt))
+		if c.Type != cmdHoldBegin || !(*c.TrackLengthPt >= minTrackPt && *c.TrackLengthPt <= maxTrackPt) {
+			return command{}, codeErr(CodeInvalidCommand, fmt.Errorf("trackLengthPt goes with holdBegin, %v <= pt <= %v", minTrackPt, maxTrackPt))
 		}
 		cmd.trackPt = *c.TrackLengthPt
 	}

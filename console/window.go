@@ -135,13 +135,15 @@ func (w *window) openWall() bool {
 }
 
 // restSpan is how far the finger may move at the wall and still rest, in
-// fader positions: 9 pt of the track when its length is known (a position
-// is the whole track), else 2 dB of fader travel just below the wall.
+// fader positions: 2 dB of fader travel just below the wall, or 9 pt of the
+// track when its length is known and that is smaller. A track length can
+// only make the check stricter (review pass 4, MEDIUM 3).
 func (w *window) restSpan() float64 {
+	span := w.position(w.WallUp) - w.position(w.WallUp-restSpanDB)
 	if w.trackPt > 0 && w.law != nil {
-		return restSpanPt / w.trackPt
+		span = math.Min(span, restSpanPt/w.trackPt)
 	}
-	return w.position(w.WallUp) - w.position(w.WallUp-restSpanDB)
+	return span
 }
 
 // position maps dB to the fader position the UI's finger moves linearly

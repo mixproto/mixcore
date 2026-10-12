@@ -47,9 +47,9 @@
     },
     "trackLengthPt": {
       "type": "number",
-      "exclusiveMinimum": 0,
+      "minimum": 50,
       "maximum": 10000,
-      "description": "v0.3, holdBegin only, optional: the length of the control's track on screen in pt (Apple) or dp (Android), so the core can check the rest before openWall in the spec's own unit: the finger stays within 9 pt (wall.restSpeed 30 pt/s for wall.dwell 300 ms, phone-safety.md 4.1) for 300 ms. Without it the core allows 2 dB of fader travel. Example: portrait 490, landscape 152 on a 6.1 inch phone."
+      "description": "v0.3, holdBegin only, optional: the length of the control's track on screen in pt (Apple) or dp (Android), so the core can check the rest before openWall in the spec's own unit: the finger stays within 9 pt (wall.restSpeed 30 pt/s for wall.dwell 300 ms, phone-safety.md 4.1) for 300 ms, but never more than 2 dB of fader travel: a track length only makes the check stricter. Without it the core allows 2 dB of fader travel. Below 50 pt it is ERR_INVALID_COMMAND. Example: portrait 490, landscape 152 on a 6.1 inch phone."
     },
     "undo": {
       "type": "boolean",
