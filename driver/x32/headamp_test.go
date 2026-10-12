@@ -264,3 +264,41 @@ func TestHeadamp_WireMaximumReadNeverWritten(t *testing.T) {
 		}
 	})
 }
+
+// Review pass 4, HIGH 1: a push (here a desk move to another value) must
+// not drop the unconfirmed mark of a Gain we wrote: the next re-read reply
+// is still authoritative, so the console layer's in-flight set ends.
+func TestHeadamp_RereadAuthoritativeAfterADeskPush(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t, simx32.Options{})
+		sess := r.connect()
+		events, _ := r.run(sess)
+		r.net.SetDropFrom(consoleIP, true) // our write's echo is lost
+		if err := sess.Apply(driver.Command{Param: headamp(1, model.FieldGain), Value: level(t, 6), Origin: gesture}); err != nil {
+			t.Fatal(err)
+		}
+		synctest.Wait()
+		r.net.SetDropFrom(consoleIP, false)
+		if err := r.sim.SurfaceSet("/headamp/000/gain", osc.Float(72.0/144)); err != nil { // the desk: +24 dB
+			t.Fatal(err)
+		}
+		synctest.Wait()
+		time.Sleep(DefaultTiming.EchoWindow + time.Second)
+		_ = drain(events)
+		if err := sess.(driver.Rereader).Reread(); err != nil {
+			t.Fatal(err)
+		}
+		for {
+			ev, ok := nextOf[driver.ParamChanged](events, passTime)
+			if !ok {
+				t.Fatal("no authoritative report of headamp 1 after the desk push")
+			}
+			if ev.Param == headamp(1, model.FieldGain) {
+				if !ev.Authoritative || !ev.Value.Equal(level(t, 24)) {
+					t.Fatalf("report %+v, want the authoritative +24 dB", ev)
+				}
+				return
+			}
+		}
+	})
+}

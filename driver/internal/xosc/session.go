@@ -96,10 +96,12 @@ type session struct {
 	msg      osc.Message
 	sent     map[int][]sentWrite
 	known    []model.Value // newest value seen per parameter (initial read, then every change)
-	// unconfirmed: Gain parameters we wrote that the console has not
-	// reported since; their next re-read reply is reported even when it
-	// equals known, so the console layer's write in flight always ends
-	// (re-review MEDIUM B; Gain echo is unverified, X32-F79, XA-F116).
+	// unconfirmed: Gain parameters we wrote since their last re-read; the
+	// next re-read reply is reported (Authoritative) even when it equals
+	// known, so the console layer's values in flight always end (re-review
+	// MEDIUM B; Gain echo is unverified, X32-F79, XA-F116). A push never
+	// clears it: one did, and a desk move then kept the set forever (review
+	// pass 4, HIGH 1).
 	unconfirmed map[int]bool
 	rr          rereadPass
 }
@@ -385,8 +387,7 @@ func (s *session) decodeChange(p inPacket) (driver.ParamChanged, bool) {
 	}
 	s.markTouched(idx)
 	s.remember(idx, v)
-	delete(s.unconfirmed, idx) // the console reported it
-	s.onPush()                 // a push (or our echo) on the /xremote socket: we are served
+	s.onPush() // a push (or our echo) on the /xremote socket: we are served
 	origin := s.matchEcho(idx, arg, p.at)
 	if origin.Kind == driver.OriginConsole {
 		s.onConsolePush(idx, p.at) // X32-F60: a recall is a burst of pushes

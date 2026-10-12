@@ -264,3 +264,39 @@ func TestHoldBegin_TrackLength(t *testing.T) {
 		}
 	}
 }
+
+// Review pass 4, HIGH 1 probe: without an echo, write 35.5; the desk moves
+// to 50. Until the core's re-read every write is refused against the 35.5
+// in flight; after one re-read pass 49 (and lowering) works again. Before,
+// the desk push dropped the driver's mark and the set lived forever.
+func TestSafety_InFlightSetRecoversAfterOneRereadPass(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		e := newXAirEnv(t, simxair.Options{})
+		if err := e.sim.SurfaceSet("/headamp/03/gain", osc.Float(89.0/144)); err != nil { // +32.5 dB
+			t.Fatal(err)
+		}
+		e.startLive(t)
+		e.net.SetDropFrom(consoleIP, true) // the echo of 35.5 is lost
+		if err := e.eng.Apply(cmdJSON("set", gain3, `,"value":35.5`)); err != nil {
+			t.Fatal(err)
+		}
+		synctest.Wait()
+		e.net.SetDropFrom(consoleIP, false)
+		time.Sleep(500 * time.Millisecond)
+		if err := e.sim.SurfaceSet("/headamp/03/gain", osc.Float(124.0/144)); err != nil { // the desk: +50 dB
+			t.Fatal(err)
+		}
+		synctest.Wait()
+		if err := e.eng.Apply(cmdJSON("set", gain3, `,"value":49`)); CodeOf(err) != CodeGainBound {
+			t.Fatalf("49 with 35.5 in flight: %v", err)
+		}
+		time.Sleep(40 * time.Second) // one background re-read pass (15 s ticker, paced reads)
+		synctest.Wait()
+		for _, db := range []string{"49", "45"} {
+			if err := e.eng.Apply(cmdJSON("set", gain3, `,"value":`+db)); err != nil {
+				t.Fatalf("%s after the re-read: %v", db, err)
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	})
+}
