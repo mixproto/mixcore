@@ -5,6 +5,7 @@
 package console
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mixproto/mixcore/driver"
+	"github.com/mixproto/mixcore/meters"
 	"github.com/mixproto/mixcore/model"
 )
 
@@ -270,6 +272,29 @@ func TestMonitorCeiling_HeldAboveTheCeilingNeverLowers(t *testing.T) {
 		}
 		if r, _ := sup.Write(set(ch1Fader, lvl(t, 7), musician)); dbIn(t, r) != 7 {
 			t.Fatal("moving down stays free")
+		}
+	})
+}
+
+// A read-only headamp (x32 AES50, xair aux) is never written, so there is
+// nothing to unlock: ERR_UNSUPPORTED, as for its writes.
+func TestShowMode_UnlockOfAReadOnlyHeadampRefused(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		caps := gainCaps
+		caps.Headamps = micHeadamps(3)
+		caps.Headamps[2].Writable = false
+		drv := &fakeDriver{snapshot: safetyState(-6), caps: caps}
+		sup, err := New(Config{Driver: drv, Rand: func() float64 { return 0.5 }, Options: driver.Options{Meters: &meters.Slot{}}, Safety: SafetyConfig{ShowMode: true}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sup.Start(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(sup.Stop)
+		synctest.Wait()
+		if err := sup.Unlock(gain3, gesture); !errors.Is(err, driver.ErrUnsupported) {
+			t.Fatalf("unlock read-only headamp: %v", err)
 		}
 	})
 }

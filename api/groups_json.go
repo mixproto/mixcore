@@ -5,6 +5,8 @@
 package api
 
 import (
+	"strconv"
+
 	"github.com/mixproto/mixcore/console"
 	"github.com/mixproto/mixcore/driver"
 	"github.com/mixproto/mixcore/model"
@@ -45,9 +47,20 @@ func stripsJSON(st model.State, caps model.Capabilities) []stripStateJSON {
 			d := model.MaskMembers(s.DCAs)
 			j.DCAs = &d
 		}
+		if caps.InputHeadamps && s.Ref.Kind == model.StripInput {
+			j.Headamp = rawIndex(s.Headamp)
+		}
 		out = append(out, j)
 	}
 	return out
+}
+
+// rawIndex renders a strip index as raw JSON; 0 (none) is null.
+func rawIndex(n int) []byte {
+	if n == 0 {
+		return []byte("null")
+	}
+	return strconv.AppendInt(nil, int64(n), 10)
 }
 
 func groupStatesJSON(gs []model.GroupState) []groupStateJSON {

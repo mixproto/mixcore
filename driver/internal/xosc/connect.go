@@ -62,7 +62,6 @@ func (s *session) capabilities() model.Capabilities {
 	l := s.params.layout
 	c := model.Capabilities{
 		InputCount: s.inputs, AbsentInputs: l.Inputs - s.inputs, HasMain: true, InputMeters: true,
-		Headamps:        s.headamps,
 		EchoesOwnWrites: true, MaxPushClients: s.prof.MaxPushClients,
 	}
 	if !s.absent[featureMuteGroups] {
@@ -72,8 +71,9 @@ func (s *session) capabilities() model.Capabilities {
 	if !s.absent[featureDCAs] {
 		c.DCAs = l.DCAs
 	}
-	if s.headamps > 0 {
-		c.HeadampMinDB, c.HeadampMaxDB, c.HeadampStepDB = l.HeadampMinDB, l.HeadampMaxDB, l.HeadampStepDB
+	for h := 1; h <= s.headamps; h++ {
+		c.Headamps = append(c.Headamps, model.HeadampInfo{Index: h, Bank: model.BankLocal, Number: h,
+			MinDB: l.HeadampMinDB, MaxDB: l.HeadampMaxDB, StepDB: l.HeadampStepDB, Writable: true})
 	}
 	return c
 }
@@ -179,7 +179,13 @@ func (s *session) buildState(values []model.Value) (model.State, error) {
 	}
 	l := s.params.layout
 	st = st.WithGroups(groupCount(s.absent[featureMuteGroups], l.MuteGroups), groupCount(s.absent[featureDCAs], l.DCAs))
-	st = st.WithHeadamps(make([]float64, s.headamps))
+	hs := make([]model.Headamp, s.headamps)
+	for i := range hs {
+		hs[i].Index = i + 1
+	}
+	if st, err = st.WithHeadamps(hs); err != nil {
+		return model.State{}, err
+	}
 	for i, p := range s.params.all {
 		if s.isAbsent(p) {
 			continue

@@ -148,6 +148,9 @@ func (s *Supervisor) Unlock(p model.ParamRef, origin driver.Origin) error {
 	if _, ok := s.state.Value(p); !ok {
 		return fmt.Errorf("console: unlock %s: %w", p, model.ErrUnknownParam)
 	}
+	if info, ok := s.caps.Headamp(p.Strip.Index); !ok || !info.Writable {
+		return fmt.Errorf("console: unlock %s: read-only headamp: %w", p, driver.ErrUnsupported)
+	}
 	h := p.Strip.Index
 	if !s.safe.showMode || s.safe.unlocks.active[h] != nil {
 		s.safe.unlocks.touch(h)

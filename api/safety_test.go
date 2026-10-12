@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mixproto/mixcore/internal/osc"
+	"github.com/mixproto/mixcore/model"
 	simxair "github.com/mixproto/mixcore/sim/xair"
 )
 
@@ -190,7 +191,10 @@ func TestSafety_SnapshotHeadamps(t *testing.T) {
 		e.rec.mu.Lock()
 		raw := e.rec.raw[len(e.rec.raw)-1]
 		e.rec.mu.Unlock()
-		want := `"headamps":[{"index":1,"gainDB":0},{"index":2,"gainDB":0},{"index":3,"gainDB":32.5},{"index":4,"gainDB":0}],"headampRange":{"minDB":-12,"maxDB":60,"stepDB":0.5}`
+		want := `"headamps":[{"index":1,"gainDB":0,"minDB":-12,"maxDB":60,"stepDB":0.5,"writable":true,"bank":"local","number":1},` +
+			`{"index":2,"gainDB":0,"minDB":-12,"maxDB":60,"stepDB":0.5,"writable":true,"bank":"local","number":2},` +
+			`{"index":3,"gainDB":32.5,"minDB":-12,"maxDB":60,"stepDB":0.5,"writable":true,"bank":"local","number":3},` +
+			`{"index":4,"gainDB":0,"minDB":-12,"maxDB":60,"stepDB":0.5,"writable":true,"bank":"local","number":4}]`
 		if !strings.Contains(raw, want) {
 			t.Fatalf("snapshot %s", raw)
 		}
@@ -216,5 +220,29 @@ func TestSafety_MonitorCeilingNullRefused(t *testing.T) {
 		if CodeOf(err) != CodeInvalidConfig {
 			t.Fatalf("monitorCeiling %q: %v, want ERR_INVALID_CONFIG", v, err)
 		}
+	}
+}
+
+// v0.3 fields phantom (bool) and headamp (index, null = none) parse and
+// render with the types common.schema.json gives them; a set of either is
+// refused later by the driver (read-only), never here by type.
+func TestHeadampFields_JSONTypes(t *testing.T) {
+	ph := `{"version":0,"type":"set","param":{"strip":{"kind":"headamp","index":1},"field":"phantom"},"value":true,"origin":{"kind":"gesture"}}`
+	if c, err := parseCommand(ph); err != nil || c.value.Kind() != model.KindBool {
+		t.Fatalf("phantom: %+v %v", c, err)
+	}
+	ha := `{"version":0,"type":"set","param":{"strip":{"kind":"input","index":1},"field":"headamp"},"value":3,"origin":{"kind":"gesture"}}`
+	if c, err := parseCommand(ha); err != nil || c.value.Kind() != model.KindIndex {
+		t.Fatalf("headamp: %+v %v", c, err)
+	}
+	for _, bad := range []string{`-1`, `"3"`, `null`} {
+		if _, err := parseCommand(strings.Replace(ha, `"value":3`, `"value":`+bad, 1)); CodeOf(err) != CodeInvalidCommand {
+			t.Errorf("headamp %s: %v", bad, err)
+		}
+	}
+	none, _ := model.Index(0)
+	five, _ := model.Index(5)
+	if valueJSON(none) != nil || valueJSON(five) != 5 {
+		t.Fatal("index renders as null or the number")
 	}
 }

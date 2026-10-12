@@ -54,27 +54,41 @@ func resultJSON(r console.Result) gestureResultJSON {
 	return out
 }
 
+// headampJSON is one snapshot headamp with its own law and label (v0.3).
 type headampJSON struct {
-	Index  int     `json:"index"`
-	GainDB float64 `json:"gainDB"`
+	Index    int     `json:"index"`
+	GainDB   float64 `json:"gainDB"`
+	MinDB    float64 `json:"minDB"`
+	MaxDB    float64 `json:"maxDB"`
+	StepDB   float64 `json:"stepDB"`
+	Writable bool    `json:"writable"`
+	Bank     string  `json:"bank"`
+	Number   int     `json:"number"`
+	Phantom  *bool   `json:"phantom,omitempty"`
 }
 
-type headampRangeJSON struct {
-	MinDB  float64 `json:"minDB"`
-	MaxDB  float64 `json:"maxDB"`
-	StepDB float64 `json:"stepDB"`
-}
-
-func headampsJSON(st model.State, c model.Capabilities) ([]headampJSON, *headampRangeJSON) {
+// headampsJSON lists the headamps of the state with their description. A
+// headamp the capabilities do not describe is left out: no law is invented.
+func headampsJSON(st model.State, c model.Capabilities) []headampJSON {
 	hs := st.Headamps()
-	if len(hs) == 0 {
-		return nil, nil
-	}
 	out := make([]headampJSON, 0, len(hs))
 	for _, h := range hs {
-		out = append(out, headampJSON{Index: h.Ref.Index, GainDB: h.GainDB})
+		info, ok := c.Headamp(h.Index)
+		if !ok {
+			continue
+		}
+		j := headampJSON{Index: h.Index, GainDB: h.GainDB, MinDB: info.MinDB, MaxDB: info.MaxDB, StepDB: info.StepDB,
+			Writable: info.Writable, Bank: info.Bank.String(), Number: info.Number}
+		if h.HasPhantom {
+			on := h.Phantom
+			j.Phantom = &on
+		}
+		out = append(out, j)
 	}
-	return out, &headampRangeJSON{MinDB: c.HeadampMinDB, MaxDB: c.HeadampMaxDB, StepDB: c.HeadampStepDB}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 const eventUnlockEnded = "gainUnlockEnded"

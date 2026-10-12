@@ -257,7 +257,12 @@ func parseValue(f model.Field, raw json.RawMessage) (model.Value, error) {
 	switch f {
 	case model.FieldFader, model.FieldGain:
 		v, err = parseLevel(raw)
-	case model.FieldMute:
+	case model.FieldHeadamp:
+		var n int
+		if err = json.Unmarshal(raw, &n); err == nil {
+			v, err = model.Index(n)
+		}
+	case model.FieldMute, model.FieldPhantom:
 		var b bool
 		if err = json.Unmarshal(raw, &b); err == nil {
 			v = model.Bool(b)
@@ -296,6 +301,14 @@ func parseLevel(raw json.RawMessage) (model.Value, error) {
 	return model.Level(db)
 }
 
+// indexJSON renders a strip index; 0 (none) is null.
+func indexJSON(n int) any {
+	if n == 0 {
+		return nil
+	}
+	return n
+}
+
 // levelJSON renders a level for JSON, which has no infinity.
 func levelJSON(db float64) any {
 	if math.IsInf(db, -1) {
@@ -313,6 +326,9 @@ func valueJSON(v model.Value) any {
 	}
 	if m, ok := v.Mask(); ok {
 		return model.MaskMembers(m)
+	}
+	if n, ok := v.Index(); ok {
+		return indexJSON(n)
 	}
 	s, _ := v.Text()
 	return s
@@ -336,6 +352,8 @@ type stripStateJSON struct {
 	MuteGroups    *[]int             `json:"muteGroups,omitempty"`
 	DCAs          *[]int             `json:"dcas,omitempty"`
 	EffectiveMute *effectiveMuteJSON `json:"effectiveMute,omitempty"`
+	// v0.3, x32 inputs: the headamp feeding the strip, null when none.
+	Headamp json.RawMessage `json:"headamp,omitempty"`
 }
 
 type changeJSON struct {
@@ -367,21 +385,20 @@ type stateJSON struct {
 	Status  string `json:"status"`
 	Reason  string `json:"reason,omitempty"`
 	// v0.1 connection fields, in every message.
-	StaleSinceMs  int64             `json:"staleSinceMs,omitempty"`
-	Offline       bool              `json:"offline,omitempty"`
-	Limited       bool              `json:"limited,omitempty"`
-	LimitedReason string            `json:"limitedReason,omitempty"`
-	ShowMode      bool              `json:"showMode,omitempty"`         // v0.3
-	Unlocked      []int             `json:"unlockedHeadamps,omitempty"` // v0.3
-	Console       *consoleJSON      `json:"console,omitempty"`
-	Strips        []stripStateJSON  `json:"strips,omitempty"`
-	AbsentInputs  []int             `json:"absentInputs,omitempty"` // v0.2, snapshot only
-	Headamps      []headampJSON     `json:"headamps,omitempty"`     // v0.3, snapshot only
-	HeadampRange  *headampRangeJSON `json:"headampRange,omitempty"` // v0.3, snapshot only
-	MuteGroups    []groupStateJSON  `json:"muteGroups,omitempty"`   // v0.1, snapshot only
-	DCAs          []groupStateJSON  `json:"dcas,omitempty"`         // v0.1, snapshot only
-	Changes       *[]changeJSON     `json:"changes,omitempty"`      // present (maybe empty) in every diff
-	Events        []eventJSON       `json:"events,omitempty"`
+	StaleSinceMs  int64            `json:"staleSinceMs,omitempty"`
+	Offline       bool             `json:"offline,omitempty"`
+	Limited       bool             `json:"limited,omitempty"`
+	LimitedReason string           `json:"limitedReason,omitempty"`
+	ShowMode      bool             `json:"showMode,omitempty"`         // v0.3
+	Unlocked      []int            `json:"unlockedHeadamps,omitempty"` // v0.3
+	Console       *consoleJSON     `json:"console,omitempty"`
+	Strips        []stripStateJSON `json:"strips,omitempty"`
+	AbsentInputs  []int            `json:"absentInputs,omitempty"` // v0.2, snapshot only
+	Headamps      []headampJSON    `json:"headamps,omitempty"`     // v0.3, snapshot only
+	MuteGroups    []groupStateJSON `json:"muteGroups,omitempty"`   // v0.1, snapshot only
+	DCAs          []groupStateJSON `json:"dcas,omitempty"`         // v0.1, snapshot only
+	Changes       *[]changeJSON    `json:"changes,omitempty"`      // present (maybe empty) in every diff
+	Events        []eventJSON      `json:"events,omitempty"`
 }
 
 // encodeUpdate renders a supervisor update as a state message with sequence seq.
@@ -410,7 +427,7 @@ func encodeUpdate(u console.Update, seq uint64, full bool) ([]byte, error) {
 	out.Console = &consoleJSON{Address: id.Address, Name: id.Name, Model: id.Model, Firmware: id.Firmware}
 	out.Strips = stripsJSON(u.State, u.Capabilities)
 	out.AbsentInputs = absentInputsJSON(u.Capabilities)
-	out.Headamps, out.HeadampRange = headampsJSON(u.State, u.Capabilities)
+	out.Headamps = headampsJSON(u.State, u.Capabilities)
 	out.MuteGroups, out.DCAs = groupStatesJSON(u.State.MuteGroups()), groupStatesJSON(u.State.DCAs())
 	return json.Marshal(out)
 }

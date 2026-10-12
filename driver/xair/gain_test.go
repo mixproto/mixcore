@@ -97,7 +97,7 @@ func TestGain_SmallModelsHaveFewerHeadamps(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			r := newRig(t, simxair.Options{MicHeadamps: n})
 			sess := r.connect()
-			if c := sess.Capabilities(); c.Headamps != n || len(sess.Snapshot().Headamps()) != n {
+			if c := sess.Capabilities(); len(c.Headamps) != n || len(sess.Snapshot().Headamps()) != n {
 				t.Fatalf("%d headamps: caps %+v", n, c)
 			}
 			err := sess.Apply(driver.Command{Param: headamp(n + 1), Value: level(t, 0), Origin: gesture})

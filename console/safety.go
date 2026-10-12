@@ -161,9 +161,10 @@ func (s *Supervisor) openWindowLocked(k holdKey) *window {
 	w := &window{Window: Window{Start: start}}
 	switch k.param.Field {
 	case model.FieldGain:
-		w.HasCap = true
-		w.CapUp = math.Min(start+gainCapUpDB, s.caps.HeadampMaxDB)
-		w.CapDown = math.Max(start-gainCapDnDB, s.caps.HeadampMinDB)
+		w.HasCap, w.CapUp, w.CapDown = true, start+gainCapUpDB, start-gainCapDnDB
+		if h, ok := s.caps.Headamp(k.param.Strip.Index); ok { // this headamp's own law (CR-23)
+			w.CapUp, w.CapDown = math.Min(w.CapUp, h.MaxDB), math.Max(w.CapDown, h.MinDB)
+		}
 	case model.FieldFader:
 		w.law = s.cfg.Driver.FaderLaw()
 		if s.safe.client(k.client).SlipGuard {

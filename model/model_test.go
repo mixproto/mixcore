@@ -193,13 +193,9 @@ func mustLevel(t *testing.T, db float64) Value {
 	return v
 }
 
-// v0.3: headamp strips carry only gain, in dB, finite.
+// v0.3: headamp strips carry gain (dB, finite) and, where read, phantom.
 func TestHeadamps_Gain(t *testing.T) {
-	st, err := NewState(nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	st = st.WithHeadamps([]float64{32.5, -12})
+	st := headampState(t, Headamp{Index: 2, GainDB: -12}, Headamp{Index: 1, GainDB: 32.5, HasPhantom: true})
 	p := ParamRef{Strip: StripRef{Kind: StripHeadamp, Index: 1}, Field: FieldGain}
 	if v, ok := st.Value(p); !ok || !v.Equal(mustLevel(t, 32.5)) {
 		t.Fatalf("gain = %v, %v", v, ok)
@@ -211,18 +207,20 @@ func TestHeadamps_Gain(t *testing.T) {
 	if v, _ := st.Value(p); !v.Equal(mustLevel(t, 32.5)) {
 		t.Fatal("With must not mutate the receiver")
 	}
-	if hs := next.Headamps(); len(hs) != 2 || hs[0].GainDB != 35.5 || hs[1].Ref.Index != 2 {
+	if hs := next.Headamps(); len(hs) != 2 || hs[0].GainDB != 35.5 || hs[1].Index != 2 {
 		t.Fatalf("headamps %+v", hs)
 	}
 	for _, bad := range []struct {
 		p ParamRef
 		v Value
 	}{
-		{ParamRef{Strip: StripRef{Kind: StripHeadamp, Index: 3}, Field: FieldGain}, mustLevel(t, 0)},
 		{ParamRef{Strip: StripRef{Kind: StripHeadamp, Index: 1}, Field: FieldFader}, mustLevel(t, 0)},
+		{ParamRef{Strip: StripRef{Kind: StripHeadamp, Index: 0}, Field: FieldGain}, mustLevel(t, 0)},
 		{p, mustLevel(t, math.Inf(-1))},
 		{p, Bool(true)},
 		{ParamRef{Strip: MainRef, Field: FieldGain}, mustLevel(t, 0)},
+		{ParamRef{Strip: StripRef{Kind: StripHeadamp, Index: 2}, Field: FieldPhantom}, Bool(true)}, // no phantom read
+		{ParamRef{Strip: StripRef{Kind: StripHeadamp, Index: 9}, Field: FieldPhantom}, Bool(true)},
 	} {
 		if _, err := st.With(bad.p, bad.v); err == nil {
 			t.Errorf("With(%v, %v) accepted", bad.p, bad.v)
@@ -237,4 +235,92 @@ func TestHeadamps_Gain(t *testing.T) {
 	if f, err := ParseField("gain"); err != nil || f != FieldGain || f.ValueKind() != KindLevel {
 		t.Fatal("parse gain")
 	}
+}
+
+// x32: a patch change brings in an AES50 headamp; its gain adds it, sorted.
+func TestHeadamps_GainOfANewHeadampAddsIt(t *testing.T) {
+	st := headampState(t, Headamp{Index: 1}, Headamp{Index: 40})
+	next, err := st.With(ParamRef{Strip: StripRef{Kind: StripHeadamp, Index: 33}, Field: FieldGain}, mustLevel(t, 10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hs := next.Headamps()
+	if len(hs) != 3 || hs[1] != (Headamp{Index: 33, GainDB: 10}) || len(st.Headamps()) != 2 {
+		t.Fatalf("headamps %+v (receiver %d)", hs, len(st.Headamps()))
+	}
+}
+
+func TestHeadamps_Phantom(t *testing.T) {
+	st := headampState(t, Headamp{Index: 1, HasPhantom: true})
+	p := ParamRef{Strip: StripRef{Kind: StripHeadamp, Index: 1}, Field: FieldPhantom}
+	next, err := st.With(p, Bool(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := next.Value(p); !ok || !v.Equal(Bool(true)) {
+		t.Fatalf("phantom %v %v", v, ok)
+	}
+	if v, _ := st.Value(p); !v.Equal(Bool(false)) {
+		t.Fatal("With must not mutate the receiver")
+	}
+	if f, err := ParseField("phantom"); err != nil || f.ValueKind() != KindBool {
+		t.Fatal("parse phantom")
+	}
+}
+
+func TestHeadamps_InvalidStateRefused(t *testing.T) {
+	st, _ := NewState(nil, nil)
+	for _, hs := range [][]Headamp{{{Index: 0}}, {{Index: 1}, {Index: 1}}, {{Index: 1, GainDB: math.NaN()}}} {
+		if _, err := st.WithHeadamps(hs); !errors.Is(err, ErrInvalidState) {
+			t.Errorf("%+v: %v", hs, err)
+		}
+	}
+}
+
+// x32 /-ha: an input's headamp is an index value, 0 = none; read-only data.
+func TestInputHeadampField(t *testing.T) {
+	st, err := NewState([]Strip{{Ref: StripRef{Kind: StripInput, Index: 1}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := ParamRef{Strip: StripRef{Kind: StripInput, Index: 1}, Field: FieldHeadamp}
+	five, _ := Index(5)
+	next, err := st.With(p, five)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := next.Value(p); !ok || !v.Equal(five) {
+		t.Fatalf("headamp %v %v", v, ok)
+	}
+	if _, err := Index(-1); !errors.Is(err, ErrInvalidValue) {
+		t.Fatal("negative index accepted")
+	}
+	if _, err := st.With(ParamRef{Strip: MainRef, Field: FieldHeadamp}, five); err == nil {
+		t.Fatal("main has no headamp field")
+	}
+	if n, ok := five.Index(); !ok || n != 5 || five.String() != "index 5" {
+		t.Fatal("index accessors")
+	}
+}
+
+func TestCapabilities_HeadampLookup(t *testing.T) {
+	c := Capabilities{Headamps: []HeadampInfo{{Index: 1, Bank: BankLocal, Number: 1}, {Index: 36, Bank: BankAES50A, Number: 4}}}
+	if h, ok := c.Headamp(36); !ok || h.Bank.String() != "aes50a" || h.Number != 4 {
+		t.Fatalf("36: %+v %v", h, ok)
+	}
+	if _, ok := c.Headamp(2); ok {
+		t.Fatal("2 is not described")
+	}
+}
+
+func headampState(t *testing.T, hs ...Headamp) State {
+	t.Helper()
+	st, err := NewState(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st, err = st.WithHeadamps(hs); err != nil {
+		t.Fatal(err)
+	}
+	return st
 }

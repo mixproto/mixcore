@@ -21,14 +21,27 @@ import (
 // headamp 3 Gain +32.5 dB, range -12..+60 dB in 0.5 dB steps.
 var (
 	gain3     = model.ParamRef{Strip: model.StripRef{Kind: model.StripHeadamp, Index: 3}, Field: model.FieldGain}
-	gainCaps  = model.Capabilities{Headamps: 3, HeadampMinDB: -12, HeadampMaxDB: 60, HeadampStepDB: 0.5, InputCount: 1, HasMain: true}
+	gainCaps  = model.Capabilities{Headamps: micHeadamps(3), InputCount: 1, HasMain: true}
 	macro     = driver.Origin{Kind: driver.OriginMacro, ClientID: "ui", Seq: 1}
 	musician  = driver.Origin{Kind: driver.OriginGesture, ClientID: "mon-2", Seq: 1}
 	engineerB = driver.Origin{Kind: driver.OriginGesture, ClientID: "foh", Seq: 1}
 )
 
 func safetyState(faderDB float64) model.State {
-	return stateWith(faderDB).WithHeadamps([]float64{0, 0, 32.5})
+	st, err := stateWith(faderDB).WithHeadamps([]model.Headamp{{Index: 1}, {Index: 2}, {Index: 3, GainDB: 32.5}})
+	if err != nil {
+		panic(err)
+	}
+	return st
+}
+
+// micHeadamps describes headamps 1..n with the mic law (-12..+60 dB, 0.5 dB).
+func micHeadamps(n int) []model.HeadampInfo {
+	out := make([]model.HeadampInfo, n)
+	for i := range out {
+		out[i] = model.HeadampInfo{Index: i + 1, Bank: model.BankLocal, Number: i + 1, MinDB: -12, MaxDB: 60, StepDB: 0.5, Writable: true}
+	}
+	return out
 }
 
 func startSafe(t *testing.T, cfg SafetyConfig, st model.State) (*Supervisor, *fakeDriver) {
@@ -379,6 +392,28 @@ func TestTyped_OnlyFromAGesture(t *testing.T) {
 		}
 		if n := len(drv.session(0).writes()); n != 0 {
 			t.Fatalf("%d writes", n)
+		}
+	})
+}
+
+// x32: a patch change brings in an AES50 headamp mid-session. Its first
+// value makes the next update a snapshot, so the UI gets the headamp's
+// law and label with it (state.schema.json headamps).
+func TestHeadamp_NewHeadampMakesTheNextUpdateASnapshot(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, drv := startSafe(t, SafetyConfig{}, safetyState(-6))
+		_ = sup.Drain()
+		gain4 := model.ParamRef{Strip: model.StripRef{Kind: model.StripHeadamp, Index: 4}, Field: model.FieldGain}
+		drv.session(0).push <- driver.ParamChanged{Param: gain4, Value: lvl(t, 20), Origin: driver.Origin{Kind: driver.OriginConsole}}
+		synctest.Wait()
+		u := sup.Drain()
+		if !u.Full || len(u.State.Headamps()) != 4 {
+			t.Fatalf("full %v headamps %+v", u.Full, u.State.Headamps())
+		}
+		drv.session(0).push <- driver.ParamChanged{Param: gain4, Value: lvl(t, 21), Origin: driver.Origin{Kind: driver.OriginConsole}}
+		synctest.Wait()
+		if u := sup.Drain(); u.Full || len(u.Changes) != 1 {
+			t.Fatalf("a known headamp is a diff: full %v changes %d", u.Full, len(u.Changes))
 		}
 	})
 }

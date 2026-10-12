@@ -471,6 +471,7 @@ func (s *Supervisor) handleEvent(ev driver.Event) {
 // applyChangeLocked publishes a console-reported value at once. If it is an
 // external change of a held fader, that gesture ends (HoldExternalChange).
 func (s *Supervisor) applyChangeLocked(c Change) {
+	_, known := s.state.Strip(c.Param.Strip)
 	next, err := s.state.With(c.Param, c.Value)
 	if err != nil {
 		s.cfg.Logger.Debug("console: change ignored", "param", c.Param.String(), "err", err)
@@ -479,7 +480,7 @@ func (s *Supervisor) applyChangeLocked(c Change) {
 	s.state = next
 	s.holds.external(c)
 	s.safe.noteChange(c)
-	if len(s.changes)+len(s.eff.changes) >= maxPendingChanges {
+	if !known || len(s.changes)+len(s.eff.changes) >= maxPendingChanges { // a new headamp (x32 patch change) needs its snapshot entry
 		s.full = true
 	} else if !s.full {
 		s.changes = append(s.changes, c)

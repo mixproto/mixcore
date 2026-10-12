@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -39,9 +40,9 @@ func TestConnect_ReadsFullStateAndSendsNoWrites(t *testing.T) {
 		if id.Model != "MR18V2" || id.Name != "XR18-1D-DA-B4" || id.Firmware != "1.22" || id.Address != mixerIP {
 			t.Fatalf("identity %+v", id)
 		}
-		want := model.Capabilities{Headamps: 16, HeadampMinDB: -12, HeadampMaxDB: 60, HeadampStepDB: 0.5, InputCount: 16, HasMain: true, MuteGroups: 4, DCAs: 4, MainMuteGroups: false,
+		want := model.Capabilities{Headamps: wantHeadamps(16), InputCount: 16, HasMain: true, MuteGroups: 4, DCAs: 4, MainMuteGroups: false,
 			InputMeters: true, EchoesOwnWrites: true, MaxPushClients: 8}
-		if c := sess.Capabilities(); c != want {
+		if c := sess.Capabilities(); !reflect.DeepEqual(c, want) {
 			t.Fatalf("capabilities %+v, want %+v", c, want)
 		}
 		st := sess.Snapshot()
@@ -257,4 +258,13 @@ func TestMeters_Bank1PublishedInDBFS(t *testing.T) {
 			t.Fatal("meter requests are not writes")
 		}
 	})
+}
+
+// wantHeadamps describes mic headamps 1..n (xair.md XA-F111).
+func wantHeadamps(n int) []model.HeadampInfo {
+	out := make([]model.HeadampInfo, n)
+	for i := range out {
+		out[i] = model.HeadampInfo{Index: i + 1, Bank: model.BankLocal, Number: i + 1, MinDB: -12, MaxDB: 60, StepDB: 0.5, Writable: true}
+	}
+	return out
 }
