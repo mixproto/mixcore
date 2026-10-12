@@ -246,3 +246,21 @@ func TestHeadampFields_JSONTypes(t *testing.T) {
 		t.Fatal("index renders as null or the number")
 	}
 }
+
+// Review pass 3, MEDIUM 2: trackLengthPt goes with holdBegin only, 0 < pt
+// <= 10000.
+func TestHoldBegin_TrackLength(t *testing.T) {
+	hb := `{"version":0,"type":"holdBegin","param":{"strip":{"kind":"input","index":1},"field":"fader"},"trackLengthPt":152,"origin":{"kind":"gesture"}}`
+	if c, err := parseCommand(hb); err != nil || c.trackPt != 152 {
+		t.Fatalf("holdBegin 152 pt: %+v %v", c, err)
+	}
+	for _, bad := range []string{
+		strings.Replace(hb, `152`, `0`, 1), strings.Replace(hb, `152`, `-5`, 1), strings.Replace(hb, `152`, `10001`, 1),
+		strings.Replace(hb, `"holdBegin"`, `"holdEnd"`, 1),
+		`{"version":0,"type":"set","param":{"strip":{"kind":"input","index":1},"field":"fader"},"value":0,"trackLengthPt":152,"origin":{"kind":"gesture"}}`,
+	} {
+		if _, err := parseCommand(bad); CodeOf(err) != CodeInvalidCommand {
+			t.Errorf("%s: %v", bad, err)
+		}
+	}
+}

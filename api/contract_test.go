@@ -133,6 +133,7 @@ func FuzzParseCommand(f *testing.F) {
 	f.Add(`{"version":0,"type":"setShowMode","value":true,"origin":{"kind":"gesture"}}`)
 	f.Add(`{"version":0,"type":"setSlipGuard","value":false,"origin":{"kind":"gesture","clientId":"ui"}}`)
 	f.Add(`{"version":0,"type":"holdBegin","param":{"strip":{"kind":"input","index":1},"field":"fader"},"typed":true,"origin":{"kind":"gesture"}}`)
+	f.Add(`{"version":0,"type":"holdBegin","param":{"strip":{"kind":"input","index":1},"field":"fader"},"trackLengthPt":152,"origin":{"kind":"gesture"}}`)
 	f.Fuzz(func(t *testing.T, in string) {
 		c, err := parseCommand(in)
 		if err != nil {
@@ -140,6 +141,9 @@ func FuzzParseCommand(f *testing.F) {
 				t.Fatalf("parse error with code %s", CodeOf(err))
 			}
 			return
+		}
+		if c.trackPt != 0 && (c.kind != cmdHoldBegin || !(c.trackPt > 0 && c.trackPt <= maxTrackPt)) {
+			t.Fatalf("trackLengthPt %v accepted on %s", c.trackPt, c.kind)
 		}
 		if (c.typed || c.confirmed) && c.origin.Kind != driver.OriginGesture {
 			t.Fatalf("typed/confirmed accepted from origin %s", c.origin.Kind)

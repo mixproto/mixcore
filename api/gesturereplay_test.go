@@ -7,6 +7,7 @@ package api
 import (
 	"encoding/json"
 	"math"
+	"strconv"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -143,7 +144,11 @@ func (u *uiDouble) play(v pathVariant, large bool) {
 	if large {
 		return // SR-21: a large contact never grabs
 	}
-	u.gesture(cmdJSON("holdBegin", u.param(), ""), 0)
+	track := "" // the UI sends its track length, so the core checks the rest in pt (MEDIUM 2)
+	if u.kind == ctlFader {
+		track = `,"trackLengthPt":` + strconv.FormatFloat(u.length, 'f', -1, 64)
+	}
+	u.gesture(cmdJSON("holdBegin", u.param(), track), 0)
 	last, prev := math.NaN(), v.Points[0]
 	for _, p := range v.Points[1:] {
 		time.Sleep(time.Duration(p.T-prev.T) * time.Millisecond)

@@ -97,6 +97,22 @@ func climb(n int, dy float64, moveMs, restMs int) []pathPoint {
 	return pts
 }
 
+// rest is a resting finger after a move up dy in moveMs: restMs of a slow
+// sway of +-swayPt at 1.5 Hz (at most 28 pt/s for 3 pt, below wall.restSpeed
+// 30 pt/s; restMs a multiple of 1/3 s ends it at the centre),
+// then up moreDy in 200 ms (review pass 3, MEDIUM 2).
+func rest(dy float64, moveMs, restMs int, swayPt, moreDy float64) []pathPoint {
+	pts := line(0, moveMs, 0, dy)
+	for t := pathSampleMs; t <= restMs; t += pathSampleMs {
+		pts = append(pts, pathPoint{T: moveMs + t, Y: round1(dy + swayPt*math.Sin(2*math.Pi*1.5*float64(t)/1000))})
+	}
+	base := moveMs + restMs
+	for _, p := range line(0, 200, 0, moreDy)[1:] {
+		pts = append(pts, pathPoint{T: base + p.T, Y: round1(dy + p.Y)})
+	}
+	return pts
+}
+
 // buildPaths returns P1..P8, P1D and P1R..P6R as specified (phone-safety
 // acceptance, "Touch paths").
 func buildPaths() pathsFile {
@@ -134,6 +150,9 @@ func buildPaths() pathsFile {
 		{ID: "P1D", Motion: "down 60 in 40 ms", Why: "the emergency pull must never be stopped", Variants: any1(line(0, 40, 0, -60))},
 		{ID: "P9", Motion: "five times: up 40 in 200 ms, then rest 400 ms", Why: "a deliberate climb that opens several slip-guard walls in one gesture (review HIGH 2)",
 			Variants: any1(climb(5, 40, 200, 400))},
+		{ID: "P10", Motion: "up past the first slip-guard wall (portrait 100, landscape 35) in 300 ms, rest 1000 ms swaying +-3 at 1.5 Hz, then up 40 (landscape 15) in 200 ms",
+			Why:      "a real resting finger trembles: the wall must still open (review pass 3, MEDIUM 2)",
+			Variants: []pathVariant{{"portrait", rest(100, 300, 1000, 3, 40)}, {"landscape", rest(35, 300, 1000, 3, 15)}}},
 	}
 	for _, p := range ps[:6] { // P1R..P6R: rotated 90 degrees clockwise, up becomes right
 		r := gesturePath{ID: p.ID + "R", Motion: p.Motion + ", rotated 90 degrees clockwise", Why: p.Why + " on a horizontal control"}

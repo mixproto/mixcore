@@ -37,6 +37,7 @@ const (
 	fieldEffective  = "effectiveMute"
 	maxGroupNumber  = 32 // largest group number a membership list may name
 	maxClientIDLen  = 128
+	maxTrackPt      = 10000 // command.schema.json trackLengthPt maximum
 )
 
 var errVersion = errors.New("unsupported contract version")
@@ -84,6 +85,8 @@ type commandJSON struct {
 	Typed     *bool           `json:"typed"`     // v0.3, set only
 	Confirmed *bool           `json:"confirmed"` // v0.3, set only
 	Undo      *bool           `json:"undo"`      // v0.3, set only
+	// TrackLengthPt: v0.3, holdBegin only, optional (review pass 3, MEDIUM 2).
+	TrackLengthPt *float64 `json:"trackLengthPt"`
 }
 
 // command is a parsed, validated Apply input.
@@ -92,8 +95,9 @@ type command struct {
 	param                  model.ParamRef
 	value                  model.Value
 	origin                 driver.Origin
-	typed, confirmed, undo bool // set only (v0.3)
-	on                     bool // setSlipGuard, setShowMode
+	typed, confirmed, undo bool    // set only (v0.3)
+	on                     bool    // setSlipGuard, setShowMode
+	trackPt                float64 // holdBegin: track length in pt, 0 = not given
 }
 
 func decodeStrict(data string, v any) error {
@@ -178,6 +182,12 @@ func parseCommand(data string) (command, error) {
 	cmd := command{kind: c.Type, origin: o}
 	if (c.Typed != nil || c.Confirmed != nil || c.Undo != nil) && c.Type != cmdSet {
 		return command{}, codeErr(CodeInvalidCommand, errors.New("typed, confirmed and undo go with set only"))
+	}
+	if c.TrackLengthPt != nil {
+		if c.Type != cmdHoldBegin || !(*c.TrackLengthPt > 0 && *c.TrackLengthPt <= maxTrackPt) {
+			return command{}, codeErr(CodeInvalidCommand, fmt.Errorf("trackLengthPt goes with holdBegin, 0 < pt <= %v", maxTrackPt))
+		}
+		cmd.trackPt = *c.TrackLengthPt
 	}
 	switch c.Type {
 	case cmdSlipGuard, cmdShowMode:

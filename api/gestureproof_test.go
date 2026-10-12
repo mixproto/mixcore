@@ -158,6 +158,10 @@ func TestTouchPaths_FaderNeverJumps(t *testing.T) {
 				checkClimb(t, g.orientation, r)
 				continue
 			}
+			if p.ID == "P10" {
+				checkTremble(t, g.orientation, r, start)
+				continue
+			}
 			if r.max() > start+6+writeTol || r.max() >= 10 {
 				t.Errorf("%s %s: wrote up to %.2f dB", g.orientation, p.ID, r.max())
 			}
@@ -247,6 +251,27 @@ func sortedKeys(m map[string]bool) []string {
 // checkClimb: P9 only moves up and rests at each wall, so its writes never
 // fall (review HIGH 2: a second opened wall made the fader jump down), and
 // it opens more than one wall.
+// trembleStepDB: the largest change between two writes a P10 finger can
+// make (at most 0.6 pt per 8 ms frame, about 0.16 dB in landscape).
+const trembleStepDB = 0.5
+
+// checkTremble: a finger resting at the wall with a +-3 pt tremble opens it
+// in both orientations, and the value then follows the finger (the sway
+// down included: down is never stopped) without a jump.
+func checkTremble(t *testing.T, orientation string, r run, start float64) {
+	t.Helper()
+	wall := start + 6
+	if r.max() <= wall+writeTol || r.max() > wall+6+writeTol {
+		t.Errorf("%s P10: highest write %.2f; the wall at %.2f must open (and the next one hold)", orientation, r.max(), wall)
+	}
+	for i := 1; i < len(r.writes); i++ {
+		if math.Abs(r.writes[i]-r.writes[i-1]) > trembleStepDB {
+			t.Errorf("%s P10: write %d jumped from %.2f to %.2f", orientation, i, r.writes[i-1], r.writes[i])
+			return
+		}
+	}
+}
+
 func checkClimb(t *testing.T, orientation string, r run) {
 	t.Helper()
 	for i := 1; i < len(r.writes); i++ {

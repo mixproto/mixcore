@@ -5,6 +5,7 @@
 package console
 
 import (
+	"context"
 	"errors"
 	"math"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mixproto/mixcore/driver"
+	"github.com/mixproto/mixcore/meters"
 	"github.com/mixproto/mixcore/model"
 )
 
@@ -208,6 +210,65 @@ func TestGain_GrabAboveTheWritableTopNeverWritesDown(t *testing.T) {
 		}
 		if n := len(drv.session(0).writes()); n != 0 || w.Window.CapUp != 60 {
 			t.Fatalf("%d writes, cap %v", n, w.Window.CapUp)
+		}
+	})
+}
+
+// linearLaw is a test fader law: positions 0..1 for -60..+10 dB.
+type linearLaw struct{}
+
+func (linearLaw) PositionFromDB(db float64) float64 { return math.Min(math.Max((db+60)/70, 0), 1) }
+func (linearLaw) DBFromPosition(p float64) float64  { return p*70 - 60 }
+
+// tremble rests the finger at the wall for 800 ms (one full sway) with a slow +-amp sway
+// (8 ms frames, 2.5 Hz) around the candidate c(0), then asks openWall.
+func tremble(t *testing.T, sup *Supervisor, at func(sway float64) float64, amp float64) Result {
+	t.Helper()
+	for i := range 100 {
+		sway := amp * math.Sin(2*math.Pi*2.5*float64(i*8)/1000)
+		_, _ = sup.Write(set(ch1Fader, lvl(t, at(sway)), gesture))
+		time.Sleep(8 * time.Millisecond)
+	}
+	r, _ := sup.OpenWall(ch1Fader, gesture)
+	return r
+}
+
+// Review pass 3, MEDIUM 2: with the track length (landscape 152 pt) a
+// resting finger trembling +-3 pt opens the wall: the span is the spec's
+// 9 pt (phone-safety.md 4.1), not 0.5 dB (about 1 pt in landscape).
+func TestSlipGuard_TrembleAtRestOpensTheWallInLandscape(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		drv := &fakeDriver{snapshot: safetyState(-6), caps: gainCaps, law: linearLaw{}}
+		sup, err := New(Config{Driver: drv, Rand: func() float64 { return 0.5 }, Options: driver.Options{Meters: &meters.Slot{}},
+			Safety: SafetyConfig{Client: ClientSafety{SlipGuard: true}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sup.Start(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(sup.Stop)
+		synctest.Wait()
+		const track = 152.0
+		_, _ = sup.HoldWindowWith(ch1Fader, gesture, true, HoldOptions{TrackLengthPt: track})
+		rest := linearLaw{}.PositionFromDB(0) + 5/track // 5 pt past the wall
+		r := tremble(t, sup, func(sway float64) float64 { return linearLaw{}.DBFromPosition(rest + sway/track) }, 3)
+		if r.State != StateFree || r.Window.WallUp != 6 {
+			t.Fatalf("a resting finger (+-3 pt of 152) did not open the wall: %s %v", r.State, r.Window.WallUp)
+		}
+	})
+}
+
+// Without the track length the span is 2 dB of travel: a +-0.9 dB tremble
+// rests (it did not with 0.5 dB); the 12.5 dB/s push stays blocked
+// (TestSlipGuard_RestMeansStillness).
+func TestSlipGuard_TrembleAtRestOpensTheWallWithoutTrack(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, _ := startSafe(t, SafetyConfig{Client: ClientSafety{SlipGuard: true}}, safetyState(-6))
+		_, _ = sup.HoldWindow(ch1Fader, gesture, true)
+		r := tremble(t, sup, func(sway float64) float64 { return 1 + sway }, 0.9)
+		if r.State != StateFree {
+			t.Fatalf("a +-0.9 dB tremble did not open the wall: %s", r.State)
 		}
 	})
 }

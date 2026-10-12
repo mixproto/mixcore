@@ -532,8 +532,8 @@ func TestGain_FailedApplyIsNotInFlight(t *testing.T) {
 
 // Re-review LOW C: the rest is stillness, not time at the wall. A UI that
 // keeps pushing the finger up past the wall (12.5 dB/s in the probe) never
-// opens it; once the finger stays within 0.5 dB of fader travel for 300 ms
-// it opens.
+// opens it; once the finger stays within 2 dB of fader travel (no track
+// length given) for 300 ms it opens.
 func TestSlipGuard_RestMeansStillness(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		sup, _ := startSafe(t, SafetyConfig{Client: ClientSafety{SlipGuard: true}}, safetyState(-6))

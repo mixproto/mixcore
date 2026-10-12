@@ -45,6 +45,12 @@
       "type": "boolean",
       "description": "v0.3, set only, with typed: the user confirmed the big raise ('Raise ... from -20.0 to -2.0 dB?'). Without it a typed raise of more than 6 dB returns ERR_NEEDS_CONFIRM. Only with origin kind gesture."
     },
+    "trackLengthPt": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 10000,
+      "description": "v0.3, holdBegin only, optional: the length of the control's track on screen in pt (Apple) or dp (Android), so the core can check the rest before openWall in the spec's own unit: the finger stays within 9 pt (wall.restSpeed 30 pt/s for wall.dwell 300 ms, phone-safety.md 4.1) for 300 ms. Without it the core allows 2 dB of fader travel. Example: portrait 490, landscape 152 on a 6.1 inch phone."
+    },
     "undo": {
       "type": "boolean",
       "description": "v0.3, set only: this write undoes an earlier entry. In show mode an undo that raises Gain is allowed for 10 s after the relock of the unlock it was made in, only back to a value Gain had before an entry of that unlock (SR-27); it is still bounded to 6 dB unless typed and confirmed (SR-31)."
@@ -89,6 +95,24 @@
         "not": {
           "required": [
             "value"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "not": {
+          "properties": {
+            "type": {
+              "const": "holdBegin"
+            }
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "trackLengthPt"
           ]
         }
       }
@@ -312,6 +336,7 @@
         },
         "field": "fader"
       },
+      "trackLengthPt": 490,
       "origin": {
         "kind": "gesture",
         "clientId": "ios-1",

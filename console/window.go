@@ -25,9 +25,13 @@ const (
 	// wallDwell is how long the value must stand at a slip-guard wall before
 	// openWall is accepted (tokens.md wall.dwell, SR-26; review MEDIUM 4).
 	wallDwell = 300 * time.Millisecond
-	// restSpanDB: the finger rests while it stays within this much fader
-	// travel at the wall (re-review LOW C, lead decision: rest = stillness).
-	restSpanDB = 0.5
+	// The finger rests while it stays within restSpanPt of the track
+	// (wall.restSpeed 30 pt/s x wall.dwell 300 ms, phone-safety.md 4.1)
+	// when the UI gave the track length, else within restSpanDB of fader
+	// travel below the wall (lead decisions: re-review LOW C, pass 3
+	// MEDIUM 2; 2 dB still stops a finger pushed at 12.5 dB/s).
+	restSpanPt = 9.0
+	restSpanDB = 2.0
 )
 
 // GestureState is what the core did with a candidate (CR-22).
@@ -62,12 +66,13 @@ type Window struct {
 // window is the owner state of one hold's window. Guarded by Supervisor.mu.
 type window struct {
 	Window
-	law    driver.FaderLaw // nil: re-anchor in dB (Gain, or a driver without a law)
-	offset float64         // re-anchoring after openWall, in fader positions
-	state  GestureState
-	lastAt float64   // fader position of the candidate that stopped at the wall
-	wallAt time.Time // when the current rest at the wall began (zero: not at it)
-	restAt float64   // raw finger position where the current rest began
+	law     driver.FaderLaw // nil: re-anchor in dB (Gain, or a driver without a law)
+	offset  float64         // re-anchoring after openWall, in fader positions
+	state   GestureState
+	lastAt  float64   // fader position of the candidate that stopped at the wall
+	wallAt  time.Time // when the current rest at the wall began (zero: not at it)
+	restAt  float64   // raw finger position where the current rest began
+	trackPt float64   // on-screen track length, 0 = unknown (HoldOptions)
 }
 
 // slipWall is the first slip-guard stop above start (SR-26).
@@ -129,12 +134,13 @@ func (w *window) openWall() bool {
 	return true
 }
 
-// restSpan is how far the finger may move at the wall and still rest: 0.5 dB
-// of fader travel just below the wall. phone-safety.md 4.1 step 4 gives the
-// UI's threshold in points (wall.restSpeed 30 pt/s for wall.dwell 300 ms, so
-// at most 9 pt); the core has no track length, so it uses the fader law (0.5
-// dB at 0 dB is about 6 pt of a 490 pt portrait track).
+// restSpan is how far the finger may move at the wall and still rest, in
+// fader positions: 9 pt of the track when its length is known (a position
+// is the whole track), else 2 dB of fader travel just below the wall.
 func (w *window) restSpan() float64 {
+	if w.trackPt > 0 && w.law != nil {
+		return restSpanPt / w.trackPt
+	}
 	return w.position(w.WallUp) - w.position(w.WallUp-restSpanDB)
 }
 

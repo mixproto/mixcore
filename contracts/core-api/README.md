@@ -144,8 +144,10 @@ behave the same and a UI bug cannot bypass them:
    one write, whatever the UI computed:
    - **Slip guard** (faders, when `slipGuard` is on for the client, SR-26): the value stops at `max(start, -16) + 6` dB
      (from `-inf` the first stop is -10 dB); downward is never stopped. After the UI measured a 300 ms rest at the wall it
-     sends `openWall`: accepted only after the finger has been still at the wall for 300 ms (`wall.dwell`, checked in the core:
-     candidates within 0.5 dB of fader travel; a larger move restarts the 300 ms; earlier the result stays `atWall`); the core re-anchors (the next upward move
+     sends `openWall`: accepted only after the finger has been still at the wall for 300 ms (`wall.dwell`, checked in the
+     core). Still means the candidates stay within 9 pt of the track (`wall.restSpeed` 30 pt/s x 300 ms, phone-safety.md
+     4.1) when `holdBegin` carried `trackLengthPt`, else within 2 dB of fader travel below the wall; a larger move restarts
+     the 300 ms, and earlier the result stays `atWall`. The core re-anchors (the next upward move
      continues from the wall value, no jump) and sets the next wall 6 dB higher. Show mode never changes it.
    - **Gain caps** (headamp gain, every client, SR-24): `[start - 6, start + 3]` dB within the range; never opens.
    - **Monitor ceiling** (`safety.monitorCeiling`, SR-28): every fader write of this engine (channel, bus, main; a

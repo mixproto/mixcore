@@ -280,8 +280,10 @@ func (e *Engine) run(commandJSON string) (console.Result, error) {
 		return console.Result{}, err
 	}
 	switch cmd.kind {
-	case cmdHoldBegin, cmdHoldEnd:
-		return sup.HoldWindow(cmd.param, cmd.origin, cmd.kind == cmdHoldBegin)
+	case cmdHoldBegin:
+		return sup.HoldWindowWith(cmd.param, cmd.origin, true, console.HoldOptions{TrackLengthPt: cmd.trackPt})
+	case cmdHoldEnd:
+		return sup.HoldWindow(cmd.param, cmd.origin, false)
 	case cmdToggle:
 		return console.Result{}, sup.Toggle(cmd.param, cmd.origin)
 	case cmdOpenWall:

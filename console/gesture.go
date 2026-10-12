@@ -131,6 +131,19 @@ func (s *Supervisor) Hold(p model.ParamRef, origin driver.Origin, held bool) err
 // only begin while live (ErrStale otherwise), so no finger held through an
 // outage writes after the reconnect; ending a hold always works.
 func (s *Supervisor) HoldWindow(p model.ParamRef, origin driver.Origin, held bool) (Result, error) {
+	return s.HoldWindowWith(p, origin, held, HoldOptions{})
+}
+
+// HoldOptions describe the control a hold is on.
+type HoldOptions struct {
+	// TrackLengthPt is the on-screen track length (pt or dp); with it the
+	// rest before openWall is checked in the spec's 9 pt (review pass 3,
+	// MEDIUM 2). 0: unknown, 2 dB of fader travel.
+	TrackLengthPt float64
+}
+
+// HoldWindowWith is HoldWindow with the control's geometry.
+func (s *Supervisor) HoldWindowWith(p model.ParamRef, origin driver.Origin, held bool, opts HoldOptions) (Result, error) {
 	if !origin.MayWrite() {
 		return Result{}, driver.ErrNotUserOrigin
 	}
@@ -160,7 +173,9 @@ func (s *Supervisor) HoldWindow(p model.ParamRef, origin driver.Origin, held boo
 	if isHeadampGain(p) {
 		s.safe.unlocks.touch(p.Strip.Index)
 	}
-	return Result{Value: cur, Window: windowOf(s.openWindowLocked(k))}, nil
+	w := s.openWindowLocked(k)
+	w.trackPt = opts.TrackLengthPt
+	return Result{Value: cur, Window: windowOf(w)}, nil
 }
 
 // OpenWall re-opens a slip-guard wall after the UI measured a 300 ms rest
