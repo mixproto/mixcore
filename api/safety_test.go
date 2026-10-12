@@ -206,3 +206,15 @@ func TestSafety_TypedNeedsAGestureOrigin(t *testing.T) {
 		}
 	}
 }
+
+// Review LOW 6: "monitorCeiling": null is not "on with the default"; it is
+// refused like any other malformed value, so a host that serialises an unset
+// optional as null cannot cap a seat by accident.
+func TestSafety_MonitorCeilingNullRefused(t *testing.T) {
+	for _, v := range []string{`null`, ` null `} {
+		_, err := parseConfig(`{"version":0,"family":"xair","host":"10.0.0.1","safety":{"monitorCeiling":` + v + `}}`)
+		if CodeOf(err) != CodeInvalidConfig {
+			t.Fatalf("monitorCeiling %q: %v, want ERR_INVALID_CONFIG", v, err)
+		}
+	}
+}

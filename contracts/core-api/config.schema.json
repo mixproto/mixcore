@@ -57,7 +57,7 @@
           "description": "SR-27: the UI restores the per-console setting it stored on the device."
         },
         "monitorCeiling": {
-          "description": "SR-28, CR-25: this engine is a monitor seat. Every level write is capped at the engineer's latest value + headroomDB (0..10, default 6), never below that value; 'off' or absent: no ceiling. The hub will carry it per client in the pairing token.",
+          "description": "SR-28, CR-25: this engine is a monitor seat. Every level write is capped at the engineer's latest value + headroomDB (0..10, default 6), never below that value; 'off' or absent: no ceiling; null is refused (ERR_INVALID_CONFIG). The hub will carry it per client in the pairing token.",
           "oneOf": [
             {
               "type": "object",

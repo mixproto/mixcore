@@ -167,6 +167,7 @@ func FuzzParseConfig(f *testing.F) {
 	f.Add(`{"version":0,"family":"xair","host":"10.0.0.1","safety":{"slipGuard":true,"showMode":true}}`)
 	f.Add(`{"version":0,"family":"x32","host":"10.0.0.1","safety":{"monitorCeiling":{"headroomDB":6}}}`)
 	f.Add(`{"version":0,"family":"x32","host":"10.0.0.1","safety":{"monitorCeiling":"off"}}`)
+	f.Add(`{"version":0,"family":"x32","host":"10.0.0.1","safety":{"monitorCeiling":null}}`)
 	f.Add(`{"version":0,"family":"x32","host":"10.0.0.1","safety":{"monitorCeiling":{"headroomDB":11}}}`)
 	f.Fuzz(func(t *testing.T, in string) {
 		c, err := parseConfig(in)

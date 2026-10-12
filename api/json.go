@@ -32,6 +32,7 @@ const (
 	cmdSlipGuard    = "setSlipGuard" // v0.3
 	cmdShowMode     = "setShowMode"  // v0.3
 	ceilingOff      = "off"
+	jsonNull        = "null"
 	maxHeadroomDB   = 10.0
 	fieldEffective  = "effectiveMute"
 	maxGroupNumber  = 32 // largest group number a membership list may name
@@ -134,11 +135,15 @@ func parseConfig(data string) (configJSON, error) {
 }
 
 // monitor parses monitorCeiling: absent or "off" -> nil; {headroomDB} with
-// a default of 6 dB, 0..10 (SR-28).
+// a default of 6 dB, 0..10 (SR-28). null is refused: it would otherwise
+// decode as {} and switch the ceiling on.
 func (s safetyJSON) monitor() (*console.MonitorCeiling, error) {
 	raw := bytes.TrimSpace(s.MonitorCeiling)
 	if len(raw) == 0 || string(raw) == `"`+ceilingOff+`"` {
 		return nil, nil
+	}
+	if string(raw) == jsonNull {
+		return nil, errors.New(`monitorCeiling: null; use "off" or {headroomDB}`)
 	}
 	var m struct {
 		HeadroomDB *float64 `json:"headroomDB"`
