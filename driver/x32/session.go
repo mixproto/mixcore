@@ -55,6 +55,8 @@ type session struct {
 
 	ident    driver.Identity
 	snapshot model.State
+	caps     model.Capabilities
+	absent   map[feature]bool // set during connect, read-only afterwards
 
 	mu      sync.Mutex
 	order   []int                // pending parameter indexes, first-seen order
@@ -97,7 +99,7 @@ func newSession(d *Driver, c *conn, opts driver.Options) *session {
 }
 
 func (s *session) Identity() driver.Identity        { return s.ident }
-func (s *session) Capabilities() model.Capabilities { return capabilities() }
+func (s *session) Capabilities() model.Capabilities { return s.caps }
 func (s *session) Snapshot() model.State            { return s.snapshot }
 
 // Apply queues one user write; the latest value per parameter wins.
@@ -109,7 +111,7 @@ func (s *session) Apply(cmd driver.Command) error {
 		return driver.ErrClosed
 	}
 	p, ok := s.params.byRef(cmd.Param)
-	if !ok {
+	if !ok || p.readOnly || s.absent[p.feature] {
 		return fmt.Errorf("x32 %s: %w", cmd.Param, driver.ErrUnsupported)
 	}
 	arg, err := toWire(p, cmd.Value)
@@ -335,7 +337,7 @@ func (s *session) decodeChange(p inPacket) (driver.ParamChanged, bool) {
 		return driver.ParamChanged{}, false
 	}
 	par, ok := s.params.byAddress(s.msg.Address)
-	if !ok {
+	if !ok || s.absent[par.feature] {
 		return driver.ParamChanged{}, false // anything we did not ask for
 	}
 	arg, ok := s.msg.Arg(0)

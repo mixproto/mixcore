@@ -174,8 +174,11 @@ func TestEngine_ConnectsAndSendsSnapshotThenDiffs(t *testing.T) {
 		_ = e.sim.SurfaceSet("/ch/04/mix/on", osc.Int(0))
 		synctest.Wait()
 		diff := e.rec.last()
-		if diff.Type != "diff" || len(*diff.Changes) != 1 || (*diff.Changes)[0].Origin.Kind != "console" || (*diff.Changes)[0].Value != true {
+		if diff.Type != "diff" || len(*diff.Changes) != 2 || (*diff.Changes)[0].Origin.Kind != "console" || (*diff.Changes)[0].Value != true {
 			t.Fatalf("diff = %+v", diff)
+		}
+		if eff := (*diff.Changes)[1]; eff.Param.Field != "effectiveMute" || eff.Param.Strip.Index != 4 || eff.Value.(map[string]any)["muted"] != true {
+			t.Fatalf("effective mute change = %+v", eff) // v0.1: the UI never computes it
 		}
 		for i, m := range e.rec.all() {
 			if m.Seq != uint64(i+1) {

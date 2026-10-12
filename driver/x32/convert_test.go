@@ -172,19 +172,50 @@ func TestFaderLaw_UIPositions(t *testing.T) {
 	}
 }
 
-func TestMute_InvertedOnSwitch(t *testing.T) {
-	// X32-F33: mix/on 1 = on (not muted), 0 = muted.
-	if muteToWire(true) != 0 || muteToWire(false) != 1 {
-		t.Fatal("mute must map to mix/on 0, unmute to 1")
+// X32-F33, X32-F37: mix/on and dca/on 1 = on (not muted), 0 = muted.
+// X32-F35: /config/mute 1 = group engaged (muting): the opposite polarity.
+func TestSwitches_Polarity(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		c     conv
+		muted bool
+		wire  int32
+	}{
+		{"channel muted", convOnSwitch, true, 0},
+		{"channel on", convOnSwitch, false, 1},
+		{"group engaged", convEngaged, true, 1},
+		{"group released", convEngaged, false, 0},
+	} {
+		if got := switchToWire(tc.c, tc.muted); got != tc.wire {
+			t.Errorf("%s: switchToWire = %d, want %d", tc.name, got, tc.wire)
+		}
+		if m, err := switchFromWire(tc.c, tc.wire); err != nil || m != tc.muted {
+			t.Errorf("%s: switchFromWire(%d) = %v, %v", tc.name, tc.wire, m, err)
+		}
 	}
-	if m, err := muteFromWire(0); err != nil || !m {
-		t.Fatalf("muteFromWire(0) = %v, %v; want muted", m, err)
+	for _, c := range []conv{convOnSwitch, convEngaged} {
+		if _, err := switchFromWire(c, 2); !errors.Is(err, errBadWire) {
+			t.Fatalf("switchFromWire(2) err = %v", err)
+		}
 	}
-	if m, err := muteFromWire(1); err != nil || m {
-		t.Fatalf("muteFromWire(1) = %v, %v; want not muted", m, err)
+}
+
+// X32-F36, X32-F38: membership bitmaps are read-only and range-checked.
+func TestMembership_Bitmaps(t *testing.T) {
+	tbl := newParamTable(1)
+	p, _ := tbl.byAddress([]byte("/ch/01/grp/mute"))
+	if v, err := fromWire(p, osc.Int(63)); err != nil || !v.Equal(model.Mask(63)) {
+		t.Fatalf("grp/mute 63 = %v, %v", v, err)
 	}
-	if _, err := muteFromWire(2); !errors.Is(err, errBadWire) {
-		t.Fatalf("muteFromWire(2) err = %v", err)
+	if _, err := fromWire(p, osc.Int(64)); !errors.Is(err, errBadWire) {
+		t.Fatalf("grp/mute 64 err = %v", err)
+	}
+	d, _ := tbl.byAddress([]byte("/ch/01/grp/dca"))
+	if _, err := fromWire(d, osc.Int(255)); err != nil {
+		t.Fatalf("grp/dca 255 err = %v", err)
+	}
+	if _, err := toWire(p, model.Mask(1)); !errors.Is(err, model.ErrInvalidValue) {
+		t.Fatalf("membership write err = %v", err)
 	}
 }
 
@@ -251,8 +282,9 @@ func TestToWireFromWire_PerField(t *testing.T) {
 
 func TestParamTable_Addresses(t *testing.T) {
 	ps := newParamTable(inputChannels)
-	if n := len(ps.all); n != inputChannels*3+2 {
-		t.Fatalf("table has %d params, want %d", n, inputChannels*3+2)
+	// Per input: name, fader, mute, grp/mute, grp/dca; main: fader, mute, grp/mute; 6 groups; 8 DCAs.
+	if want := inputChannels*5 + 3 + muteGroupCount + dcaCount; len(ps.all) != want {
+		t.Fatalf("table has %d params, want %d", len(ps.all), want)
 	}
 	want := map[string]model.ParamRef{
 		"/ch/01/mix/fader":   {Strip: model.StripRef{Kind: model.StripInput, Index: 1}, Field: model.FieldFader},
@@ -260,6 +292,11 @@ func TestParamTable_Addresses(t *testing.T) {
 		"/ch/09/config/name": {Strip: model.StripRef{Kind: model.StripInput, Index: 9}, Field: model.FieldName},
 		"/main/st/mix/fader": {Strip: model.MainRef, Field: model.FieldFader},
 		"/main/st/mix/on":    {Strip: model.MainRef, Field: model.FieldMute},
+		"/ch/05/grp/mute":    {Strip: model.StripRef{Kind: model.StripInput, Index: 5}, Field: model.FieldMuteGroups},
+		"/ch/05/grp/dca":     {Strip: model.StripRef{Kind: model.StripInput, Index: 5}, Field: model.FieldDCAs},
+		"/main/st/grp/mute":  {Strip: model.MainRef, Field: model.FieldMuteGroups},
+		"/config/mute/6":     {Strip: model.StripRef{Kind: model.StripMuteGroup, Index: 6}, Field: model.FieldMute},
+		"/dca/8/on":          {Strip: model.StripRef{Kind: model.StripDCA, Index: 8}, Field: model.FieldMute},
 	}
 	for addr, ref := range want {
 		p, ok := ps.byAddress([]byte(addr))

@@ -55,14 +55,22 @@ func TestContractExamples_Parse(t *testing.T) {
 func stateExamples(t *testing.T) [][]byte {
 	t.Helper()
 	main := model.Strip{Ref: model.MainRef, FaderDB: math.Inf(-1)}
-	st, err := model.NewState([]model.Strip{{Ref: model.StripRef{Kind: model.StripInput, Index: 1}, Name: "Kick", FaderDB: -3.5}}, &main)
+	kick := model.StripRef{Kind: model.StripInput, Index: 1}
+	st, err := model.NewState([]model.Strip{{Ref: kick, Name: "Kick", FaderDB: -3.5, MuteGroups: 0b10, DCAs: 0b1}}, &main)
 	if err != nil {
 		t.Fatal(err)
 	}
+	st = st.WithGroups(2, 1)
+	mg2 := model.ParamRef{Strip: model.StripRef{Kind: model.StripMuteGroup, Index: 2}, Field: model.FieldMute}
+	if st, err = st.With(mg2, model.Bool(true)); err != nil {
+		t.Fatal(err)
+	}
 	lv, _ := model.Level(-6)
+	desk := driver.Origin{Kind: driver.OriginConsole}
 	u := console.Update{Status: console.StatusLive, State: st, Identity: driver.Identity{Name: "FOH", Model: "X32"},
 		Changes: []console.Change{{Param: model.ParamRef{Strip: model.MainRef, Field: model.FieldFader}, Value: lv,
-			Origin: driver.Origin{Kind: driver.OriginGesture, ClientID: "ui", Seq: 3}}},
+			Origin: driver.Origin{Kind: driver.OriginGesture, ClientID: "ui", Seq: 3}}, {Param: mg2, Value: model.Bool(true), Origin: desk}},
+		Effective: []console.EffectiveChange{{Strip: kick, Mute: st.EffectiveMute(kick), Origin: desk}},
 		Events: []console.HoldEvent{
 			{Kind: console.HoldExternalChange, Param: model.ParamRef{Strip: model.MainRef, Field: model.FieldFader}, ClientID: "ios-1",
 				Value: lv, Origin: driver.Origin{Kind: driver.OriginConsole}},
@@ -82,11 +90,16 @@ func stateExamples(t *testing.T) [][]byte {
 func TestStateJSON_Golden(t *testing.T) {
 	ex := stateExamples(t)
 	wantSnap := `{"version":0,"type":"snapshot","seq":1,"status":"live","console":{"name":"FOH","model":"X32"},` +
-		`"strips":[{"kind":"input","index":1,"name":"Kick","faderDB":-3.5,"mute":false},{"kind":"main","name":"","faderDB":"-inf","mute":false}],` +
+		`"strips":[{"kind":"input","index":1,"name":"Kick","faderDB":-3.5,"mute":false,"muteGroups":[2],"dcas":[1],` +
+		`"effectiveMute":{"muted":true,"own":false,"muteGroups":[2],"dcas":[]}},` +
+		`{"kind":"main","name":"","faderDB":"-inf","mute":false,"muteGroups":[],"effectiveMute":{"muted":false,"own":false,"muteGroups":[],"dcas":[]}}],` +
+		`"muteGroups":[{"index":1,"mute":false},{"index":2,"mute":true}],"dcas":[{"index":1,"mute":false}],` +
 		`"events":[{"type":"externalChangeOnHeld","param":{"strip":{"kind":"main"},"field":"fader"},"clientId":"ios-1","value":-6,"origin":{"kind":"console"}},` +
 		`{"type":"holdCancelled","param":{"strip":{"kind":"main"},"field":"fader"},"clientId":"ios-2","reason":"stale"}]}`
 	wantDiff := `{"version":0,"type":"diff","seq":2,"status":"live","changes":[{"param":{"strip":{"kind":"main"},"field":"fader"},` +
-		`"value":-6,"origin":{"kind":"gesture","clientId":"ui","seq":3}}],` +
+		`"value":-6,"origin":{"kind":"gesture","clientId":"ui","seq":3}},` +
+		`{"param":{"strip":{"kind":"muteGroup","index":2},"field":"mute"},"value":true,"origin":{"kind":"console"}},` +
+		`{"param":{"strip":{"kind":"input","index":1},"field":"effectiveMute"},"value":{"muted":true,"own":false,"muteGroups":[2],"dcas":[]},"origin":{"kind":"console"}}],` +
 		`"events":[{"type":"externalChangeOnHeld","param":{"strip":{"kind":"main"},"field":"fader"},"clientId":"ios-1","value":-6,"origin":{"kind":"console"}},` +
 		`{"type":"holdCancelled","param":{"strip":{"kind":"main"},"field":"fader"},"clientId":"ios-2","reason":"stale"}]}`
 	if string(ex[0]) != wantSnap {

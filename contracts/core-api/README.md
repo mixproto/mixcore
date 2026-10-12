@@ -13,6 +13,7 @@ working unchanged. What v0.1 adds:
 | Connection | `staleSinceMs` and `offline` in every state message; stale after 1.5 s without any packet from the console | SR-05, CR-06, 8.1 |
 | Client limit | `limited` and `limitedReason`: the console does not send this engine updates (slots full); input locked, holds cancelled with reason `limited` | SR-17, CR-10 |
 | Meters | Main L/R as levels 32/33 of the meter frame; `MeterScale`, `MeterPosition`, `MeterRelease` so every UI draws meters alike | CR-17, OQ 24, OQ 27 |
+| Mute groups and DCAs | strip kinds `muteGroup` and `dca` (field `mute`), membership fields `muteGroups` and `dcas`, derived `effectiveMute` per strip; command type `toggle` | CR-01, CR-02, SR-04 |
 | Fader steps | `FaderStep(db, deltaDB)`: the bottom-of-scale rule (`-inf` <-> -60 dB) for keyboard, screen reader and +/- buttons | CR-21, OQ 26 |
 
 ## Calls

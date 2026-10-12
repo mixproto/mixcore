@@ -60,6 +60,10 @@ type Options struct {
 	// scene recall push only the changed parameters; true also sets and pushes
 	// /-show/prepos/current and /-undo/time (X32-F61, X32-F62).
 	PushSceneMarkers bool
+	// UnknownAddresses are parameters this console does not know (older
+	// firmware, another model): reads get no reply and writes are not
+	// applied (X32-F06). A test option, not a documented fact.
+	UnknownAddresses []string
 	MeterTTL         time.Duration // X32-F50
 	MeterInterval    time.Duration // X32-F50
 	Logger           *slog.Logger
@@ -158,7 +162,11 @@ var ErrUnknownAddress = errors.New("x32 sim: unknown address")
 
 // New creates a simulator with the documented defaults applied to opts.
 func New(opts Options) *Sim {
-	return &Sim{opts: opts.withDefaults(), params: newParams()}
+	params := newParams()
+	for _, a := range opts.UnknownAddresses {
+		delete(params, a)
+	}
+	return &Sim{opts: opts.withDefaults(), params: params}
 }
 
 // Serve answers packets on pc until ctx is cancelled. It closes nothing; the

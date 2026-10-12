@@ -46,7 +46,6 @@ import (
 
 	"github.com/mixproto/mixcore/driver"
 	"github.com/mixproto/mixcore/internal/safe"
-	"github.com/mixproto/mixcore/model"
 )
 
 // Family is the family name of this driver.
@@ -123,14 +122,6 @@ func (d *Driver) Family() driver.Family { return Family }
 
 // FaderLaw implements driver.Driver (X32-F40).
 func (d *Driver) FaderLaw() driver.FaderLaw { return faderLaw{} }
-
-// Capabilities of every X32-family console as far as this driver supports them.
-func capabilities() model.Capabilities {
-	return model.Capabilities{
-		InputCount: inputChannels, HasMain: true, InputMeters: true,
-		EchoesOwnWrites: true, MaxPushClients: maxPushClients,
-	}
-}
 
 // Connect implements driver.Driver. It identifies the console with /xinfo,
 // registers /xremote and reads every parameter. It never writes a parameter.

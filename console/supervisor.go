@@ -86,7 +86,10 @@ type Update struct {
 	State         model.State
 	Full          bool
 	Changes       []Change
-	Events        []HoldEvent
+	// Effective lists strips whose effective mute changed (diffs only; a full
+	// update carries every strip's effective mute in State).
+	Effective []EffectiveChange
+	Events    []HoldEvent
 }
 
 // Config configures a Supervisor.
@@ -121,6 +124,7 @@ type Supervisor struct {
 	sess       driver.Session
 	holds      holds
 	changes    []Change
+	eff        effective
 	full       bool
 	seq        uint64
 	cancel     context.CancelFunc
@@ -215,10 +219,10 @@ func (s *Supervisor) Drain() Update {
 	u := s.snapshotLocked()
 	u.Full = s.full
 	if !s.full {
-		u.Changes = s.changes
+		u.Changes, u.Effective = s.changes, s.eff.changes
 	}
 	u.Events = s.holds.events
-	s.changes, s.full, s.holds.events = nil, false, nil
+	s.changes, s.full, s.holds.events, s.eff.changes = nil, false, nil, nil
 	return u
 }
 
@@ -350,6 +354,7 @@ func (s *Supervisor) adopt(sess driver.Session) {
 	s.ident = sess.Identity()
 	s.state = sess.Snapshot()
 	s.changes = nil
+	s.eff.reset(s.state)
 	s.setStatusLocked(StatusLive, "")
 	// SetMeters never blocks; calling it under mu orders it with SetMeters below.
 	if err := sess.SetMeters(s.cfg.Meters); err != nil {
@@ -414,6 +419,7 @@ func (s *Supervisor) handleEvent(ev driver.Event) {
 		s.applyChangeLocked(Change{Param: e.Param, Value: e.Value, Origin: e.Origin})
 	case driver.StateReplaced:
 		s.state = e.State
+		s.eff.reset(s.state)
 		s.endHeldOnReplaceLocked()
 		s.full = true
 		s.signal()
@@ -441,10 +447,13 @@ func (s *Supervisor) applyChangeLocked(c Change) {
 	}
 	s.state = next
 	s.holds.external(c)
-	if len(s.changes) >= maxPendingChanges {
+	if len(s.changes)+len(s.eff.changes) >= maxPendingChanges {
 		s.full = true
 	} else if !s.full {
 		s.changes = append(s.changes, c)
+	}
+	if affectsMute(c.Param.Field) {
+		s.eff.update(s.state, c.Origin, !s.full)
 	}
 	s.signal()
 }

@@ -18,6 +18,10 @@ import (
 const (
 	// readWindow caps reads in flight during the initial read (X32-F07).
 	readWindow = 16
+	// optionalReadTries: a parameter of an optional feature that got no reply
+	// to this many reads is taken as unknown to this console (X32-F06), and
+	// its feature is absent for the session.
+	optionalReadTries = 5
 	// xinfoArgs is the number of string arguments of an /xinfo reply (X32-F10).
 	xinfoArgs = 4
 )
@@ -41,7 +45,23 @@ func (s *session) connect(ctx context.Context) error {
 		return err
 	}
 	s.snapshot = state
+	s.caps = s.capabilities()
 	return nil
+}
+
+// capabilities of this console as far as it answered (X32-F35..F38).
+func (s *session) capabilities() model.Capabilities {
+	c := model.Capabilities{
+		InputCount: inputChannels, HasMain: true, InputMeters: true,
+		EchoesOwnWrites: true, MaxPushClients: maxPushClients,
+	}
+	if !s.absent[featureMuteGroups] {
+		c.MuteGroups = muteGroupCount
+	}
+	if !s.absent[featureDCAs] {
+		c.DCAs = dcaCount
+	}
+	return c
 }
 
 // next waits up to wait for a packet. ok is false on timeout.
@@ -98,16 +118,19 @@ type readState struct {
 	values []model.Value
 	have   []bool
 	sentAt []time.Time
-	next   int // next parameter to request
-	left   int // parameters still without a value
-	flight int // requested, not yet answered
+	tries  []int
+	gaveUp []bool // optional parameter the console did not answer
+	next   int    // next parameter to request
+	left   int    // parameters still without a value
+	flight int    // requested, not yet answered
 }
 
 // readAll requests every parameter with at most readWindow in flight and
 // re-requests unanswered ones. Pushes that arrive meanwhile count as answers.
 func (s *session) readAll(ctx context.Context) (model.State, error) {
 	n := len(s.params.all)
-	rs := &readState{values: make([]model.Value, n), have: make([]bool, n), sentAt: make([]time.Time, n), left: n}
+	rs := &readState{values: make([]model.Value, n), have: make([]bool, n), sentAt: make([]time.Time, n),
+		tries: make([]int, n), gaveUp: make([]bool, n), left: n}
 	for rs.left > 0 {
 		s.requestMore(rs)
 		p, ok, err := s.next(ctx, s.timing.ReadRetryEvery)
@@ -120,7 +143,20 @@ func (s *session) readAll(ctx context.Context) (model.State, error) {
 		s.retryReads(rs) // also while pushes keep arriving, or a lost reply is never re-requested
 	}
 	s.known = rs.values
+	s.absent = s.absentFeatures(rs)
 	return s.buildState(rs.values)
+}
+
+// absentFeatures lists the features with a parameter the console did not answer.
+func (s *session) absentFeatures(rs *readState) map[feature]bool {
+	out := map[feature]bool{}
+	for i, p := range s.params.all {
+		if rs.gaveUp[i] && !out[p.feature] {
+			out[p.feature] = true
+			s.log.Info("x32: console does not answer a parameter; feature off for this session", "addr", p.addr)
+		}
+	}
+	return out
 }
 
 func (s *session) requestMore(rs *readState) {
@@ -132,6 +168,7 @@ func (s *session) requestMore(rs *readState) {
 		}
 		s.sendSub(s.params.all[i].addr) // X32-F04: read = address without arguments
 		rs.sentAt[i] = time.Now()
+		rs.tries[i]++
 		rs.flight++
 	}
 }
@@ -139,10 +176,18 @@ func (s *session) requestMore(rs *readState) {
 func (s *session) retryReads(rs *readState) {
 	now := time.Now()
 	for i := range rs.next {
-		if !rs.have[i] && !rs.sentAt[i].IsZero() && now.Sub(rs.sentAt[i]) >= s.timing.ReadRetryEvery {
-			s.sendSub(s.params.all[i].addr)
-			rs.sentAt[i] = now
+		if rs.have[i] || rs.sentAt[i].IsZero() || now.Sub(rs.sentAt[i]) < s.timing.ReadRetryEvery {
+			continue
 		}
+		if s.params.all[i].feature != featureCore && rs.tries[i] >= optionalReadTries {
+			rs.have[i], rs.gaveUp[i] = true, true // unknown to this console (X32-F06)
+			rs.left--
+			rs.flight--
+			continue
+		}
+		s.sendSub(s.params.all[i].addr)
+		rs.sentAt[i] = now
+		rs.tries[i]++
 	}
 }
 
@@ -174,45 +219,33 @@ func (s *session) acceptRead(rs *readState, p inPacket) {
 	}
 }
 
+// buildState makes the snapshot from the values read. Parameters of absent
+// features are left out: a missing feature is absent, never faked.
 func (s *session) buildState(values []model.Value) (model.State, error) {
 	inputs := make([]model.Strip, inputChannels)
-	main := model.Strip{Ref: model.MainRef}
-	for i, p := range s.params.all {
-		var err error
-		if p.ref.Strip == model.MainRef {
-			main, err = applyField(main, p.ref.Field, values[i])
-		} else {
-			k := p.ref.Strip.Index - 1
-			inputs[k].Ref = p.ref.Strip
-			inputs[k], err = applyField(inputs[k], p.ref.Field, values[i])
-		}
-		if err != nil {
-			return model.State{}, err
-		}
+	for i := range inputs {
+		inputs[i].Ref = model.StripRef{Kind: model.StripInput, Index: i + 1}
 	}
-	return model.NewState(inputs, &main)
-}
-
-func applyField(st model.Strip, f model.Field, v model.Value) (model.Strip, error) {
-	switch f {
-	case model.FieldFader:
-		db, ok := v.DB()
-		if !ok {
-			return st, model.ErrInvalidValue
+	main := model.Strip{Ref: model.MainRef}
+	st, err := model.NewState(inputs, &main)
+	if err != nil {
+		return model.State{}, err
+	}
+	st = st.WithGroups(groupCount(s.absent[featureMuteGroups], muteGroupCount), groupCount(s.absent[featureDCAs], dcaCount))
+	for i, p := range s.params.all {
+		if s.absent[p.feature] {
+			continue
 		}
-		st.FaderDB = db
-	case model.FieldMute:
-		m, ok := v.Bool()
-		if !ok {
-			return st, model.ErrInvalidValue
+		if st, err = st.With(p.ref, values[i]); err != nil {
+			return model.State{}, fmt.Errorf("x32: %s: %w", p.addr, err)
 		}
-		st.Muted = m
-	default:
-		name, ok := v.Text()
-		if !ok {
-			return st, model.ErrInvalidValue
-		}
-		st.Name = name
 	}
 	return st, nil
+}
+
+func groupCount(absent bool, n int) int {
+	if absent {
+		return 0
+	}
+	return n
 }

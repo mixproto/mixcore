@@ -258,6 +258,8 @@ func (e *Engine) Apply(commandJSON string) (err error) {
 	switch cmd.kind {
 	case cmdHoldBegin, cmdHoldEnd:
 		return sup.Hold(cmd.param, cmd.origin, cmd.kind == cmdHoldBegin)
+	case cmdToggle:
+		return sup.Toggle(cmd.param, cmd.origin)
 	default:
 		return sup.Apply(driver.Command{Param: cmd.param, Value: cmd.value, Origin: cmd.origin})
 	}

@@ -64,8 +64,8 @@ func (s *session) rereadStep(now time.Time) {
 	}
 	for sent := 0; sent < rereadBatch && s.rr.next < len(s.params.all); s.rr.next++ {
 		idx := s.rr.next
-		if s.writtenRecently(idx, now) {
-			continue // a gesture is moving it; its echo keeps us in sync
+		if s.writtenRecently(idx, now) || s.absent[s.params.all[idx].feature] {
+			continue // a gesture is moving it (its echo keeps us in sync), or the console lacks it
 		}
 		s.sendRead(s.params.all[idx].addr)
 		s.rr.asked[idx] = false

@@ -106,13 +106,24 @@
           },
           "mute": {
             "type": "boolean"
+          },
+          "muteGroups": {
+            "$ref": "common.schema.json#/$defs/groupList",
+            "description": "v0.1: mute groups this strip belongs to."
+          },
+          "dcas": {
+            "$ref": "common.schema.json#/$defs/groupList",
+            "description": "v0.1: DCA groups this strip belongs to (inputs only on x32)."
+          },
+          "effectiveMute": {
+            "$ref": "common.schema.json#/$defs/effectiveMute"
           }
         }
       }
     },
     "changes": {
       "type": "array",
-      "description": "diff only; present (possibly empty) in every diff.",
+      "description": "diff only; present (possibly empty) in every diff. v0.1: when a mute, a group state or a membership changes, the core also lists every strip whose effectiveMute changed, as field effectiveMute with the origin of the change that caused it.",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -199,6 +210,48 @@
           }
         ]
       }
+    },
+    "muteGroups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "index",
+          "mute"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "mute": {
+            "type": "boolean"
+          }
+        }
+      },
+      "description": "v0.1, snapshot only: every mute group of the console; mute true = engaged. Changes arrive in diffs as param {strip: {kind: muteGroup, index}, field: mute}. Absent when the console has none (or did not answer for them)."
+    },
+    "dcas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "index",
+          "mute"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "mute": {
+            "type": "boolean"
+          }
+        }
+      },
+      "description": "v0.1, snapshot only: every DCA group; mute true = DCA muted."
     }
   },
   "allOf": [

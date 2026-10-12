@@ -124,7 +124,7 @@ func TestLimit_UnchangedWritesDoNotCount(t *testing.T) {
 }
 
 // passTime is longer than one paced re-read pass over every parameter.
-var passTime = time.Duration(len(newParamTable(inputChannels).all)/rereadBatch+2) * DefaultTiming.PingEvery
+var passTime = rereadPassTime
 
 // Two re-read passes in a row that find changes no push announced.
 func TestLimit_RereadsFindUnpushedChanges(t *testing.T) {
