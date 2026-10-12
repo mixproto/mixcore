@@ -79,8 +79,12 @@ type Engine struct {
 	sup      *console.Supervisor
 	cfg      configJSON
 	stopDisp func() // cancels the session's dispatcher and waits for it
+	// deliverMu serializes the dispatchers' deliveries (dispatch.go); dispGen
+	// is the generation of the newest session's dispatcher.
+	deliverMu sync.Mutex
+	dispGen   atomic.Uint64
 	// lastSafety is the show mode and unlock list of the last message
-	// (dispatcher goroutine only).
+	// (guarded by deliverMu).
 	lastSafety string
 }
 

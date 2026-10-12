@@ -118,7 +118,9 @@ behave the same and a UI bug cannot bypass them:
 - Every call may come from any thread and returns quickly; none performs network I/O on the calling thread.
 - `OnDiscovery` is called once per `Discover`, from that probe's goroutine; it may call `Discover` again.
 - `Log` is called from the log goroutine only. Console and channel names are user content and appear only at debug level.
-- `OnState` is called from one dedicated goroutine, one message at a time, in `seq` order. A slow listener never
+- `OnState` is called from one dedicated goroutine per `Start`, one message at a time, in `seq` order; even when `Stop`
+  and `Start` race on two threads, two calls never overlap and a stopped session's last message never follows the next
+  session's first (it is dropped). A slow listener never
   slows the console connection: changes are coalesced, and if too many pile up the next message is a full snapshot.
   `Stop`, `Pause` and `StopDemo` called from inside `OnState` (on the goroutine that runs it) return `ERR_BUSY` at
   once and change nothing: they would wait for that very goroutine. Call them from the app's own thread; there they

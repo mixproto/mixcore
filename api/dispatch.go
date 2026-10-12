@@ -20,28 +20,38 @@ func (e *Engine) startDispatcher(sup *console.Supervisor) {
 	var wg sync.WaitGroup // this session's dispatcher only: stopping it never waits for the next session's
 	e.stopDisp = func() { cancel(); wg.Wait() }
 	e.wantFull.Store(true)
+	gen := e.dispGen.Add(1)
 	onPanic := func(err error) { e.opts.Logger.Error("api: state listener panicked", "err", err) }
-	safe.Go(&wg, onPanic, func() { e.dispatch(ctx, sup) })
+	safe.Go(&wg, onPanic, func() { e.dispatch(ctx, sup, gen) })
 }
 
 // dispatch delivers supervisor updates as JSON. A slow listener only delays
 // this goroutine; the supervisor coalesces meanwhile. The final state after
-// Stop is delivered before the goroutine ends.
-func (e *Engine) dispatch(ctx context.Context, sup *console.Supervisor) {
+// Stop is delivered before the goroutine ends, unless a newer session
+// already owns the listener (Stop and Start racing on two threads).
+func (e *Engine) dispatch(ctx context.Context, sup *console.Supervisor, gen uint64) {
 	var seq uint64
 	for {
 		select {
 		case <-ctx.Done():
-			e.deliver(sup, &seq)
+			e.deliver(sup, &seq, gen)
 			return
 		case <-sup.Notify():
 		case <-e.kick:
 		}
-		e.deliver(sup, &seq)
+		e.deliver(sup, &seq, gen)
 	}
 }
 
-func (e *Engine) deliver(sup *console.Supervisor, seq *uint64) {
+// deliver runs under deliverMu: a stopping session's dispatcher and the next
+// session's never call OnState at the same time, and only the newest
+// session (gen) reaches the listener.
+func (e *Engine) deliver(sup *console.Supervisor, seq *uint64, gen uint64) {
+	e.deliverMu.Lock()
+	defer e.deliverMu.Unlock()
+	if gen != e.dispGen.Load() {
+		return
+	}
 	u := sup.Drain()
 	full := u.Full || e.wantFull.Swap(false)
 	safetyMoved := e.safetyChanged(u)

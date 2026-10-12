@@ -8,6 +8,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -101,5 +102,53 @@ func BenchmarkGoroutineID(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		_ = goroutineID()
+	}
+}
+
+// overlapProbe counts OnState calls running at the same time.
+type overlapProbe struct {
+	running, worst atomic.Int32
+}
+
+func (p *overlapProbe) OnState(string) {
+	n := p.running.Add(1)
+	for w := p.worst.Load(); n > w && !p.worst.CompareAndSwap(w, n); w = p.worst.Load() {
+	}
+	time.Sleep(50 * time.Microsecond) // widen the window a racing dispatcher would hit
+	p.running.Add(-1)
+}
+
+// Start and Stop from two app threads at once: a stopping session's last
+// message and the next session's first never reach the listener at the
+// same time (README: OnState runs one message at a time), and the
+// dispatchers share no unguarded state (-race).
+func TestOnState_RacingStartStopNeverOverlap(t *testing.T) {
+	const rounds = 300
+	n := memnet.New()
+	pc, err := n.ListenPacket(consoleIP + ":10023")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sim := simx32.New(simx32.Options{})
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	wg.Go(func() { _ = sim.Serve(ctx, pc) })
+	defer func() { cancel(); wg.Wait(); _ = pc.Close() }()
+	eng := NewEngineWith(Options{ListenPacket: n.Host("10.0.0.2")})
+	defer eng.Close()
+	probe := &overlapProbe{}
+	eng.SetStateListener(probe)
+	var apps sync.WaitGroup
+	for range 2 {
+		apps.Go(func() {
+			for range rounds {
+				_, _ = eng.Start(`{"version":0,"family":"x32","host":"10.0.0.1","safety":{"showMode":true}}`)
+				_ = eng.Stop()
+			}
+		})
+	}
+	apps.Wait()
+	if w := probe.worst.Load(); w > 1 {
+		t.Fatalf("%d OnState calls ran at the same time", w)
 	}
 }
