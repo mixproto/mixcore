@@ -13,6 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -250,4 +252,41 @@ func TestCreateReportsTheDirectoriesItMade(t *testing.T) {
 	if err := d.Chown(os.Getuid(), os.Getgid()); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// Regression (go-reviewer L4): the recorder called out while holding its lock,
+// so one slow consumer stalled every relay goroutine that records. out now
+// runs after the lock is released.
+func TestRecorderDoesNotHoldItsLockWhileHandingFramesOn(t *testing.T) {
+	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	var pcap bytes.Buffer
+	var calls atomic.Int32
+	rec, err := NewRecorder(&pcap, FileCapture, func(flow.Frame) {
+		if calls.Add(1) == 1 { // the first frame's consumer is stuck
+			entered <- struct{}{}
+			<-release
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	wg.Go(func() { _ = rec.Datagram(t0, app, console, []byte("a")) })
+	<-entered
+	done := make(chan error, 1)
+	go func() { done <- rec.Datagram(t0, console, app, []byte("b")) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		close(release)
+		wg.Wait()
+		<-done
+		t.Fatal("a second Datagram waited for the first frame's consumer")
+	}
+	close(release)
+	wg.Wait()
 }

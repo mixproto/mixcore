@@ -34,7 +34,8 @@ type Recorder struct {
 }
 
 // NewRecorder writes a pcap header to w; file names the capture in evidence;
-// out (may be nil) receives each frame after it is written.
+// out (may be nil) receives each frame after it is written, outside the
+// recorder's lock. out must not block for long: the relay records inline.
 func NewRecorder(w io.Writer, file string, out func(flow.Frame)) (*Recorder, error) {
 	pw, err := pcapfile.NewWriter(w, netpkt.LinkRaw)
 	if err != nil {
@@ -49,8 +50,10 @@ func NewRecorder(w io.Writer, file string, out func(flow.Frame)) (*Recorder, err
 // Datagram records one UDP datagram.
 func (r *Recorder) Datagram(at time.Time, src, dst netip.AddrPort, payload []byte) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.write(at, netpkt.Packet{Transport: netpkt.UDP, Src: src, Dst: dst, Payload: payload})
+	frames, err := r.write(nil, at, netpkt.Packet{Transport: netpkt.UDP, Src: src, Dst: dst, Payload: payload})
+	r.mu.Unlock()
+	r.handOn(frames)
+	return err
 }
 
 // Stream records bytes sent on a TCP connection from src to dst. The first
@@ -58,16 +61,32 @@ func (r *Recorder) Datagram(at time.Time, src, dst netip.AddrPort, payload []byt
 // seen first) so the capture shows who opened the connection.
 func (r *Recorder) Stream(at time.Time, src, dst netip.AddrPort, payload []byte) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	frames, err := r.stream(at, src, dst, payload)
+	r.mu.Unlock()
+	r.handOn(frames)
+	return err
+}
+
+// handOn passes written frames to out after the lock is released, so a slow
+// consumer never holds up another goroutine's recording.
+func (r *Recorder) handOn(frames []flow.Frame) {
+	for _, f := range frames {
+		r.out(f)
+	}
+}
+
+func (r *Recorder) stream(at time.Time, src, dst netip.AddrPort, payload []byte) ([]flow.Frame, error) {
 	id := [2]netip.AddrPort{src, dst}
 	seq, ok := r.seq[id]
+	var frames []flow.Frame
+	var err error
 	if !ok {
 		flags := netpkt.FlagSYN
 		if _, reverse := r.seq[[2]netip.AddrPort{dst, src}]; reverse {
 			flags |= netpkt.FlagACK
 		}
-		if err := r.write(at, netpkt.Packet{Transport: netpkt.TCP, Src: src, Dst: dst, Flags: flags}); err != nil {
-			return err
+		if frames, err = r.write(frames, at, netpkt.Packet{Transport: netpkt.TCP, Src: src, Dst: dst, Flags: flags}); err != nil {
+			return frames, err
 		}
 		seq = 1
 	}
@@ -75,29 +94,29 @@ func (r *Recorder) Stream(at time.Time, src, dst netip.AddrPort, payload []byte)
 		n := min(len(payload), maxSegment)
 		p := netpkt.Packet{Transport: netpkt.TCP, Src: src, Dst: dst, Seq: seq,
 			Flags: netpkt.FlagACK | netpkt.FlagPSH, Payload: payload[:n]}
-		if err := r.write(at, p); err != nil {
-			return err
+		if frames, err = r.write(frames, at, p); err != nil {
+			return frames, err
 		}
 		seq += uint32(n)
 		payload = payload[n:]
 	}
 	r.seq[id] = seq
-	return nil
+	return frames, nil
 }
 
-func (r *Recorder) write(at time.Time, p netpkt.Packet) error {
+// write appends p to the pcap and its frame to frames. Callers hold r.mu.
+func (r *Recorder) write(frames []flow.Frame, at time.Time, p netpkt.Packet) ([]flow.Frame, error) {
 	raw, err := netpkt.Build(p)
 	if err != nil {
-		return fmt.Errorf("session: record %s -> %s: %w", p.Src, p.Dst, err)
+		return frames, fmt.Errorf("session: record %s -> %s: %w", p.Src, p.Dst, err)
 	}
 	off, err := r.w.WritePacket(at, raw)
 	if err != nil {
-		return err
+		return frames, err
 	}
 	r.n++
-	r.out(flow.Frame{At: at, LinkType: netpkt.LinkRaw, Data: raw,
-		Evidence: flow.Evidence{File: r.file, Offset: off, Packet: r.n}})
-	return nil
+	return append(frames, flow.Frame{At: at, LinkType: netpkt.LinkRaw, Data: raw,
+		Evidence: flow.Evidence{File: r.file, Offset: off, Packet: r.n}}), nil
 }
 
 // TapConn wraps a connection the tool itself opened (introspection) so that

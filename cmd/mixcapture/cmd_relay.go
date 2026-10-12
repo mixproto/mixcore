@@ -104,15 +104,12 @@ func relaySession(ctx context.Context, o relayOptions, rec *recording, e *engine
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	frames := make(chan flow.Frame, frameQueue)
-	recorder, err := session.NewRecorder(capFile, session.FileCapture, func(fr flow.Frame) {
-		select {
-		case frames <- fr:
-		case <-ctx.Done():
-		}
-	})
+	sink := newFrameSink(frames)
+	recorder, err := session.NewRecorder(capFile, session.FileCapture, sink.put)
 	if err != nil {
 		return err
 	}
+	defer reportDrops(out, sink)
 	var wg sync.WaitGroup
 	srcDone := make(chan error, len(o.udp)+len(o.tcp))
 	if err := startRelays(ctx, &wg, o, recorder, srcDone, out); err != nil {
@@ -215,4 +212,11 @@ func parseIPList(text string) ([]netip.Addr, error) {
 		out = append(out, ip.Unmap())
 	}
 	return out, nil
+}
+
+func reportDrops(out io.Writer, sink *frameSink) {
+	if n := sink.dropped(); n > 0 {
+		fmt.Fprintf(out, "WARNING: %d frames were too many for the live view and are missing from index.jsonl; "+
+			"they are in capture.pcap: run \"mixcapture report -session <dir>\" for a complete report\n", n)
+	}
 }
