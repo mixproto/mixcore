@@ -86,6 +86,10 @@ func writeFlows(b *strings.Builder, in Input) {
 	fmt.Fprintf(b, "## Traffic\n\n%d frames: %d decoded flows below, %d not to or from the console, %d not UDP/TCP, "+
 		"%d malformed, %d TCP gaps. %d messages, %d without a value (reads).\n\n",
 		st.Frames, len(in.Flows), st.Foreign, st.Skipped, st.Malformed, st.Gaps, in.Result.Observed, in.Result.Valueless)
+	if st.Dropped > 0 {
+		fmt.Fprintf(b, "**%d decoded messages dropped as too large or too deep** (JSON objects over 1 MiB or 32 levels); "+
+			"their bytes are in the capture file.\n\n", st.Dropped)
+	}
 	for _, f := range in.Flows {
 		fmt.Fprintf(b, "- %s\n", f)
 	}

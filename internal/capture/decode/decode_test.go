@@ -266,20 +266,39 @@ func TestChoose(t *testing.T) {
 // survives feeds and a pending object is capped, so the stream stays linear
 // and recovers for the next object.
 func TestJSONUnclosedObjectIsLinearAndCapped(t *testing.T) {
-	const total, chunk = 128 << 10, 1 // one byte per segment, the reviewer's worst case
-	stream := append([]byte(`{"a":"`), bytes.Repeat([]byte("x"), total)...)
+	const quadratic = 128 << 10 // one byte per segment: 11 s with the old rescan
+	stream := append([]byte(`{"a":"`), bytes.Repeat([]byte("x"), maxPendingJSON+quadratic)...)
 	s := JSON{}.NewStream(netpkt.TCP, nil)
 	start := time.Now()
-	for i := 0; i < len(stream); i += chunk {
-		s.Feed(stream[i:min(i+chunk, len(stream))], func(Message) {})
+	for i := range quadratic {
+		s.Feed(stream[i:i+1], func(Message) {})
 	}
+	s.Feed(stream[quadratic:], func(Message) {}) // the rest at once, past the cap
 	if d := time.Since(start); d > jsonTimeBudget {
-		t.Fatalf("feeding %d KiB of an unclosed object took %s (budget %s)", total>>10, d, jsonTimeBudget)
+		t.Fatalf("feeding an unclosed object took %s (budget %s)", d, jsonTimeBudget)
 	}
-	// The oversized object was dropped; a later object still decodes.
+	// The oversized object was dropped and counted; a later object still decodes.
 	got := feedAll(s, [][]byte{[]byte(`"} {"path":"a/b","value":3}`)})
 	if len(got) != 1 || got[0].String() != "a/b = 3" {
 		t.Fatalf("after the dropped object: %d messages, first %.80s", len(got), got)
+	}
+	if n := s.(Dropper).Dropped(); n != 1 {
+		t.Fatalf("Dropped() = %d, want 1", n)
+	}
+}
+
+// go-reviewer nit 3: with a linear scan the pending cap is 1 MiB again, so
+// large but legitimate objects decode; too deep objects are counted too.
+func TestJSONLargeObjectsDecodeAndDropsAreCounted(t *testing.T) {
+	big := []byte(`{"path":"scene/name","value":"` + strings.Repeat("y", 200<<10) + `"}`)
+	deep := []byte(strings.Repeat("[", maxJSONDepth+2) + strings.Repeat("]", maxJSONDepth+2))
+	s := JSON{}.NewStream(netpkt.TCP, nil)
+	got := feedAll(s, [][]byte{[]byte("{"), deep, []byte("}"), big})
+	if len(got) != 1 || !strings.HasPrefix(got[0].key, "scene/name") {
+		t.Fatalf("a 200 KiB object did not decode: %d messages", len(got))
+	}
+	if n := s.(Dropper).Dropped(); n != 1 {
+		t.Fatalf("Dropped() = %d, want 1 (the too deep object)", n)
 	}
 }
 

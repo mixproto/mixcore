@@ -51,6 +51,7 @@ func sampleInput(t *testing.T) Input {
 		Meta:   session.Meta{Console: "10.0.0.1", Mode: "relay", Started: t0, Capture: session.FileCapture},
 		Result: a.Result(),
 		Flows:  []flow.FlowInfo{{Transport: "udp", App: app, Decoder: "osc", Messages: 3}},
+		Stats:  flow.Stats{Frames: 3, Dropped: 2},
 		Laws:   map[decode.Key]Fit{fader: {Law: fit, Points: a.LawPoints(fader)}},
 	}
 }
@@ -78,6 +79,7 @@ func TestWriteReport(t *testing.T) {
 		"| `/ch/01/mix/fader` | 0.75→0.5 | console->app | 1 | capture.pcap:2524 |",
 		"linear: y = 40*x - 30",
 		"### Snapshot 1 -> 2: 1 changes",
+		"2 decoded messages dropped as too large or too deep",
 		"| `/ch/01/mix/fader` | ch1 fader = -10 dB | console->app | 0.75, 0.5 |",
 	} {
 		if !strings.Contains(md, want) {

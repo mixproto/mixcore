@@ -213,3 +213,19 @@ func TestTCPDir_MinInt32DistanceIsAGap(t *testing.T) {
 		t.Fatalf("chunks %q, gap %t, next %d", chunks, gap, d.next)
 	}
 }
+
+// go-reviewer nit 3: objects a decoder had to drop (too large or too deep)
+// are counted in Stats, summed over every flow and direction.
+func TestStatsCountDecoderDrops(t *testing.T) {
+	r := newRig(t, Config{DetectChunks: 1, Force: map[uint16]string{49280: "json"}})
+	ack := netpkt.FlagACK | netpkt.FlagPSH
+	deep := "{" + strings.Repeat("[", 40) + strings.Repeat("]", 40) + "}"
+	r.send(tcp(appTCP, consoleTCP, 1, ack, deep+`{"path":"a","value":1}`))
+	r.send(tcp(consoleTCP, appTCP, 1, ack, deep))
+	if got := r.tab.Stats().Dropped; got != 2 {
+		t.Fatalf("Stats().Dropped = %d, want 2", got)
+	}
+	if len(r.obs) != 1 {
+		t.Fatalf("observations = %d, want the one valid object", len(r.obs))
+	}
+}

@@ -108,6 +108,12 @@ type Stream interface {
 	Feed(chunk []byte, emit func(Message))
 }
 
+// Dropper is implemented by streams that can drop a message they cannot
+// hold (too large or too deep); Dropped counts them so reports can say so.
+type Dropper interface {
+	Dropped() int
+}
+
 // Decoder is a protocol plug-in.
 type Decoder interface {
 	Name() string

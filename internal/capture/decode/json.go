@@ -62,6 +62,9 @@ func (JSON) NewStream(netpkt.Transport, []byte) Stream { return &jsonStream{} }
 
 type jsonStream struct{ sc objectScanner }
 
+// Dropped implements Dropper: objects abandoned as too large or too deep.
+func (s *jsonStream) Dropped() int { return s.sc.dropped }
+
 func (s *jsonStream) Feed(chunk []byte, emit func(Message)) {
 	s.sc.feed(chunk, func(obj []byte) { flattenJSON(obj, obj, emit) })
 }
@@ -73,14 +76,18 @@ func (s *jsonStream) Feed(chunk []byte, emit func(Message)) {
 // maxJSONDepth or longer than maxPendingJSON is abandoned and the scan
 // resumes after it.
 type objectScanner struct {
-	obj   []byte // the pending object so far; empty while searching
-	depth int
-	inStr bool
-	esc   bool
+	obj     []byte // the pending object so far; empty while searching
+	depth   int
+	inStr   bool
+	esc     bool
+	dropped int // objects abandoned as too large or too deep
 }
 
-// maxPendingJSON caps the bytes held for one unfinished object.
-const maxPendingJSON = 64 << 10
+// maxPendingJSON caps the bytes held for one unfinished object. The scan is
+// linear, so the cap bounds memory only: 1 MiB leaves room for large
+// legitimate objects (scene or library dumps) and still stops an object that
+// never closes. Abandoned objects are counted (Dropper).
+const maxPendingJSON = 1 << 20
 
 func (sc *objectScanner) feed(b []byte, fn func([]byte)) {
 	for _, c := range b {
@@ -97,6 +104,7 @@ func (sc *objectScanner) feed(b []byte, fn func([]byte)) {
 			continue
 		}
 		if sc.depth > maxJSONDepth || len(sc.obj) > maxPendingJSON {
+			sc.dropped++
 			sc.reset()
 		}
 	}

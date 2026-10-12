@@ -89,9 +89,11 @@ type Config struct {
 // ErrNoConsole is returned when Config.Console is not set.
 var ErrNoConsole = errors.New("flow: console address required")
 
-// Stats counts what the table saw.
+// Stats counts what the table saw. Dropped counts messages decoders had to
+// abandon (too large or too deep, decode.Dropper), over every flow.
 type Stats struct {
 	Frames, Skipped, Foreign, Malformed, Gaps int
+	Dropped                                   int
 }
 
 // FlowInfo describes one flow for reports.
@@ -148,7 +150,17 @@ func New(cfg Config) (*Table, error) {
 }
 
 // Stats returns the counters so far.
-func (t *Table) Stats() Stats { return t.stats }
+func (t *Table) Stats() Stats {
+	st := t.stats
+	for _, f := range t.flows {
+		for _, s := range f.streams {
+			if d, ok := s.(decode.Dropper); ok {
+				st.Dropped += d.Dropped()
+			}
+		}
+	}
+	return st
+}
 
 // Flows describes every flow in order of first appearance.
 func (t *Table) Flows() []FlowInfo {
@@ -279,6 +291,9 @@ func joinChunks(cs [][]byte) []byte {
 func (t *Table) feed(f *flow, c pendingChunk, emit func(Observation)) {
 	if f.reset[c.dir-1] {
 		f.reset[c.dir-1] = false
+		if d, ok := f.streams[c.dir-1].(decode.Dropper); ok {
+			t.stats.Dropped += d.Dropped() // keep the count of the stream being replaced
+		}
 		f.streams[c.dir-1] = f.dec.NewStream(f.id.tr, nil)
 	}
 	f.streams[c.dir-1].Feed(c.data, func(m decode.Message) {

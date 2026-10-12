@@ -165,7 +165,7 @@ Each flow (transport, app endpoint, console endpoint) gets one decoder, chosen f
 | `osc` | OSC 1.0 messages and bundles over UDP; size-prefixed OSC over TCP | address | arguments (an address without arguments is a read: no value) |
 | `midi` | raw MIDI bytes (running status, real-time bytes, SysEx) | `NRPN ch1 0x0017` (data entry MSB after CC 99/98), `... lsb` (CC 38), `RPN`, `CC ch1 #7`, notes, program, pressure, pitch bend, `SYSEX F0 <first 6 bytes>` | 7-bit value in hex |
 | `text` | newline-terminated text lines (RCP style) and JSON lines | the first token with `/` or `:` plus the index tokens after it; verbs and status words before it are dropped, so `set`, `OK set` and `NOTIFY set` of one parameter share a key | the last token |
-| `json` | JSON objects anywhere in a byte stream, also inside binary framing | JSON path (`$.channels[0].fader`), or the address of an object with a `path`/`address`/`param`/`key` field and a `value` | the leaf |
+| `json` | JSON objects anywhere in a byte stream, also inside binary framing (objects over 1 MiB or 32 levels are dropped and counted in the report's Traffic section) | JSON path (`$.channels[0].fader`), or the address of an object with a `path`/`address`/`param`/`key` field and a `value` | the leaf |
 | `binary` | anything else; TCP framing is guessed (u8/u16/u32, both byte orders, at offset 0/2/4, counting the rest or the whole frame) | the first `-bin-key` bytes (default 4) in hex plus the frame length | the rest in hex; the report lists the changing offsets |
 
 Flags shared by `relay`, `live`, `read`, `report`, `law`: `-window 5s`, `-quiet 2s`,
