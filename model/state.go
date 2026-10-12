@@ -21,9 +21,14 @@ const (
 	StripMain
 	StripMuteGroup
 	StripDCA
+	// StripHeadamp is a microphone preamp, numbered as the console numbers
+	// it; its only field is FieldGain (CR-23).
+	StripHeadamp
 )
 
-var stripKindNames = map[StripKind]string{StripInput: "input", StripMain: "main", StripMuteGroup: "muteGroup", StripDCA: "dca"}
+var stripKindNames = map[StripKind]string{
+	StripInput: "input", StripMain: "main", StripMuteGroup: "muteGroup", StripDCA: "dca", StripHeadamp: "headamp",
+}
 
 func (k StripKind) String() string {
 	if s, ok := stripKindNames[k]; ok {
@@ -69,10 +74,13 @@ const (
 	FieldName
 	FieldMuteGroups
 	FieldDCAs
+	// FieldGain is the gain of a headamp strip in dB.
+	FieldGain
 )
 
 var fieldNames = map[Field]string{
 	FieldFader: "fader", FieldMute: "mute", FieldName: "name", FieldMuteGroups: "muteGroups", FieldDCAs: "dcas",
+	FieldGain: "gain",
 }
 
 func (f Field) String() string {
@@ -95,7 +103,7 @@ func ParseField(s string) (Field, error) {
 // ValueKind returns the kind of value the field holds (0 for unknown fields).
 func (f Field) ValueKind() ValueKind {
 	switch f {
-	case FieldFader:
+	case FieldFader, FieldGain:
 		return KindLevel
 	case FieldMute:
 		return KindBool
@@ -122,8 +130,9 @@ type Strip struct {
 	Name       string
 	FaderDB    float64 // -inf = off
 	Muted      bool
-	MuteGroups uint32 // membership: bit n-1 = mute group n
-	DCAs       uint32 // membership: bit d-1 = DCA d
+	MuteGroups uint32  // membership: bit n-1 = mute group n
+	DCAs       uint32  // membership: bit d-1 = DCA d
+	GainDB     float64 // headamp strips only
 }
 
 // Value returns the value of field f.
@@ -141,6 +150,9 @@ func (s Strip) Value(f Field) (Value, bool) {
 		return Mask(s.MuteGroups), true
 	case FieldDCAs:
 		return Mask(s.DCAs), true
+	case FieldGain:
+		v, err := Level(s.GainDB)
+		return v, err == nil && s.Ref.Kind == StripHeadamp
 	default:
 		return Value{}, false
 	}
@@ -182,8 +194,9 @@ type State struct {
 	inputs     []Strip
 	main       Strip
 	hasMain    bool
-	muteGroups []bool // engaged, by group number - 1
-	dcaMutes   []bool // muted, by DCA number - 1
+	muteGroups []bool    // engaged, by group number - 1
+	dcaMutes   []bool    // muted, by DCA number - 1
+	headamps   []float64 // gain in dB, by headamp number - 1
 }
 
 // NewState builds a state from input strips numbered 1..n in order and an
@@ -236,6 +249,8 @@ func (s State) Strip(ref StripRef) (Strip, bool) {
 	case ref.Kind == StripMuteGroup || ref.Kind == StripDCA:
 		on, ok := groupAt(s.groupList(ref.Kind), ref.Index)
 		return Strip{Ref: ref, Muted: on}, ok
+	case ref.Kind == StripHeadamp && ref.Index >= 1 && ref.Index <= len(s.headamps):
+		return Strip{Ref: ref, GainDB: s.headamps[ref.Index-1]}, true
 	default:
 		return Strip{}, false
 	}
@@ -244,7 +259,7 @@ func (s State) Strip(ref StripRef) (Strip, bool) {
 // Value returns the current value of p.
 func (s State) Value(p ParamRef) (Value, bool) {
 	st, ok := s.Strip(p.Strip)
-	if !ok || (p.Strip.isGroup() && p.Field != FieldMute) {
+	if !ok || (p.Strip.isGroup() && p.Field != FieldMute) || (p.Strip.Kind == StripHeadamp) != (p.Field == FieldGain) {
 		return Value{}, false
 	}
 	return st.Value(p.Field)
@@ -254,6 +269,9 @@ func (s State) Value(p ParamRef) (Value, bool) {
 func (s State) With(p ParamRef, v Value) (State, error) {
 	if p.Strip.isGroup() {
 		return s.withGroup(p, v)
+	}
+	if p.Strip.Kind == StripHeadamp || p.Field == FieldGain {
+		return s.withHeadamp(p, v)
 	}
 	st, ok := s.Strip(p.Strip)
 	if !ok {
@@ -275,7 +293,14 @@ func (s State) With(p ParamRef, v Value) (State, error) {
 // Capabilities describes what a connected console offers. A feature the
 // console lacks is absent (zero), never faked.
 type Capabilities struct {
-	InputCount int
+	// Headamps are the headamp strips with Gain 1..Headamps, all with the
+	// range HeadampMinDB..HeadampMaxDB in steps of HeadampStepDB (CR-23).
+	// 0: the family has no Gain in the core yet.
+	Headamps      int
+	HeadampMinDB  float64
+	HeadampMaxDB  float64
+	HeadampStepDB float64
+	InputCount    int
 	// AbsentInputs is how many input strips the family documents above
 	// InputCount that this console did not answer for (xair: XA-F72).
 	AbsentInputs int

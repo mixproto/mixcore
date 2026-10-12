@@ -6,6 +6,7 @@ package model
 
 import (
 	"fmt"
+	"math"
 	"math/bits"
 	"slices"
 )
@@ -134,4 +135,34 @@ func MaskOf(groups []int, limit int) (uint32, error) {
 		m |= 1 << (g - 1)
 	}
 	return m, nil
+}
+
+// WithHeadamps returns a copy of s with headamps 1..n at gains (dB). The
+// slice is copied; n = len(gains).
+func (s State) WithHeadamps(gains []float64) State {
+	s.headamps = slices.Clone(gains)
+	return s
+}
+
+// Headamps returns the headamp strips in order (Ref and GainDB set).
+func (s State) Headamps() []Strip {
+	out := make([]Strip, len(s.headamps))
+	for i, g := range s.headamps {
+		out[i] = Strip{Ref: StripRef{Kind: StripHeadamp, Index: i + 1}, GainDB: g}
+	}
+	return out
+}
+
+// withHeadamp sets the gain of a headamp strip in a copy of s.
+func (s State) withHeadamp(p ParamRef, v Value) (State, error) {
+	if p.Strip.Kind != StripHeadamp || p.Field != FieldGain || p.Strip.Index < 1 || p.Strip.Index > len(s.headamps) {
+		return s, fmt.Errorf("%s: %w", p, ErrUnknownParam)
+	}
+	db, ok := v.DB()
+	if !ok || math.IsInf(db, 0) {
+		return s, fmt.Errorf("%s needs a finite level: %w", p, ErrInvalidValue)
+	}
+	s.headamps = slices.Clone(s.headamps)
+	s.headamps[p.Strip.Index-1] = db
+	return s, nil
 }

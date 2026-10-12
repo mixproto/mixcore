@@ -192,3 +192,49 @@ func mustLevel(t *testing.T, db float64) Value {
 	}
 	return v
 }
+
+// v0.3: headamp strips carry only gain, in dB, finite.
+func TestHeadamps_Gain(t *testing.T) {
+	st, err := NewState(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st = st.WithHeadamps([]float64{32.5, -12})
+	p := ParamRef{Strip: StripRef{Kind: StripHeadamp, Index: 1}, Field: FieldGain}
+	if v, ok := st.Value(p); !ok || !v.Equal(mustLevel(t, 32.5)) {
+		t.Fatalf("gain = %v, %v", v, ok)
+	}
+	next, err := st.With(p, mustLevel(t, 35.5))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := st.Value(p); !v.Equal(mustLevel(t, 32.5)) {
+		t.Fatal("With must not mutate the receiver")
+	}
+	if hs := next.Headamps(); len(hs) != 2 || hs[0].GainDB != 35.5 || hs[1].Ref.Index != 2 {
+		t.Fatalf("headamps %+v", hs)
+	}
+	for _, bad := range []struct {
+		p ParamRef
+		v Value
+	}{
+		{ParamRef{Strip: StripRef{Kind: StripHeadamp, Index: 3}, Field: FieldGain}, mustLevel(t, 0)},
+		{ParamRef{Strip: StripRef{Kind: StripHeadamp, Index: 1}, Field: FieldFader}, mustLevel(t, 0)},
+		{p, mustLevel(t, math.Inf(-1))},
+		{p, Bool(true)},
+		{ParamRef{Strip: MainRef, Field: FieldGain}, mustLevel(t, 0)},
+	} {
+		if _, err := st.With(bad.p, bad.v); err == nil {
+			t.Errorf("With(%v, %v) accepted", bad.p, bad.v)
+		}
+	}
+	if _, ok := st.Value(ParamRef{Strip: StripRef{Kind: StripHeadamp, Index: 1}, Field: FieldMute}); ok {
+		t.Fatal("a headamp has no mute")
+	}
+	if k, err := ParseStripKind("headamp"); err != nil || k != StripHeadamp {
+		t.Fatal("parse headamp")
+	}
+	if f, err := ParseField("gain"); err != nil || f != FieldGain || f.ValueKind() != KindLevel {
+		t.Fatal("parse gain")
+	}
+}
