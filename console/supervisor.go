@@ -83,9 +83,11 @@ type Update struct {
 	Limited       bool
 	LimitedReason string
 	Identity      driver.Identity
-	State         model.State
-	Full          bool
-	Changes       []Change
+	// Capabilities of the current (or last) session; zero before the first connect.
+	Capabilities model.Capabilities
+	State        model.State
+	Full         bool
+	Changes      []Change
 	// Effective lists strips whose effective mute changed (diffs only; a full
 	// update carries every strip's effective mute in State).
 	Effective []EffectiveChange
@@ -123,6 +125,7 @@ type Supervisor struct {
 	limited    string // reason while the console does not send us updates
 	offlineT   *time.Timer
 	ident      driver.Identity
+	caps       model.Capabilities
 	state      model.State
 	sess       driver.Session
 	holds      holds
@@ -242,7 +245,7 @@ func (s *Supervisor) Snapshot() Update {
 func (s *Supervisor) snapshotLocked() Update {
 	s.seq++
 	return Update{Seq: s.seq, Status: s.status, Reason: s.reason, StaleSince: s.staleSince, Offline: s.offline,
-		Limited: s.limited != "", LimitedReason: s.limited, Identity: s.ident, State: s.state}
+		Limited: s.limited != "", LimitedReason: s.limited, Identity: s.ident, Capabilities: s.caps, State: s.state}
 }
 
 func (s *Supervisor) signal() {
@@ -356,6 +359,7 @@ func (s *Supervisor) adopt(sess driver.Session) {
 	s.mu.Lock()
 	s.sess = sess
 	s.ident = sess.Identity()
+	s.caps = sess.Capabilities()
 	s.state = sess.Snapshot()
 	s.changes = nil
 	s.eff.reset(s.state)

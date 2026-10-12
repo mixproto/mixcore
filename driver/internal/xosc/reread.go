@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-package x32
+package xosc
 
 import (
 	"time"
@@ -15,7 +15,7 @@ import (
 // rereadBatch is how many reads one step of a background re-read sends. One
 // step runs per Timing.PingEvery, so a pass is paced like the initial read
 // (X32-F07) and spread over a few seconds.
-const rereadBatch = readWindow
+const rereadBatch = ReadWindow
 
 // rereadPass is the owner-goroutine state of a background re-read.
 type rereadPass struct {
@@ -64,7 +64,7 @@ func (s *session) rereadStep(now time.Time) {
 	}
 	for sent := 0; sent < rereadBatch && s.rr.next < len(s.params.all); s.rr.next++ {
 		idx := s.rr.next
-		if s.writtenRecently(idx, now) || s.absent[s.params.all[idx].feature] {
+		if s.writtenRecently(idx, now) || s.isAbsent(s.params.all[idx]) {
 			continue // a gesture is moving it (its echo keeps us in sync), or the console lacks it
 		}
 		s.sendRead(s.params.all[idx].addr)
@@ -80,12 +80,12 @@ func (s *session) rereadStep(now time.Time) {
 func (s *session) sendRead(addr string) {
 	pkt, err := osc.AppendString(s.tx[:0], addr)
 	if err != nil {
-		s.log.Error("x32: encode read", "addr", addr, "err", err)
+		s.log.Error(s.name+": encode read", "addr", addr, "err", err)
 		return
 	}
 	s.tx = pkt
 	if err := s.c.sendCmd(pkt); err != nil {
-		s.log.Debug("x32: re-read send failed", "addr", addr, "err", err)
+		s.log.Debug(s.name+": re-read send failed", "addr", addr, "err", err)
 	}
 }
 

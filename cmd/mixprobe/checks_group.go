@@ -37,7 +37,7 @@ func (p *prober) checkMuteGroup(ctx context.Context) error {
 		return err
 	}
 	lit, answered, err := p.cfg.prompt.Ask(ctx, stepMuteGroupOn,
-		fmt.Sprintf("Is the MUTE GROUP %d button lit on the console now (group engaged)?", p.cfg.muteGroup))
+		fmt.Sprintf("Is MUTE GROUP %d shown as engaged %s now (button lit)?", p.cfg.muteGroup, p.cfg.fam.surface))
 	if err != nil {
 		return err
 	}

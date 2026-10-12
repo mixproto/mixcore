@@ -1,19 +1,19 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/session.schema.json",
-  "title": "mixcore core API v0: result of Start",
+  "title": "mixcore core API v0.2: result of Start",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "family", "endpoint", "faderLaw"],
   "properties": {
     "version": { "$ref": "common.schema.json#/$defs/version" },
-    "family": { "enum": ["x32"] },
+    "family": { "enum": ["x32", "xair"] },
     "endpoint": {
       "type": "object",
       "additionalProperties": false,
       "required": ["host", "port"],
       "properties": { "host": { "type": "string" }, "port": { "type": "integer" } }
     },
-    "faderLaw": { "enum": ["x32"], "description": "Which law FaderPosition/FaderDB implement." }
+    "faderLaw": { "enum": ["x32", "xair"], "description": "Which law FaderPosition/FaderDB implement. xair (v0.2) is the same four-segment law as x32, -inf..+10 dB (XA-F40), named after its family." }
   }
 }

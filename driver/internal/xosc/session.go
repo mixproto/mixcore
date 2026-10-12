@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-package x32
+package xosc
 
 import (
 	"context"
@@ -25,7 +25,7 @@ import (
 const maxEchoHistory = 32
 
 // errAlreadyRunning is returned by a second concurrent Run.
-var errAlreadyRunning = errors.New("x32: session already running")
+var errAlreadyRunning = errors.New("session already running")
 
 type pendingWrite struct {
 	param  param
@@ -44,6 +44,8 @@ type sentWrite struct {
 // session is one live connection. Apply, SetMeters and Close may be called from
 // any goroutine; everything else runs on the owner goroutine (Connect, then Run).
 type session struct {
+	name   string // family, for logs and errors
+	prof   *Profile
 	timing Timing
 	params *paramTable
 	c      *conn
@@ -58,6 +60,10 @@ type session struct {
 	snapshot model.State
 	caps     model.Capabilities
 	absent   map[feature]bool // set during connect, read-only afterwards
+	inputs   int              // input strips of this console (XA-F72), set during connect
+	// knownInputs is the strip count an earlier session of the same link
+	// read (0: first connect); those strips are required (XA-F72).
+	knownInputs int
 
 	mu      sync.Mutex
 	order   []int                // pending parameter indexes, first-seen order
@@ -93,6 +99,7 @@ var _ driver.Session = (*session)(nil)
 
 func newSession(d *Driver, c *conn, opts driver.Options) *session {
 	return &session{
+		name: string(d.prof.Family), prof: &d.prof,
 		timing: d.timing, params: &d.params, c: c, log: logger(opts), audit: opts.WriteAudit,
 		pending: map[int]pendingWrite{}, done: make(chan struct{}), cmdReady: make(chan struct{}, 1), meterReady: make(chan struct{}, 1),
 		rereadReady: make(chan struct{}, 1), tx: make([]byte, 0, rxBufSize), sent: map[int][]sentWrite{},
@@ -113,8 +120,8 @@ func (s *session) Apply(cmd driver.Command) error {
 		return driver.ErrClosed
 	}
 	p, ok := s.params.byRef(cmd.Param)
-	if !ok || p.readOnly || s.absent[p.feature] {
-		return fmt.Errorf("x32 %s: %w", cmd.Param, driver.ErrUnsupported)
+	if !ok || p.readOnly || s.isAbsent(p) {
+		return fmt.Errorf("%s %s: %w", s.name, cmd.Param, driver.ErrUnsupported)
 	}
 	arg, err := toWire(p, cmd.Value)
 	if err != nil {
@@ -141,7 +148,7 @@ func (s *session) SetMeters(req driver.MeterRequest) error {
 		return driver.ErrClosed
 	}
 	s.metersOn.Store(req.Inputs)
-	s.c.meters.switchOn(req.Inputs)
+	s.c.meters.SwitchOn(req.Inputs)
 	signal(s.meterReady)
 	return nil
 }
@@ -151,7 +158,7 @@ func (s *session) SetMeters(req driver.MeterRequest) error {
 func (s *session) Close() error {
 	s.closeOnce.Do(func() {
 		s.stopped.Store(true)
-		s.c.meters.switchOn(false)
+		s.c.meters.SwitchOn(false)
 		close(s.done)
 		s.dropPending()
 		if l := s.ownLink; l != nil {
@@ -209,7 +216,7 @@ func (s *session) Run(ctx context.Context, events chan<- driver.Event) error {
 		case <-s.c.done:
 			return nil
 		case err := <-s.c.errs:
-			return fmt.Errorf("x32: %w: %w", driver.ErrConnectionLost, err)
+			return fmt.Errorf("%s: %w: %w", s.name, driver.ErrConnectionLost, err)
 		case p := <-s.c.inbound:
 			if !s.handleInbound(ctx, p, events) {
 				return nil
@@ -255,36 +262,38 @@ func (s *session) flushOutbox(ctx context.Context, events chan<- driver.Event) b
 func (s *session) sendSub(addr string, args ...osc.Arg) {
 	pkt, err := osc.AppendString(s.tx[:0], addr, args...)
 	if err != nil {
-		s.log.Error("x32: encode", "addr", addr, "err", err)
+		s.log.Error(s.name+": encode", "addr", addr, "err", err)
 		return
 	}
 	s.tx = pkt
 	if err := s.c.sendSub(pkt); err != nil {
-		s.log.Debug("x32: send failed", "addr", addr, "err", err)
+		s.log.Debug(s.name+": send failed", "addr", addr, "err", err)
 	}
 }
 
-// requestMeters (re)starts the bank 1 (inputs) and bank 2 (Main L/R) streams
-// while meters are on (X32-F50, X32-F52, X32-F55).
+// requestMeters (re)starts the family's meter streams while meters are on
+// (x32: banks 1 and 2, X32-F50, X32-F52, X32-F55; xair: bank 1, XA-F57).
 func (s *session) requestMeters() {
 	if s.metersOn.Load() {
-		s.sendSub(addrMeters, osc.String(meterBank1))
-		s.sendSub(addrMeters, osc.String(meterBank2))
+		for _, args := range s.prof.Meters.Requests() {
+			s.sendSub(addrMeters, args...)
+		}
 	}
 }
 
-// flushPending sends every queued write from the command socket (X32-F23).
+// flushPending sends every queued write from the command socket (X32-F23,
+// XA section 2 "Echo design").
 func (s *session) flushPending() {
 	for _, w := range s.takePending() {
 		pkt, err := osc.AppendString(s.tx[:0], w.param.addr, w.arg)
 		if err != nil {
-			s.log.Error("x32: encode write", "addr", w.param.addr, "err", err)
+			s.log.Error(s.name+": encode write", "addr", w.param.addr, "err", err)
 			continue
 		}
 		s.tx = pkt
 		now := time.Now()
 		if err := s.c.sendCmd(pkt); err != nil {
-			s.log.Debug("x32: write failed", "addr", w.param.addr, "err", err)
+			s.log.Debug(s.name+": write failed", "addr", w.param.addr, "err", err)
 			continue
 		}
 		idx := s.params.index(w.param.ref)
@@ -332,18 +341,18 @@ func (s *session) handleInbound(ctx context.Context, p inPacket, events chan<- d
 
 func (s *session) decodeChange(p inPacket) (driver.ParamChanged, bool) {
 	if err := osc.Decode(p.data, &s.msg); err != nil {
-		s.log.Debug("x32: undecodable packet", "err", err)
+		s.log.Debug(s.name+": undecodable packet", "err", err)
 		return driver.ParamChanged{}, false
 	}
 	if s.msg.AddressIs(addrXinfo) {
 		s.lastPong = p.at // X32-F25
 		return driver.ParamChanged{}, false
 	}
-	if !p.viaCmd && s.onMarker(p.at) { // X32-F61, X32-F62: scene markers, if the console pushes them
+	if !p.viaCmd && s.onMarker(p.at) { // scene markers, if the console pushes them (X32-F61, X32-F62, XA-F62)
 		return driver.ParamChanged{}, false
 	}
 	par, ok := s.params.byAddress(s.msg.Address)
-	if !ok || s.absent[par.feature] {
+	if !ok || s.isAbsent(par) {
 		return driver.ParamChanged{}, false // anything we did not ask for
 	}
 	arg, ok := s.msg.Arg(0)
@@ -352,7 +361,7 @@ func (s *session) decodeChange(p inPacket) (driver.ParamChanged, bool) {
 	}
 	v, err := fromWire(par, arg)
 	if err != nil {
-		s.log.Debug("x32: value outside the documented encoding", "addr", par.addr, "err", err)
+		s.log.Debug(s.name+": value outside the documented encoding", "addr", par.addr, "err", err)
 		return driver.ParamChanged{}, false
 	}
 	idx := s.params.index(par.ref)

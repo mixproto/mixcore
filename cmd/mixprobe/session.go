@@ -26,6 +26,7 @@ const (
 
 // config is one mixprobe run.
 type config struct {
+	fam       family
 	console   netip.AddrPort
 	channels  []int // input channels mixprobe may change (faders down, mutes on)
 	muteGroup int   // the mute group mixprobe may engage
@@ -56,7 +57,7 @@ func run(ctx context.Context, cfg config) (rep *Report, err error) {
 		return rep, err
 	}
 	defer w.close()
-	p := &prober{cfg: cfg, rep: rep, w: w, guard: newGuard(w, cfg.channels, cfg.muteGroup)}
+	p := &prober{cfg: cfg, rep: rep, w: w, guard: newGuard(w, cfg)}
 	defer func() { rep.Restored = p.restore() }()
 	if err := p.preflight(ctx); err != nil {
 		rep.Aborted = err.Error()
@@ -111,6 +112,9 @@ func (p *prober) restore() []restoreResult {
 }
 
 func (p *prober) phases() []func(context.Context) error {
+	if p.cfg.fam.name == "xair" {
+		return p.xairPhases()
+	}
 	return []func(context.Context) error{
 		p.closeApps,
 		p.checkInventory, p.checkWriteSocketReads, p.checkPushAndEcho, p.checkQuantization, p.checkMuteGroup,
@@ -121,7 +125,7 @@ func (p *prober) phases() []func(context.Context) error {
 
 func (p *prober) closeApps(ctx context.Context) error {
 	_, err := p.cfg.prompt.Step(ctx, stepCloseApps,
-		"Close every other remote app connected to this console (X32-Edit, M32-Edit, Mixing Station, tablets, phones).")
+		"Close every other remote app connected to this console ("+p.cfg.fam.otherApps+").")
 	return err
 }
 
@@ -129,11 +133,15 @@ func (p *prober) say(format string, args ...any) {
 	fmt.Fprintf(p.cfg.out, format+"\n", args...)
 }
 
-// add records a finding.
-func (p *prober) add(f Finding) { p.rep.add(p.cfg.out, f) }
+// add records a finding, citing the facts of this family's protocol doc.
+func (p *prober) add(f Finding) {
+	f.Facts = p.cfg.fam.facts(f.Facts)
+	p.rep.add(p.cfg.out, f)
+}
 
 func settings(cfg config) map[string]string {
 	return map[string]string{
+		"family":    cfg.fam.name,
 		"console":   cfg.console.String(),
 		"channels":  joinInts(cfg.channels),
 		"muteGroup": strconv.Itoa(cfg.muteGroup),

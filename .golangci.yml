@@ -48,7 +48,8 @@ linters:
             - pkg: github.com/mixproto/mixcore/driver/
               desc: "the contract never imports a family"
         families:
-          files: ["**/driver/*/*.go", "!$test"]
+          # driver/<family> and the engines they share (driver/internal/<engine>).
+          files: ["**/driver/*/*.go", "**/driver/internal/*/*.go", "!$test"]
           deny:
             - pkg: github.com/mixproto/mixcore/console
               desc: "a driver never knows its supervisor"

@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-package x32
+package xosc
 
 import (
 	"context"
@@ -16,8 +16,9 @@ import (
 )
 
 const (
-	// readWindow caps reads in flight during the initial read (X32-F07).
-	readWindow = 16
+	// ReadWindow caps reads in flight during the initial read and is the
+	// batch size of a background re-read step (X32-F07, XA-F05).
+	ReadWindow = 16
 	// optionalReadTries: a parameter of an optional feature that got no reply
 	// to this many reads is taken as unknown to this console (X32-F06), and
 	// its feature is absent for the session.
@@ -27,8 +28,9 @@ const (
 )
 
 var (
-	errNoReply     = errors.New("x32: console did not answer")
-	errBadIdentity = errors.New("x32: malformed /xinfo reply")
+	// ErrNoReply: the console did not answer /xinfo or the initial read in time.
+	ErrNoReply     = errors.New("console did not answer")
+	errBadIdentity = errors.New("malformed /xinfo reply")
 )
 
 // connect identifies the console, registers for pushes and reads the full
@@ -39,6 +41,10 @@ func (s *session) connect(ctx context.Context) error {
 		return err
 	}
 	s.ident = ident
+	// Model and firmware are not user content; the device name is (Debug only).
+	// No firmware is refused: absent features stay absent (XA section 1).
+	s.log.Info(s.name+": console identified", "model", ident.Model, "firmware", ident.Firmware)
+	s.log.Debug(s.name+": console name", "name", ident.Name)
 	s.sendSub(addrXremote) // before the read, so changes during the read are not missed (X32-F20)
 	state, err := s.readAll(ctx)
 	if err != nil {
@@ -46,23 +52,32 @@ func (s *session) connect(ctx context.Context) error {
 	}
 	s.snapshot = state
 	s.caps = s.capabilities()
-	s.lastPong = time.Now() // the answered reads prove the uplink as well as an /xinfo reply
+	s.c.meters.SetAbsent(s.inputs, s.params.layout.Inputs) // the frame keeps its size; absent inputs read -inf
+	s.lastPong = time.Now()                                // the answered reads prove the uplink as well as an /xinfo reply
 	return nil
 }
 
-// capabilities of this console as far as it answered (X32-F35..F38).
+// capabilities of this console as far as it answered (X32-F35..F38, XA-F72).
 func (s *session) capabilities() model.Capabilities {
+	l := s.params.layout
 	c := model.Capabilities{
-		InputCount: inputChannels, HasMain: true, InputMeters: true,
-		EchoesOwnWrites: true, MaxPushClients: maxPushClients,
+		InputCount: s.inputs, AbsentInputs: l.Inputs - s.inputs, HasMain: true, InputMeters: true,
+		EchoesOwnWrites: true, MaxPushClients: s.prof.MaxPushClients,
 	}
 	if !s.absent[featureMuteGroups] {
-		c.MuteGroups = muteGroupCount
+		c.MuteGroups = l.MuteGroups
+		c.MainMuteGroups = l.MainMuteGroups
 	}
 	if !s.absent[featureDCAs] {
-		c.DCAs = dcaCount
+		c.DCAs = l.DCAs
 	}
 	return c
+}
+
+// isAbsent reports whether p belongs to a feature or an input strip this
+// console did not answer for (never faked).
+func (s *session) isAbsent(p param) bool {
+	return s.absent[p.feature] || p.ref.Strip.Kind == model.StripInput && p.ref.Strip.Index > s.inputs
 }
 
 // next waits up to wait for a packet. ok is false on timeout.
@@ -79,7 +94,7 @@ func (s *session) next(ctx context.Context, wait time.Duration) (inPacket, bool,
 	case <-s.done:
 		return inPacket{}, false, driver.ErrClosed
 	case <-ctx.Done():
-		return inPacket{}, false, fmt.Errorf("%w: %w", errNoReply, context.Cause(ctx))
+		return inPacket{}, false, fmt.Errorf("%w: %w", ErrNoReply, context.Cause(ctx))
 	}
 }
 
@@ -96,13 +111,13 @@ func (s *session) identify(ctx context.Context) (driver.Identity, error) {
 				continue
 			}
 			s.lastPong = p.at
-			return parseXinfo(&s.msg)
+			return ParseXinfo(&s.msg)
 		}
 	}
 }
 
-// parseXinfo reads /xinfo ,ssss ip name model firmware (X32-F10).
-func parseXinfo(m *osc.Message) (driver.Identity, error) {
+// ParseXinfo reads /xinfo ,ssss ip name model firmware (X32-F10, XA-F10).
+func ParseXinfo(m *osc.Message) (driver.Identity, error) {
 	var f [xinfoArgs]string
 	for i := range f {
 		v, ok := m.StringArg(i)
@@ -112,84 +127,6 @@ func parseXinfo(m *osc.Message) (driver.Identity, error) {
 		f[i] = nameFromWire([]byte(v))
 	}
 	return driver.Identity{Address: f[0], Name: f[1], Model: f[2], Firmware: f[3]}, nil
-}
-
-// readState tracks the initial read.
-type readState struct {
-	values []model.Value
-	have   []bool
-	sentAt []time.Time
-	tries  []int
-	gaveUp []bool // optional parameter the console did not answer
-	next   int    // next parameter to request
-	left   int    // parameters still without a value
-	flight int    // requested, not yet answered
-}
-
-// readAll requests every parameter with at most readWindow in flight and
-// re-requests unanswered ones. Pushes that arrive meanwhile count as answers.
-func (s *session) readAll(ctx context.Context) (model.State, error) {
-	n := len(s.params.all)
-	rs := &readState{values: make([]model.Value, n), have: make([]bool, n), sentAt: make([]time.Time, n),
-		tries: make([]int, n), gaveUp: make([]bool, n), left: n}
-	for rs.left > 0 {
-		s.requestMore(rs)
-		p, ok, err := s.next(ctx, s.timing.ReadRetryEvery)
-		if err != nil {
-			return model.State{}, fmt.Errorf("initial read, %d of %d values missing: %w", rs.left, n, err)
-		}
-		if ok {
-			s.acceptRead(rs, p)
-		}
-		s.retryReads(rs) // also while pushes keep arriving, or a lost reply is never re-requested
-	}
-	s.known = rs.values
-	s.absent = s.absentFeatures(rs)
-	return s.buildState(rs.values)
-}
-
-// absentFeatures lists the features with a parameter the console did not answer.
-func (s *session) absentFeatures(rs *readState) map[feature]bool {
-	out := map[feature]bool{}
-	for i, p := range s.params.all {
-		if rs.gaveUp[i] && !out[p.feature] {
-			out[p.feature] = true
-			s.log.Info("x32: console does not answer a parameter; feature off for this session", "addr", p.addr)
-		}
-	}
-	return out
-}
-
-func (s *session) requestMore(rs *readState) {
-	for rs.flight < readWindow && rs.next < len(rs.have) {
-		i := rs.next
-		rs.next++
-		if rs.have[i] {
-			continue
-		}
-		s.sendSub(s.params.all[i].addr) // X32-F04: read = address without arguments
-		rs.sentAt[i] = time.Now()
-		rs.tries[i]++
-		rs.flight++
-	}
-}
-
-func (s *session) retryReads(rs *readState) {
-	now := time.Now()
-	for i := range rs.next {
-		if rs.have[i] || rs.sentAt[i].IsZero() || now.Sub(rs.sentAt[i]) < s.timing.ReadRetryEvery {
-			continue
-		}
-		if s.params.all[i].feature != featureCore && rs.tries[i] >= optionalReadTries {
-			rs.have[i], rs.gaveUp[i] = true, true // unknown to this console (X32-F06)
-			rs.left--
-			rs.flight--
-			continue
-		}
-		s.sendSub(s.params.all[i].addr)
-		rs.sentAt[i] = now
-		rs.tries[i]++
-	}
 }
 
 func (s *session) acceptRead(rs *readState, p inPacket) {
@@ -214,8 +151,11 @@ func (s *session) acceptRead(rs *readState, p inPacket) {
 		return
 	}
 	rs.have[i] = true
+	if !rs.inPass[i] {
+		return // a push of a parameter a later pass would have asked for
+	}
 	rs.left--
-	if !rs.sentAt[i].IsZero() {
+	if rs.sentInPass[i] {
 		rs.flight--
 	}
 }
@@ -223,7 +163,7 @@ func (s *session) acceptRead(rs *readState, p inPacket) {
 // buildState makes the snapshot from the values read. Parameters of absent
 // features are left out: a missing feature is absent, never faked.
 func (s *session) buildState(values []model.Value) (model.State, error) {
-	inputs := make([]model.Strip, inputChannels)
+	inputs := make([]model.Strip, s.inputs)
 	for i := range inputs {
 		inputs[i].Ref = model.StripRef{Kind: model.StripInput, Index: i + 1}
 	}
@@ -232,13 +172,14 @@ func (s *session) buildState(values []model.Value) (model.State, error) {
 	if err != nil {
 		return model.State{}, err
 	}
-	st = st.WithGroups(groupCount(s.absent[featureMuteGroups], muteGroupCount), groupCount(s.absent[featureDCAs], dcaCount))
+	l := s.params.layout
+	st = st.WithGroups(groupCount(s.absent[featureMuteGroups], l.MuteGroups), groupCount(s.absent[featureDCAs], l.DCAs))
 	for i, p := range s.params.all {
-		if s.absent[p.feature] {
+		if s.isAbsent(p) {
 			continue
 		}
 		if st, err = st.With(p.ref, values[i]); err != nil {
-			return model.State{}, fmt.Errorf("x32: %s: %w", p.addr, err)
+			return model.State{}, fmt.Errorf("%s: %s: %w", s.name, p.addr, err)
 		}
 	}
 	return st, nil

@@ -1,20 +1,23 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/config.schema.json",
-  "title": "mixcore core API v0: Start(configJSON)",
+  "title": "mixcore core API v0.2: Start(configJSON)",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "family", "host"],
   "properties": {
     "version": { "$ref": "common.schema.json#/$defs/version" },
-    "family": { "enum": ["x32"] },
+    "family": { "enum": ["x32", "xair"], "description": "x32: X32/M32 family (docs/protocols/x32.md). xair (v0.2): X Air / M Air family, XR12, XR16, XR18, X18, MR12, MR18 including V2 units (docs/protocols/xair.md)." },
     "host": { "type": "string", "description": "Console IP address (IPv4 or IPv6 literal, no hostname).", "minLength": 2, "maxLength": 64 },
-    "port": { "type": "integer", "minimum": 1, "maximum": 65535, "description": "Omitted: the family default (x32: 10023)." },
+    "port": { "type": "integer", "minimum": 1, "maximum": 65535, "description": "Omitted: the family default (x32: 10023, xair: 10024)." },
     "meters": {
       "type": "object",
       "additionalProperties": false,
       "properties": { "inputs": { "type": "boolean" } }
     }
   },
-  "examples": [ { "version": 0, "family": "x32", "host": "192.168.1.62", "meters": { "inputs": true } } ]
+  "examples": [
+    { "version": 0, "family": "x32", "host": "192.168.1.62", "meters": { "inputs": true } },
+    { "version": 0, "family": "xair", "host": "192.168.1.1", "meters": { "inputs": true } }
+  ]
 }

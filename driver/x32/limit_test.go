@@ -35,7 +35,7 @@ func (r *rig) fillSlots(n int) (stop func()) {
 		if err != nil {
 			r.t.Fatal(err)
 		}
-		pkt, _ := osc.AppendString(nil, addrXremote)
+		pkt, _ := osc.AppendString(nil, "/xremote")
 		to := consoleUDP()
 		wg.Go(func() {
 			defer pc.Close()

@@ -92,16 +92,16 @@ func TestLiveness_NoQuietProbesWhileMetersFlow(t *testing.T) {
 }
 
 func TestTiming_ZeroFieldsTakeDefaults(t *testing.T) {
-	d := New(Config{Timing: Timing{RenewEvery: time.Second}})
-	if d.timing.RenewEvery != time.Second || d.timing.StaleAfter != DefaultTiming.StaleAfter || d.timing.LivenessTick != DefaultTiming.LivenessTick {
-		t.Fatalf("timing = %+v", d.timing)
+	tm := Timing{RenewEvery: time.Second}.WithDefaults()
+	if tm.RenewEvery != time.Second || tm.StaleAfter != DefaultTiming.StaleAfter || tm.LivenessTick != DefaultTiming.LivenessTick {
+		t.Fatalf("timing = %+v", tm)
 	}
 }
 
 func countXinfo(sim *simx32.Sim) int {
 	n := 0
 	for _, e := range sim.Log() {
-		if e.Address == addrXinfo {
+		if e.Address == "/xinfo" {
 			n++
 		}
 	}

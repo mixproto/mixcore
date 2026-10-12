@@ -275,10 +275,16 @@ func (s State) With(p ParamRef, v Value) (State, error) {
 // Capabilities describes what a connected console offers. A feature the
 // console lacks is absent (zero), never faked.
 type Capabilities struct {
-	InputCount      int
-	HasMain         bool
-	MuteGroups      int
-	DCAs            int
+	InputCount int
+	// AbsentInputs is how many input strips the family documents above
+	// InputCount that this console did not answer for (xair: XA-F72).
+	AbsentInputs int
+	HasMain      bool
+	MuteGroups   int
+	DCAs         int
+	// MainMuteGroups: the main strip has a mute-group membership (x32 yes,
+	// xair no). Without it the main's MuteGroups field is not modelled.
+	MainMuteGroups  bool
 	InputMeters     bool
 	EchoesOwnWrites bool
 	MaxPushClients  int

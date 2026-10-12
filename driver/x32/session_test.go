@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mixproto/mixcore/driver"
+	"github.com/mixproto/mixcore/driver/internal/xosc"
 	"github.com/mixproto/mixcore/internal/memnet"
 	"github.com/mixproto/mixcore/internal/osc"
 	"github.com/mixproto/mixcore/meters"
@@ -120,6 +121,15 @@ func ref(i int, f model.Field) model.ParamRef {
 
 func level(t *testing.T, db float64) model.Value { return mustLevel(t, db) }
 
+func mustLevel(t *testing.T, db float64) model.Value {
+	t.Helper()
+	v, err := model.Level(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
 func TestConnect_ReadsFullStateAndSendsNoWrites(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		r := newRig(t, simx32.Options{Name: "FOH", Model: "M32"})
@@ -158,7 +168,7 @@ func TestConnect_FailsWhenNothingAnswers(t *testing.T) {
 		r := newRig(t, simx32.Options{})
 		r.sim.Pause()
 		_, err := r.drv.Connect(context.Background(), driver.Endpoint{Host: consoleIP}, r.opts())
-		if !errors.Is(err, errNoReply) {
+		if !errors.Is(err, xosc.ErrNoReply) {
 			t.Fatalf("err = %v, want errNoReply", err)
 		}
 		if _, err := r.drv.Connect(context.Background(), driver.Endpoint{Host: "console.local"}, r.opts()); !errors.Is(err, ErrBadEndpoint) {
@@ -252,7 +262,7 @@ func TestApply_CoalescesToLatestValue(t *testing.T) {
 		r.run(sess)
 		synctest.Wait()
 		w := r.sim.Writes()
-		want, _ := dbToFader(-5)
+		want := float32(639) / 1023 // -5 dB is step 639 (X32-F40, X32-F41)
 		if len(w) != 1 || w[0].Arg.Float != want {
 			t.Fatalf("writes = %+v, want one write of the latest value %v", w, want)
 		}
@@ -406,7 +416,7 @@ func TestProbe_FindsBroadcastAndManualConsoles(t *testing.T) {
 func TestDirectedBroadcast(t *testing.T) {
 	ip, ipn, _ := net.ParseCIDR("192.168.1.62/24")
 	ipn.IP = ip
-	bc, ok := directedBroadcast(ipn)
+	bc, ok := xosc.DirectedBroadcast(ipn, DefaultPort)
 	if !ok || bc.String() != "192.168.1.255:10023" {
 		t.Fatalf("directedBroadcast = %v, %v", bc, ok)
 	}

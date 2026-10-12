@@ -28,7 +28,6 @@ import (
 
 	"github.com/mixproto/mixcore/console"
 	"github.com/mixproto/mixcore/driver"
-	"github.com/mixproto/mixcore/driver/x32"
 	"github.com/mixproto/mixcore/internal/safe"
 	"github.com/mixproto/mixcore/meters"
 )
@@ -41,7 +40,7 @@ type StateListener interface {
 
 // Options are Go-only settings for hosts and tests (not part of the bound API).
 type Options struct {
-	// Drivers by family name; nil uses the built-in x32 driver.
+	// Drivers by family name; nil uses the built-in x32 and xair drivers.
 	Drivers map[string]driver.Driver
 	// ListenPacket opens every socket; nil: OS sockets through SetSocketBinder.
 	ListenPacket driver.ListenPacketFunc
@@ -82,7 +81,7 @@ func NewEngine() *Engine { return NewEngineWith(Options{}) }
 // NewEngineWith returns an engine with Go-only options.
 func NewEngineWith(opts Options) *Engine {
 	if opts.Drivers == nil {
-		opts.Drivers = map[string]driver.Driver{familyX32: x32.New(x32.Config{})}
+		opts.Drivers = defaultDrivers()
 	}
 	e := &Engine{slot: &meters.Slot{}, kick: make(chan struct{}, 1), logs: newLogPump()}
 	if opts.Logger == nil {
@@ -93,7 +92,7 @@ func NewEngineWith(opts Options) *Engine {
 	}
 	e.opts = opts
 	e.disc.ctx, e.disc.cancel = context.WithCancel(context.Background())
-	if d, ok := opts.Drivers[familyX32]; ok {
+	if d, ok := opts.Drivers[familyX32]; ok { // the law FaderPosition uses before Start (xair has the same, XA-F40)
 		e.law.Store(&lawBox{law: d.FaderLaw()})
 	}
 	return e
@@ -154,8 +153,8 @@ func describe(cfg configJSON, drv driver.Driver) (string, error) {
 	var d sessionJSON
 	d.Family, d.FaderLaw = cfg.Family, string(drv.Family())
 	d.Endpoint.Host, d.Endpoint.Port = cfg.Host, cfg.Port
-	if d.Endpoint.Port == 0 && cfg.Family == familyX32 {
-		d.Endpoint.Port = x32.DefaultPort
+	if d.Endpoint.Port == 0 {
+		d.Endpoint.Port = familyPorts[cfg.Family]
 	}
 	b, err := json.Marshal(d)
 	return string(b), err

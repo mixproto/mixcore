@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-package x32
+package xosc
 
 import (
 	"errors"
@@ -20,6 +20,10 @@ const (
 	wireTolerance = 0.5 / faderSteps
 	dbTolerance   = 480.0 / faderSteps / 2
 )
+
+// x32Layout is the X32 address layout (X32-F30..F38), the reference the
+// conversion and table tests were written against.
+var x32Layout = Layout{Inputs: 32, RequiredInputs: 32, MainRoot: "/main/st", MainMuteGroups: true, MuteGroups: 6, DCAs: 8}
 
 func approxDB(a, b, tol float64) bool {
 	if math.IsInf(a, -1) || math.IsInf(b, -1) {
@@ -202,7 +206,7 @@ func TestSwitches_Polarity(t *testing.T) {
 
 // X32-F36, X32-F38: membership bitmaps are read-only and range-checked.
 func TestMembership_Bitmaps(t *testing.T) {
-	tbl := newParamTable(1)
+	tbl := newParamTable(x32Layout)
 	p, _ := tbl.byAddress([]byte("/ch/01/grp/mute"))
 	if v, err := fromWire(p, osc.Int(63)); err != nil || !v.Equal(model.Mask(63)) {
 		t.Fatalf("grp/mute 63 = %v, %v", v, err)
@@ -249,7 +253,7 @@ func TestName_Conversion(t *testing.T) {
 }
 
 func TestToWireFromWire_PerField(t *testing.T) {
-	ps := newParamTable(2)
+	ps := newParamTable(x32Layout)
 	fader, _ := ps.byRef(model.ParamRef{Strip: model.StripRef{Kind: model.StripInput, Index: 1}, Field: model.FieldFader})
 	mute, _ := ps.byRef(model.ParamRef{Strip: model.MainRef, Field: model.FieldMute})
 	name, _ := ps.byRef(model.ParamRef{Strip: model.StripRef{Kind: model.StripInput, Index: 2}, Field: model.FieldName})
@@ -281,9 +285,9 @@ func TestToWireFromWire_PerField(t *testing.T) {
 }
 
 func TestParamTable_Addresses(t *testing.T) {
-	ps := newParamTable(inputChannels)
+	ps := newParamTable(x32Layout)
 	// Per input: name, fader, mute, grp/mute, grp/dca; main: fader, mute, grp/mute; 6 groups; 8 DCAs.
-	if want := inputChannels*5 + 3 + muteGroupCount + dcaCount; len(ps.all) != want {
+	if want := x32Layout.Inputs*5 + 3 + x32Layout.MuteGroups + x32Layout.DCAs; len(ps.all) != want {
 		t.Fatalf("table has %d params, want %d", len(ps.all), want)
 	}
 	want := map[string]model.ParamRef{
@@ -310,6 +314,32 @@ func TestParamTable_Addresses(t *testing.T) {
 	}
 	if _, ok := ps.byAddress([]byte("/ch/33/mix/fader")); ok {
 		t.Fatal("channel 33 does not exist")
+	}
+}
+
+// XA-F72, XA section 3.2: inputs above RequiredInputs are optional strips,
+// a main without membership has no grp/mute, and masks follow the counts.
+func TestParamTable_OptionalStripsAndMainWithoutMembership(t *testing.T) {
+	l := Layout{Inputs: 16, RequiredInputs: 12, MainRoot: "/lr", MuteGroups: 4, DCAs: 4}
+	ps := newParamTable(l)
+	if want := 16*5 + 2 + 4 + 4; len(ps.all) != want {
+		t.Fatalf("table has %d params, want %d", len(ps.all), want)
+	}
+	for addr, wantStrip := range map[string]int{"/ch/12/mix/fader": 0, "/ch/13/mix/fader": 13, "/ch/16/grp/dca": 16, "/lr/mix/on": 0} {
+		p, ok := ps.byAddress([]byte(addr))
+		if !ok || p.strip != wantStrip {
+			t.Fatalf("%s: %+v, %v", addr, p, ok)
+		}
+	}
+	if _, ok := ps.byRef(model.ParamRef{Strip: model.MainRef, Field: model.FieldMuteGroups}); ok {
+		t.Fatal("main must have no mute-group membership")
+	}
+	p, _ := ps.byAddress([]byte("/ch/01/grp/mute"))
+	if _, err := fromWire(p, osc.Int(15)); err != nil {
+		t.Fatalf("grp/mute 15: %v", err)
+	}
+	if _, err := fromWire(p, osc.Int(16)); !errors.Is(err, errBadWire) {
+		t.Fatalf("grp/mute 16 err = %v", err)
 	}
 }
 

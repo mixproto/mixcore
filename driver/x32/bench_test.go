@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mixproto/mixcore/driver/internal/xosc"
 	"github.com/mixproto/mixcore/internal/osc"
 	"github.com/mixproto/mixcore/meters"
 )
@@ -23,27 +24,13 @@ func meterPacket(tb testing.TB) []byte {
 
 func BenchmarkMeterSink(b *testing.B) {
 	pkt := meterPacket(b)
-	sink := newMeterSink(&meters.Slot{})
-	sink.enabled.Store(true)
+	sink := xosc.NewMeterSink(meterCodec{}, &meters.Slot{})
+	sink.SwitchOn(true)
 	now := time.Now()
 	b.ReportAllocs()
 	for b.Loop() {
-		if !sink.handle(pkt, now) {
+		if !sink.Handle(pkt, now) {
 			b.Fatal("not recognised as a meter packet")
-		}
-	}
-}
-
-func BenchmarkEncodeFaderWrite(b *testing.B) {
-	buf := make([]byte, 0, 64)
-	b.ReportAllocs()
-	for b.Loop() {
-		f, err := dbToFader(-12.5)
-		if err != nil {
-			b.Fatal(err)
-		}
-		if buf, err = osc.AppendString(buf[:0], "/ch/01/mix/fader", osc.Float(f)); err != nil {
-			b.Fatal(err)
 		}
 	}
 }

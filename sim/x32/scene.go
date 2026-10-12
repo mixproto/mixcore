@@ -5,13 +5,11 @@
 package x32
 
 import (
-	"fmt"
-	"maps"
 	"net/netip"
-	"slices"
 	"time"
 
 	"github.com/mixproto/mixcore/internal/osc"
+	"github.com/mixproto/mixcore/sim/internal/oscsim"
 )
 
 // sceneTimeLayout formats the simulated /-undo/time value. The console's own
@@ -24,39 +22,30 @@ const sceneTimeLayout = "15:04:05"
 // Options.PushSceneMarkers the scene markers are set and pushed first
 // ([UNVERIFIED] variant). Addresses are applied in sorted order.
 func (s *Sim) RecallScene(n int, values map[string]osc.Arg) error {
-	now := time.Now()
-	s.mu.Lock()
-	out, err := s.recallLocked(now, n, values)
-	s.mu.Unlock()
-	for _, o := range out {
-		s.send(o.to, o.pkt)
-	}
+	var err error
+	s.Do(func(now time.Time) []oscsim.Outgoing {
+		var out []oscsim.Outgoing
+		out, err = s.recallLocked(now, n, values)
+		return out
+	})
 	return err
 }
 
-// recallLocked applies a scene and returns the pushes. Callers hold s.mu.
-func (s *Sim) recallLocked(now time.Time, n int, values map[string]osc.Arg) ([]outgoing, error) {
-	for addr, a := range values {
-		if v, ok := s.params[addr]; !ok || a.Type != v.typ {
-			return nil, fmt.Errorf("%w: %s", ErrUnknownAddress, addr)
-		}
+// recallLocked applies a scene and returns the pushes. Callers hold the core lock.
+func (s *Sim) recallLocked(now time.Time, n int, values map[string]osc.Arg) ([]oscsim.Outgoing, error) {
+	if err := s.CheckBatchLocked(values); err != nil {
+		return nil, err
 	}
-	var out []outgoing
+	var out []oscsim.Outgoing
 	if s.opts.PushSceneMarkers {
-		s.params[addrPrepos].i = int32(n)
-		s.params[addrUndoTime].s = now.Format(sceneTimeLayout)
-		out = append(out, s.pushLocked(now, addrPrepos, s.params[addrPrepos], netip.AddrPort{}, true)...)
-		out = append(out, s.pushLocked(now, addrUndoTime, s.params[addrUndoTime], netip.AddrPort{}, true)...)
+		prepos, undo := s.params[addrPrepos], s.params[addrUndoTime]
+		prepos.SetInt(int32(n))
+		undo.SetString(now.Format(sceneTimeLayout))
+		out = append(out, s.PushLocked(now, addrPrepos, prepos, netip.AddrPort{}, true)...)
+		out = append(out, s.PushLocked(now, addrUndoTime, undo, netip.AddrPort{}, true)...)
 	}
-	for _, addr := range slices.Sorted(maps.Keys(values)) {
-		v := s.params[addr]
-		before := v.arg()
-		if !v.set(values[addr]) || v.arg().Equal(before) {
-			continue // a recall pushes what changed
-		}
-		out = append(out, s.pushLocked(now, addr, v, netip.AddrPort{}, true)...)
-	}
-	if s.offline(now) {
+	out = append(out, s.ApplyBatchLocked(now, values)...)
+	if s.OfflineLocked(now) {
 		return nil, nil // the console changed, nobody hears about it
 	}
 	return out, nil

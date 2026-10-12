@@ -59,6 +59,7 @@ type discoverJSON struct {
 }
 
 type discoverRequest struct {
+	family    string
 	manual    []netip.AddrPort
 	broadcast bool
 	wait      time.Duration
@@ -89,13 +90,13 @@ func parseDiscover(data string) (discoverRequest, error) {
 	if d.Version == nil || *d.Version != contractVersion {
 		return discoverRequest{}, codeErr(CodeInvalidConfig, errVersion)
 	}
-	if d.Family != familyX32 {
+	if !knownFamily(d.Family) {
 		return discoverRequest{}, codeErr(CodeInvalidConfig, fmt.Errorf("unknown family %q", d.Family))
 	}
 	if len(d.Hosts) > maxDiscoverHosts || (!d.Broadcast && len(d.Hosts) == 0) {
 		return discoverRequest{}, codeErr(CodeInvalidConfig, fmt.Errorf("%d hosts, broadcast %v", len(d.Hosts), d.Broadcast))
 	}
-	req := discoverRequest{broadcast: d.Broadcast, wait: defaultDiscoverWait}
+	req := discoverRequest{family: d.Family, broadcast: d.Broadcast, wait: defaultDiscoverWait}
 	if d.WaitMs != 0 {
 		if d.WaitMs < minDiscoverWaitMs || d.WaitMs > maxDiscoverWaitMs {
 			return discoverRequest{}, codeErr(CodeInvalidConfig, fmt.Errorf("waitMs %d", d.WaitMs))
@@ -103,7 +104,7 @@ func parseDiscover(data string) (discoverRequest, error) {
 		req.wait = time.Duration(d.WaitMs) * time.Millisecond
 	}
 	for _, h := range d.Hosts {
-		ap, err := hostAddrPort(h)
+		ap, err := hostAddrPort(h, familyPorts[d.Family])
 		if err != nil {
 			return discoverRequest{}, codeErr(CodeInvalidConfig, err)
 		}
@@ -112,14 +113,14 @@ func parseDiscover(data string) (discoverRequest, error) {
 	return req, nil
 }
 
-func hostAddrPort(h hostJSON) (netip.AddrPort, error) {
+func hostAddrPort(h hostJSON, defaultPort int) (netip.AddrPort, error) {
 	ip, err := netip.ParseAddr(h.Host)
 	if err != nil {
 		return netip.AddrPort{}, fmt.Errorf("host must be an IP address: %w", err)
 	}
 	port := h.Port
 	if port == 0 {
-		port = x32.DefaultPort
+		port = defaultPort
 	}
 	if port < 1 || port > math.MaxUint16 {
 		return netip.AddrPort{}, fmt.Errorf("port %d", h.Port)
@@ -138,7 +139,7 @@ func (e *Engine) SetDiscoveryListener(l DiscoveryListener) {
 
 // Discover starts one probe for consoles (broadcast on every interface and/or
 // manual IPs) and returns at once; the result goes to the DiscoveryListener.
-// A probe only reads (X32-F12): it never subscribes or writes. While one runs,
+// A probe only reads (X32-F12, XA-F12): it never subscribes or writes. While one runs,
 // Discover returns ERR_BUSY.
 func (e *Engine) Discover(requestJSON string) (err error) {
 	defer safe.RecoverAsError(&err)
@@ -161,10 +162,10 @@ func (e *Engine) Discover(requestJSON string) (err error) {
 func (e *Engine) runDiscovery(req discoverRequest) {
 	targets := slices.Clone(req.manual)
 	if req.broadcast {
-		targets = append(targets, x32.BroadcastTargets()...)
+		targets = append(targets, broadcastTargets(req.family)...)
 	}
-	found, err := x32.Probe(e.disc.ctx, e.opts.ListenPacket, targets, req.wait)
-	msg := encodeDiscovery(found, err)
+	found, err := x32.Probe(e.disc.ctx, e.opts.ListenPacket, targets, req.wait) // the same /xinfo probe for both families
+	msg := encodeDiscovery(req.family, found, err)
 	if err != nil {
 		e.opts.Logger.Info("api: discovery failed", "err", err)
 	}
@@ -181,14 +182,18 @@ func (e *Engine) runDiscovery(req discoverRequest) {
 	box.l.OnDiscovery(msg)
 }
 
-func encodeDiscovery(found []x32.Found, probeErr error) string {
+// encodeDiscovery lists the replies classified as family (classify).
+func encodeDiscovery(family string, found []x32.Found, probeErr error) string {
 	out := discoveryResultJSON{Version: contractVersion, Type: "discovery", Status: "done", Consoles: []foundJSON{}}
 	if probeErr != nil {
 		out.Status, out.Error = "failed", CodeNetwork
 	}
 	for _, f := range found {
+		if classify(f) != family {
+			continue
+		}
 		out.Consoles = append(out.Consoles, foundJSON{
-			Family: familyX32, Host: f.Endpoint.Host, Port: f.Endpoint.Port,
+			Family: family, Host: f.Endpoint.Host, Port: f.Endpoint.Port,
 			Name: f.Identity.Name, Model: f.Identity.Model, Firmware: f.Identity.Firmware,
 		})
 	}

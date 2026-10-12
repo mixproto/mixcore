@@ -192,7 +192,7 @@ func repeatHosts(n int) string {
 }
 
 func TestDiscoveryJSON_Golden(t *testing.T) {
-	got := encodeDiscovery([]x32.Found{{
+	got := encodeDiscovery(familyX32, []x32.Found{{
 		Endpoint: driver.Endpoint{Host: "192.168.1.62", Port: 10023},
 		Identity: driver.Identity{Name: "X32-02-4A-53", Model: "X32", Firmware: "3.04"},
 	}}, nil)
@@ -200,7 +200,7 @@ func TestDiscoveryJSON_Golden(t *testing.T) {
 	if got != want {
 		t.Fatalf("\n got %s\nwant %s", got, want)
 	}
-	if got := encodeDiscovery(nil, errors.New("x")); got != `{"version":0,"type":"discovery","status":"failed","error":"ERR_NETWORK","consoles":[]}` {
+	if got := encodeDiscovery(familyX32, nil, errors.New("x")); got != `{"version":0,"type":"discovery","status":"failed","error":"ERR_NETWORK","consoles":[]}` {
 		t.Fatalf("failed result %s", got)
 	}
 }

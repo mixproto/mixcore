@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/state.schema.json",
-  "title": "mixcore core API v0.1: StateListener.OnState(stateJSON)",
+  "title": "mixcore core API v0.2: StateListener.OnState(stateJSON)",
   "description": "A snapshot replaces everything the UI holds; a diff lists changes since the previous message. seq grows by one per message; a gap never happens within one Start. Values are the console's, never the UI's. events report holds that ended without the user releasing them; they appear in snapshots and diffs and are never dropped by coalescing (up to 256 between two messages).",
   "type": "object",
   "additionalProperties": false,
@@ -44,7 +44,7 @@
     },
     "limited": {
       "type": "boolean",
-      "description": "v0.1. True while the console accepts this engine but does not send it updates because its remote client slots are full (design SR-17, CR-10; x32: four push clients). Values may be stale and are shown as such; Apply returns ERR_STALE and every hold is cancelled (holdCancelled, reason limited) although status stays live. It clears by itself as soon as an update arrives; a Pause and Resume retries. There is no polling fallback (CR-15 is unverified). Absent means false."
+      "description": "v0.1. True while the console accepts this engine but does not send it updates because its remote client slots are full (design SR-17, CR-10; x32: four push clients; xair: eight). Values may be stale and are shown as such; Apply returns ERR_STALE and every hold is cancelled (holdCancelled, reason limited) although status stays live. It clears by itself as soon as an update arrives; a Pause and Resume retries. There is no polling fallback (CR-15 is unverified). Absent means false."
     },
     "limitedReason": {
       "enum": [
@@ -109,17 +109,25 @@
           },
           "muteGroups": {
             "$ref": "common.schema.json#/$defs/groupList",
-            "description": "v0.1: mute groups this strip belongs to."
+            "description": "v0.1: mute groups this strip belongs to. v0.2: absent on a strip that has no mute-group membership on its console (xair: main)."
           },
           "dcas": {
             "$ref": "common.schema.json#/$defs/groupList",
-            "description": "v0.1: DCA groups this strip belongs to (inputs only on x32)."
+            "description": "v0.1: DCA groups this strip belongs to (inputs only on x32 and xair)."
           },
           "effectiveMute": {
             "$ref": "common.schema.json#/$defs/effectiveMute"
           }
         }
       }
+    },
+    "absentInputs": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "description": "v0.2, snapshot only, xair: input strips the family documents (16, XA-F71) that this mixer did not answer when the engine first connected (a small model, or a link too lossy to probe, XA-F72). They stay absent until Stop and Start; strips that answered once are never dropped on a reconnect. Absent when every documented input answered. UI: 'Inputs 13-16 not found on this mixer'."
     },
     "changes": {
       "type": "array",
@@ -216,7 +224,7 @@
               "confidence",
               "signals"
             ],
-            "description": "v0.1 (design SR-15, CR-03). The console has no scene-recall message (x32: X32-F60), so the core infers it: a burst of at least 8 different parameters pushed within 250 ms, and pushes of the console's scene markers if it sends them (/-undo/time, /-show/prepos/current; whether it does is unverified). Every held fader has ended (externalChangeOnHeld events in the same message) and the core re-reads the console in the background. Suggested UI text: 'Scene recalled at the mixer' (high or medium), or nothing beyond the per-fader messages (low).",
+            "description": "v0.1 (design SR-15, CR-03). The console has no scene-recall message (x32: X32-F60; xair: XA section 7), so the core infers it: a burst of at least 8 different parameters pushed within 250 ms, and pushes of the console's scene markers if it sends them (x32: /-undo/time, /-show/prepos/current; xair, v0.2: /-snap/index, a hint only; whether either console sends them is unverified). Every held fader has ended (externalChangeOnHeld events in the same message) and the core re-reads the console in the background. Suggested UI text: 'Scene recalled at the mixer' (high or medium), or nothing beyond the per-fader messages (low). The core never loads, saves or deletes a scene or snapshot itself: there is no such command in this contract (xair slot 64 may hold another app's data, XA-F63).",
             "properties": {
               "type": {
                 "const": "sceneRecalledAtConsole"
@@ -227,7 +235,7 @@
                   "medium",
                   "low"
                 ],
-                "description": "high: a burst and the console's undo checkpoint (/-undo/time); medium: the undo checkpoint alone; low: a burst alone (another app changing many parameters at once looks the same). The highlighted scene alone never raises the event."
+                "description": "high: a burst and the console's recall marker (x32: the undo checkpoint /-undo/time); medium: that marker alone; low: a burst alone (another app changing many parameters at once looks the same). Hints never raise the event and never raise the confidence: the x32 highlighted scene and the xair snapshot index (/-snap/index is 'recently loaded/saved', XA-F60, so a save moves it too). On xair every recall is low until hardware shows more (xair.md test item 13)."
               },
               "signals": {
                 "type": "array",
@@ -235,14 +243,22 @@
                   "enum": [
                     "burst",
                     "undoTime",
-                    "highlightedScene"
+                    "highlightedScene",
+                    "snapshotIndex"
                   ]
                 },
-                "uniqueItems": true
+                "uniqueItems": true,
+                "description": "snapshotIndex is v0.2 (xair: /-snap/index was pushed within 1 s of the burst; a hint, like highlightedScene)."
               },
               "highlightedScene": {
                 "type": "integer",
                 "description": "Present when the console pushed /-show/prepos/current: the scene (or cue/snippet, per the console's show-control setting) HIGHLIGHTED on its scenes page, not necessarily the one loaded (X32-F61). Show it as a hint only."
+              },
+              "loadedScene": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64,
+                "description": "v0.2, xair only. Present when the console pushed /-snap/index within 1 s of the burst that raised this event: the snapshot it reports as recently loaded or saved (XA-F60, 1..64). A lone /-snap/index push (for example after a save in another app) raises no event. Show it as a hint: 'Snapshot 12 at the mixer'."
               }
             }
           }

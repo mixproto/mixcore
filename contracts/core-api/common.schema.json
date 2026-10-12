@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/common.schema.json",
-  "title": "mixcore core API v0.1: shared definitions",
+  "title": "mixcore core API v0.2: shared definitions",
   "$defs": {
     "version": {
       "const": 0,
@@ -21,7 +21,7 @@
             "muteGroup",
             "dca"
           ],
-          "description": "muteGroup and dca are v0.1 (x32: mute groups 1..6, DCA groups 1..8). Their only field is mute."
+          "description": "muteGroup and dca are v0.1 (x32: mute groups 1..6, DCA groups 1..8; xair, v0.2: mute groups 1..4, DCA groups 1..4). Their only field is mute."
         },
         "index": {
           "type": "integer",
@@ -56,7 +56,7 @@
         "dcas",
         "effectiveMute"
       ],
-      "description": "v0.1: muteGroups and dcas are the strip's group membership (read-only); effectiveMute is derived by the core and appears only in state messages, never in commands. For a muteGroup strip, mute true means the group is engaged (muting its members); for a dca strip, mute true means the DCA is muted."
+      "description": "v0.1: muteGroups and dcas are the strip's group membership (read-only); effectiveMute is derived by the core and appears only in state messages, never in commands. For a muteGroup strip, mute true means the group is engaged (muting its members); for a dca strip, mute true means the DCA is muted. v0.2: a strip without a membership on its console has no such field: on xair the main strip belongs to no mute group and no DCA (docs/protocols/xair.md section 3.2), so a set or read of main muteGroups is ERR_UNSUPPORTED and state messages omit it."
     },
     "param": {
       "type": "object",
@@ -148,7 +148,7 @@
         "muteGroups",
         "dcas"
       ],
-      "description": "v0.1 (design CR-01, SR-04): whether the strip is silenced toward Main LR, and why. muted = own OR any listed group. muteGroups lists the engaged mute groups the strip belongs to; dcas lists the muted DCAs it belongs to (x32: a muted DCA silences its members toward Main LR only, unless the console preference says otherwise; per-bus effective mute comes with buses). UI text: 'MUTED by MG 2', 'DCA 1 muted'.",
+      "description": "v0.1 (design CR-01, SR-04): whether the strip is silenced toward Main LR, and why. muted = own OR any listed group. muteGroups lists the engaged mute groups the strip belongs to; dcas lists the muted DCAs it belongs to (x32: a muted DCA silences its members toward Main LR only, unless the console preference says otherwise; per-bus effective mute comes with buses; xair: the same rule, XA section 3; its main strip has no membership, so its effective mute is its own mute). UI text: 'MUTED by MG 2', 'DCA 1 muted'.",
       "properties": {
         "muted": {
           "type": "boolean"

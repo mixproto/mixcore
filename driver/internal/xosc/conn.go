@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-package x32
+package xosc
 
 import (
 	"context"
@@ -23,7 +23,8 @@ const (
 	// blocks the reader; the socket buffer absorbs bursts.
 	inboundCap = 64
 	// rxBufSize is larger than any packet this driver asks for (the biggest is
-	// a 96-value meter packet of about 400 bytes, X32-F51).
+	// a 96-value meter packet of about 400 bytes, X32-F51; an X Air bank 1
+	// packet is 104 bytes, XA section 6).
 	rxBufSize = 4096
 )
 
@@ -35,6 +36,7 @@ type inPacket struct {
 
 // conn owns the two UDP sockets of a session and their reader goroutines.
 type conn struct {
+	name      string // family, for errors
 	console   netip.AddrPort
 	consoleTo net.Addr
 	sub       net.PacketConn // /xremote, reads, meters (receives pushes)
@@ -43,29 +45,30 @@ type conn struct {
 	errs      chan error // reader failures other than a normal close
 	failed    atomic.Pointer[error]
 	done      chan struct{}
-	meters    *meterSink
+	meters    *MeterSink
 	base      time.Time    // monotonic origin of lastRx
 	lastRx    atomic.Int64 // nanoseconds after base of the last packet from the console
 	wg        sync.WaitGroup
 	closeOnce sync.Once
 }
 
-func openConn(ctx context.Context, console netip.AddrPort, opts driver.Options) (*conn, error) {
+func openConn(ctx context.Context, prof *Profile, console netip.AddrPort, opts driver.Options) (*conn, error) {
+	name := string(prof.Family)
 	listen := listenFunc(opts)
 	sub, err := listen(ctx, "udp4", anyAddr)
 	if err != nil {
-		return nil, fmt.Errorf("x32: open subscription socket: %w", err)
+		return nil, fmt.Errorf("%s: open subscription socket: %w", name, err)
 	}
 	cmd, err := listen(ctx, "udp4", anyAddr)
 	if err != nil {
 		_ = sub.Close()
-		return nil, fmt.Errorf("x32: open command socket: %w", err)
+		return nil, fmt.Errorf("%s: open command socket: %w", name, err)
 	}
 	c := &conn{
-		console: console, consoleTo: net.UDPAddrFromAddrPort(console),
+		name: name, console: console, consoleTo: net.UDPAddrFromAddrPort(console),
 		sub: sub, cmd: cmd,
 		inbound: make(chan inPacket, inboundCap), errs: make(chan error, 2), done: make(chan struct{}),
-		meters: newMeterSink(opts.Meters), base: time.Now(),
+		meters: NewMeterSink(prof.Meters, opts.Meters), base: time.Now(),
 	}
 	onPanic := func(err error) { c.fail(err) }
 	safe.Go(&c.wg, onPanic, func() { c.fail(c.readLoop(sub, false)) })
@@ -116,7 +119,7 @@ func (c *conn) readLoop(pc net.PacketConn, isCmd bool) error {
 			if errors.Is(err, net.ErrClosed) {
 				return nil
 			}
-			return fmt.Errorf("x32: read: %w", err)
+			return fmt.Errorf("%s: read: %w", c.name, err)
 		}
 		if !c.fromConsole(from) {
 			i-- // slot unused; ignore strangers on the LAN
@@ -125,7 +128,7 @@ func (c *conn) readLoop(pc net.PacketConn, isCmd bool) error {
 		now := time.Now()
 		c.lastRx.Store(int64(now.Sub(c.base))) // any packet proves the downlink (X32-F25)
 		pkt := ring[i][:n]
-		if !isCmd && c.meters.handle(pkt, now) {
+		if !isCmd && c.meters.Handle(pkt, now) {
 			i--
 			continue
 		}

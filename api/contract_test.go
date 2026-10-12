@@ -68,6 +68,7 @@ func stateExamples(t *testing.T) [][]byte {
 	lv, _ := model.Level(-6)
 	desk := driver.Origin{Kind: driver.OriginConsole}
 	u := console.Update{Status: console.StatusLive, State: st, Identity: driver.Identity{Name: "FOH", Model: "X32"},
+		Capabilities: model.Capabilities{InputCount: 1, HasMain: true, MuteGroups: 2, DCAs: 1, MainMuteGroups: true},
 		Changes: []console.Change{{Param: model.ParamRef{Strip: model.MainRef, Field: model.FieldFader}, Value: lv,
 			Origin: driver.Origin{Kind: driver.OriginGesture, ClientID: "ui", Seq: 3}}, {Param: mg2, Value: model.Bool(true), Origin: desk}},
 		Effective: []console.EffectiveChange{{Strip: kick, Mute: st.EffectiveMute(kick), Origin: desk}},

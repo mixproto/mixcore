@@ -174,9 +174,10 @@ under each of the three readings of the sources:
 - H2 (XA-F23: `/xremote` pushes to every subscriber including the one that made the change): same as H1, because the
   command socket is not a subscriber.
 - H3 (XA-F22 read literally: a set is answered to its sender): the command socket also receives an echo of each write.
-  `driver/x32` treats every command-socket packet as a re-read reply and accepts only replies to an outstanding,
-  untouched read (`driver/x32/reread.go:111-116`); every write marks its parameter touched
-  (`driver/x32/session.go:293`), so such an echo is dropped and can never be taken for a desk change.
+  The shared engine (`driver/internal/xosc`, used by `driver/x32` and `driver/xair`) treats every command-socket
+  packet as a re-read reply and accepts only replies to an outstanding, untouched read
+  (`driver/internal/xosc/reread.go:111-116`); every write marks its parameter touched
+  (`driver/internal/xosc/session.go:302`), so such an echo is dropped and can never be taken for a desk change.
 Use plain `/xremote` (vendor-documented), not `/xremotenfb` (undocumented; its "initiator" might be judged by IP only,
 which would hide the echoes of our command socket). `EchoesOwnWrites` stays true. Test item 1 decides which hypothesis
 holds; only the simulator default changes with the answer.
@@ -366,11 +367,14 @@ markers do not exist in any X Air source.
 | XA-F62 | Whether `/-snap/index` is **pushed** to subscribers after a load by another client is not documented. Companion reads it once at connect and also handles an unsolicited `/-snap/index` message. Test item 13. | XS5 `index.js` (`firstPoll`, handler for `/-snap/index`) `[PERMISSIVE-CODE MIT]`; `[TO-VERIFY]` |
 | XA-F63 | Mixing Station stores its bus-protection password, unencrypted, in snapshot 64; official apps ignore it; deleting slot 64 resets it. mixcore must never save into or delete slot 64 as a side effect, and should show slot 64's name as is. | XS16 `[COMMUNITY]` |
 
-mixcore's recall heuristic for X Air (design): signals are (a) a burst, at least 8 different parameters pushed from
-other clients within 250 ms (the X32 rule, which needs no marker), and (b) a push of `/-snap/index`, if test item 13
-shows it is pushed. Confidence `high` for both, `medium` for (b) alone, `low` for (a) alone. Unlike X32, a pushed
-`/-snap/index` names the loaded snapshot (XA-F60), so `SceneRecalled` may carry it as the loaded scene, not only as a
-highlighted one. Because no X Air has a surface (XA-F74), "external change" always means another app, MIDI or a load.
+mixcore's recall heuristic for X Air (design): the only signal is (a) a burst, at least 8 different parameters pushed
+from other clients within 250 ms (the X32 rule, which needs no marker), so every X Air recall has confidence `low`.
+(b) A push of `/-snap/index` (if test item 13 shows it is pushed) is only a hint, like the X32 highlighted scene: the
+index is "recently loaded/saved" (XA-F60), so a save from X AIR Edit moves it as well. It never raises a recall alone
+(a recall ends every held fader, SR-15, and the UI would announce a load that did not happen) and never raises the
+confidence; within 1 s of a burst it is attached as `LoadedScene` ("loaded or saved") with signal `snapshotIndex`.
+Because no X Air has a surface (XA-F74), "external change" always means another app, MIDI or a load. If test item 13
+shows that a save does not move the pushed index, it can become a signal of its own.
 
 ## 8. Wi-Fi, network modes and limits
 | ID | Fact | Source |
@@ -417,14 +421,15 @@ when the mixer reports `192.168.1.1` (XA-F81) and 4 seats are used.
 | Sockets of a session | Same rules; one extra open question (XA-F15). |
 | Client limit detection | Same evidence model, limit 8, plus `/status` if it signals standby. |
 | Parameters (X32-F30..F39) | Same leaf names and polarities; 16 inputs, `/lr`, 4 mute groups, 4 DCAs, 4-bit bitmaps, **no `/lr/grp/mute`** (section 3). |
-| Scene recall (X32-F60..F62) | `/-snap/index` names the loaded snapshot; no `/-show` or `/-undo` markers; no surface (section 7). |
+| Scene recall (X32-F60..F62) | `/-snap/index` names the recently loaded or saved snapshot (a hint); no `/-show` or `/-undo` markers; no surface (section 7). |
 | Fader law (X32-F40..F43) | **Same law** and 1024 steps; sends 161 steps (XA-F40..F42). |
 | Meters (X32-F50..F55) | **int16 1/256 dB**, bank 1 = inputs + main L/R, rate and lifetime undocumented (XA-F50..F57). |
 | Echo and conflict handling | Same rules; echo matching unchanged (section 2 "Echo design"). |
 | Background re-read | Same; valid under all echo hypotheses (H1-H3). |
 
 ## 12. What `driver/xair` can reuse from `driver/x32`
-Read on `d26cf25`. "Reuse" means the code is family-agnostic today; "parametrize" means it works after a constant or a
+Read on `d26cf25`; the file references below are to that commit. Since branch `feat/core-xair` the reused code lives
+in `driver/internal/xosc` (see "As implemented"). "Reuse" means the code is family-agnostic today; "parametrize" means it works after a constant or a
 table becomes a per-family value; "replace" means X Air needs different code. A shared package (for example a family
 profile with port, parameter table, meter decoder, scene markers and push-client limit) is one way to avoid copying;
 the core-engineer decides.
@@ -460,6 +465,36 @@ Identical to `x32.md` "Background re-read" (every 15 s while live, paced 16 read
 read-only). ОЦЕНКА of pass length for the v1 table: 16 inputs x 5 parameters (name, fader, mute, mute-group bitmap, DCA
 bitmap) + main 2 (fader, mute) + 4 mute groups + 4 DCAs (mute) = 90 reads; at 16 reads per 1 s step a pass takes
 ceil(90 / 16) = 6 s (X32's 32-input table: 32 x 5 + 3 + 6 + 8 = 177 reads, 12 s).
+
+## As implemented (driver/xair, sim/xair; branch feat/core-xair, 2026-10-12)
+Design choices made when implementing this file. None is a new protocol fact; each `[TO-VERIFY]` item keeps the safe
+behaviour above and has a test that pins it, so a hardware result changes one default.
+- **Shared engine.** The section 12 "reuse" rows live in `driver/internal/xosc` (session, sockets, link, liveness,
+  limit, re-read, scene heuristic, conversions, meter sink, discovery); `driver/x32` and `driver/xair` are profiles of
+  it (port, address layout, meter codec, scene markers, push limit). The x32 wire trace is pinned byte for byte by
+  `driver/x32/testdata/wire_trace.golden`, the xair one by `driver/xair/testdata/wire_trace.golden`.
+- **Strips.** Inputs 1..12 must answer (every source agrees on them); inputs 13..16 are optional strips (XA-F72, test
+  item 12). The first connect of a link reads everything else first, then one fader read per optional strip (5 tries,
+  about 1.5 s when strips are missing), then the rest of the strips that answered. The link remembers the count: on
+  every reconnect exactly those strips are required, so packet loss can delay a reconnect but never drop a real strip,
+  and a 12-input mixer reconnects without dead reads. Missing strips are logged at Warn and listed in the snapshot
+  (`absentInputs`) until the engine restarts. Group membership of a missing strip does not switch mute groups or DCAs
+  off. Main is `/lr` without `grp/mute`; the model reports no main membership
+  (capability `MainMuteGroups` false) and the core API omits the field. 90 reads per full pass (section 12 estimate).
+- **Echo.** Plain `/xremote`, two sockets, unchanged from X32 (section 2 "Echo design"); tests run H1, H2 and H3.
+- **Meters.** `/meters ,si "/meters/1" 0` (XA-F57) with every `/xremote` renewal (3 s). A bank 1 blob is accepted
+  only if its count fits the blob and reaches Main R (value 37); values 0..15 and 36/37 are converted (v/256 dBFS,
+  -32768 is `-inf`) into a frame of 18 levels.
+- **Scene recall.** A burst is the only recall signal. `/-snap/index` pushed with an int 1..64 is a hint naming the
+  loaded or saved snapshot, attached to a burst within 1 s; alone it raises nothing; any other argument is dropped. The driver never reads `/-snap/index` at connect and never sends any other `/-snap/`
+  address, so snapshot 64 (XA-F63) is never touched.
+- **Discovery.** `/xinfo` to 10024 (XA-F12). The core API classifies replies: port 10024 is xair unless the model is
+  an X32 model; port 10023 is x32 unless the model starts with XR, X18 or MR; on other ports the model decides.
+- **Simulator defaults** (`sim/xair`, options for every `[TO-VERIFY]`): push to the sender with `/xremote` (H2,
+  option `NoEchoToSender` for H1), no reply to a set (option `ReplyToSet` for H3), ninth client ignored
+  (`EvictOldestWhenFull`), `/status` always "active" (`StandbyWhenNotServed`), `/-snap/index` not pushed on a load
+  (`PushSnapIndex`), 16 inputs and 6 buses (`InputChannels`, `Buses`), names up to 12 characters (`NameMaxLen`),
+  meters every 50 ms for 10 s.
 
 ## 13. To verify with mixprobe or hardware
 Setup: an X Air or M Air on a wired switch with a laptop; amplifiers off; record `/xinfo` (model, firmware) and the
@@ -515,6 +550,12 @@ hardware we legally use. "mixprobe" marks items a `--family xair` mode can autom
     `/ch/01/mix/fader`; write 1.5 to `/ch/01/mix/pan` (amps off, restore after). Pass: replies or silence, stored values.
 19. **Mute semantics (section 3.2)**, manual, as `x32.md` item 13 with `/-prefs/dcamute` and `/-prefs/hardmute`.
 20. **Liveness on a quiet mixer (XA-F25)**, mixprobe. Idle 10 min with the session running. Pass: no stale event.
+
+`cmd/mixprobe --lab -family xair` checks items 1, 2, 3, 5, 8, 9, 11, 12, 14 and 16, item 20 for 20 s (not 10 min), and
+the read parts of 10, 13 and 18 in one guided session, plus fader quantization (7, without the pan write), mute-group polarity, a snapshot load
+from another app (13), unplug and reboot (15). Read-only checks run first; every write is guarded (levels and sends
+only down, mutes only on, one channel name) and restored. Items 4, 6, 17, 19, the pan part of 7, the link part of 10
+and the write part of 18 need a person or a write mixprobe cannot bound; the report lists them as skipped.
 
 ## Open questions for the lead (with recommended defaults)
 - Warn on firmware older than 1.18 (XA-F76)? Default: one-time non-blocking hint.

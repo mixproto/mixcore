@@ -29,14 +29,15 @@ func effectiveJSON(e model.EffectiveMute) *effectiveMuteJSON {
 }
 
 // stripsJSON renders inputs and main with membership (when the console has
-// those groups) and effective mute.
-func stripsJSON(st model.State) []stripStateJSON {
+// those groups, and for main only when its console has a main membership:
+// xair has none, XA section 3.2) and effective mute.
+func stripsJSON(st model.State, caps model.Capabilities) []stripStateJSON {
 	hasMG, hasDCA := len(st.MuteGroups()) > 0, len(st.DCAs()) > 0
 	out := make([]stripStateJSON, 0, len(st.Inputs())+1)
 	for _, s := range st.Strips() {
 		j := stripStateJSON{Kind: s.Ref.Kind.String(), Index: s.Ref.Index, Name: s.Name, FaderDB: levelJSON(s.FaderDB), Mute: s.Muted,
 			EffectiveMute: effectiveJSON(st.EffectiveMute(s.Ref))}
-		if hasMG {
+		if hasMG && (s.Ref.Kind != model.StripMain || caps.MainMuteGroups) {
 			mg := model.MaskMembers(s.MuteGroups)
 			j.MuteGroups = &mg
 		}
@@ -80,7 +81,20 @@ func sceneEventsJSON(scenes []driver.SceneRecalled) []eventJSON {
 			n := sc.HighlightedScene
 			e.HighlightedScene = &n
 		}
+		if sc.LoadedScene >= 1 { // v0.2, xair: snapshots are 1-based; 0 and NoScene mean unknown
+			n := sc.LoadedScene
+			e.LoadedScene = &n
+		}
 		out = append(out, e)
+	}
+	return out
+}
+
+// absentInputsJSON lists the input strips the console did not answer (XA-F72).
+func absentInputsJSON(c model.Capabilities) []int {
+	out := make([]int, 0, max(c.AbsentInputs, 0))
+	for i := 1; i <= c.AbsentInputs; i++ {
+		out = append(out, c.InputCount+i)
 	}
 	return out
 }

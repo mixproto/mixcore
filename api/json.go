@@ -28,7 +28,6 @@ const (
 	cmdToggle       = "toggle"
 	fieldEffective  = "effectiveMute"
 	maxGroupNumber  = 32 // largest group number a membership list may name
-	familyX32       = "x32"
 	maxClientIDLen  = 128
 )
 
@@ -99,7 +98,7 @@ func parseConfig(data string) (configJSON, error) {
 	if c.Version == nil || *c.Version != contractVersion {
 		return c, codeErr(CodeInvalidConfig, errVersion)
 	}
-	if c.Family != familyX32 {
+	if !knownFamily(c.Family) {
 		return c, codeErr(CodeInvalidConfig, fmt.Errorf("unknown family %q", c.Family))
 	}
 	if _, err := netip.ParseAddr(c.Host); err != nil {
@@ -267,7 +266,7 @@ type changeJSON struct {
 }
 
 // eventJSON is one entry of events: a hold event (param, clientId, ...) or,
-// v0.1, a scene recall (confidence, signals, highlightedScene).
+// v0.1, a scene recall (confidence, signals, highlightedScene; v0.2 loadedScene).
 type eventJSON struct {
 	Type             string      `json:"type"`
 	Param            *paramJSON  `json:"param,omitempty"`
@@ -278,6 +277,7 @@ type eventJSON struct {
 	Confidence       string      `json:"confidence,omitempty"`
 	Signals          []string    `json:"signals,omitempty"`
 	HighlightedScene *int        `json:"highlightedScene,omitempty"`
+	LoadedScene      *int        `json:"loadedScene,omitempty"` // v0.2
 }
 
 type stateJSON struct {
@@ -293,9 +293,10 @@ type stateJSON struct {
 	LimitedReason string           `json:"limitedReason,omitempty"`
 	Console       *consoleJSON     `json:"console,omitempty"`
 	Strips        []stripStateJSON `json:"strips,omitempty"`
-	MuteGroups    []groupStateJSON `json:"muteGroups,omitempty"` // v0.1, snapshot only
-	DCAs          []groupStateJSON `json:"dcas,omitempty"`       // v0.1, snapshot only
-	Changes       *[]changeJSON    `json:"changes,omitempty"`    // present (maybe empty) in every diff
+	AbsentInputs  []int            `json:"absentInputs,omitempty"` // v0.2, snapshot only
+	MuteGroups    []groupStateJSON `json:"muteGroups,omitempty"`   // v0.1, snapshot only
+	DCAs          []groupStateJSON `json:"dcas,omitempty"`         // v0.1, snapshot only
+	Changes       *[]changeJSON    `json:"changes,omitempty"`      // present (maybe empty) in every diff
 	Events        []eventJSON      `json:"events,omitempty"`
 }
 
@@ -320,7 +321,8 @@ func encodeUpdate(u console.Update, seq uint64, full bool) ([]byte, error) {
 	out.Type = "snapshot"
 	id := u.Identity
 	out.Console = &consoleJSON{Address: id.Address, Name: id.Name, Model: id.Model, Firmware: id.Firmware}
-	out.Strips = stripsJSON(u.State)
+	out.Strips = stripsJSON(u.State, u.Capabilities)
+	out.AbsentInputs = absentInputsJSON(u.Capabilities)
 	out.MuteGroups, out.DCAs = groupStatesJSON(u.State.MuteGroups()), groupStatesJSON(u.State.DCAs())
 	return json.Marshal(out)
 }

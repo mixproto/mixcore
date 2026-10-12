@@ -9,9 +9,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"math"
-	"sync"
-	"sync/atomic"
-	"time"
 
 	"github.com/mixproto/mixcore/internal/osc"
 	"github.com/mixproto/mixcore/meters"
@@ -33,87 +30,51 @@ const (
 	bank2MainL  = 22                // X32-F55: value index of Main L in bank 2; Main R follows
 )
 
+// Meter banks as codec bank numbers.
+const (
+	bankInputs = iota + 1 // bank 1
+	bankBuses             // bank 2
+)
+
 // Padded addresses of bank 1 and bank 2 packets; they let the reader
 // recognise meter packets before decoding them.
 var (
 	meterPrefix1 = []byte(meterBank1 + "\x00\x00\x00")
 	meterPrefix2 = []byte(meterBank2 + "\x00\x00\x00")
+	// meterRequests start bank 1 (inputs) and bank 2 (Main L/R) (X32-F50,
+	// X32-F52, X32-F55).
+	meterRequests = [][]osc.Arg{{osc.String(meterBank1)}, {osc.String(meterBank2)}}
 )
 
-// meterSink decodes meter packets in the subscription reader goroutine and
-// publishes them. It owns its frame and message; nothing here allocates.
-type meterSink struct {
-	slot *meters.Slot
-	// mu orders publishing with switching off: once switchOn(false) returns,
-	// no frame is published, so a Slot.Reset after it stays empty.
-	mu      sync.Mutex
-	enabled atomic.Bool
-	reset   atomic.Bool // set when meters are switched on: forget old levels first
-	frame   meters.Frame
-	msg     osc.Message
-}
+// meterCodec implements xosc.MeterCodec for banks 1 and 2.
+type meterCodec struct{}
 
-func newMeterSink(slot *meters.Slot) *meterSink { return &meterSink{slot: slot} }
+func (meterCodec) Levels() int           { return meterLevels }
+func (meterCodec) Requests() [][]osc.Arg { return meterRequests }
 
-// switchOn enables publishing; levels of a previous session are dropped.
-func (m *meterSink) switchOn(on bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if on {
-		m.reset.Store(true)
-	}
-	m.enabled.Store(on)
-}
-
-// handle reports whether pkt was a meter packet (consumed, even if dropped).
-func (m *meterSink) handle(pkt []byte, at time.Time) bool {
-	bank1 := bytes.HasPrefix(pkt, meterPrefix1)
-	if !bank1 && !bytes.HasPrefix(pkt, meterPrefix2) {
-		return false
-	}
-	if m.slot == nil || !m.enabled.Load() {
-		return true // meters keep arriving for up to 10 s after we stop renewing (X32-F50)
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if !m.enabled.Load() {
-		return true // switched off meanwhile
-	}
-	if m.reset.CompareAndSwap(true, false) {
-		m.silence()
-	}
-	if osc.Decode(pkt, &m.msg) != nil {
-		return true
-	}
-	blob, ok := m.msg.BlobArg(0)
-	if !ok || m.decode(bank1, blob) != nil {
-		return true
-	}
-	m.frame.Count = meterLevels
-	m.frame.Seq++
-	m.frame.At = at
-	m.slot.Publish(&m.frame)
-	return true
-}
-
-func (m *meterSink) silence() {
-	for i := range meterLevels {
-		m.frame.Levels[i] = float32(math.Inf(-1))
+func (meterCodec) Bank(pkt []byte) (int, bool) {
+	switch {
+	case bytes.HasPrefix(pkt, meterPrefix1):
+		return bankInputs, true
+	case bytes.HasPrefix(pkt, meterPrefix2):
+		return bankBuses, true
+	default:
+		return 0, false
 	}
 }
 
-// decode updates the inputs (bank 1) or Main L/R (bank 2) of the frame.
-func (m *meterSink) decode(bank1 bool, blob []byte) error {
-	if !bank1 {
-		return decodeMainLR(blob, &m.frame)
+// Decode updates the inputs (bank 1) or Main L/R (bank 2) of the frame.
+func (meterCodec) Decode(bank int, blob []byte, fr *meters.Frame) error {
+	if bank != bankInputs {
+		return decodeMainLR(blob, fr)
 	}
-	var in meters.Frame // stack copy keeps Main L/R of m.frame; no allocation
+	var in meters.Frame // stack copy keeps Main L/R of fr; no allocation
 	if err := decodeMeters1(blob, &in); err != nil {
 		return err
 	}
-	copy(m.frame.Levels[:in.Count], in.Levels[:in.Count])
+	copy(fr.Levels[:in.Count], in.Levels[:in.Count])
 	for i := in.Count; i < inputChannels; i++ {
-		m.frame.Levels[i] = float32(math.Inf(-1))
+		fr.Levels[i] = float32(math.Inf(-1))
 	}
 	return nil
 }

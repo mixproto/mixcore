@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/discovery.schema.json",
-  "title": "mixcore core API v0: discovery listener message",
-  "description": "Delivered once per Discover call, from the discovery goroutine. status failed means no probe could be sent at all (error ERR_NETWORK: no socket, or every send refused, for example Local Network access denied); consoles is then empty. A target that did not answer is simply absent.",
+  "title": "mixcore core API v0.2: discovery listener message",
+  "description": "Delivered once per Discover call, from the discovery goroutine. status failed means no probe could be sent at all (error ERR_NETWORK: no socket, or every send refused, for example Local Network access denied); consoles is then empty. A target that did not answer is simply absent. v0.2: the core tells the family of a reply apart by its source port and its model string: a reply from 10023 is x32 and one from 10024 is xair, unless its model belongs to the other family (x32 models of X32-F11 such as X32, X32RACK, M32; xair models start with XR, X18 or MR, V2 suffixes included, XA-F70); from any other port the model decides. A reply whose port and model contradict each other, or that is of another family than the one requested, is not listed.",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "type", "status", "consoles"],
@@ -18,7 +18,7 @@
         "additionalProperties": false,
         "required": ["family", "host", "port", "name", "model", "firmware"],
         "properties": {
-          "family": { "enum": ["x32"] },
+          "family": { "enum": ["x32", "xair"] },
           "host": { "type": "string", "description": "Address the reply came from; pass it to Start as host." },
           "port": { "type": "integer" },
           "name": { "type": "string", "description": "Network name the console reports (user content)." },
@@ -31,6 +31,8 @@
   "examples": [
     { "version": 0, "type": "discovery", "status": "done",
       "consoles": [ { "family": "x32", "host": "192.168.1.62", "port": 10023, "name": "X32-02-4A-53", "model": "X32", "firmware": "3.04" } ] },
+    { "version": 0, "type": "discovery", "status": "done",
+      "consoles": [ { "family": "xair", "host": "192.168.1.1", "port": 10024, "name": "XR18-1D-DA-B4", "model": "XR18", "firmware": "1.22" } ] },
     { "version": 0, "type": "discovery", "status": "failed", "error": "ERR_NETWORK", "consoles": [] }
   ]
 }

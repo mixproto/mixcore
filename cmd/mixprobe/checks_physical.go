@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -23,8 +24,6 @@ const (
 	unplugWait    = 10 * time.Second
 	replugWait    = 30 * time.Second
 	rebootWait    = 3 * time.Minute
-	undoAddr      = "/-undo/time"
-	preposAddr    = "/-show/prepos/current"
 	eventExternal = "externalChangeOnHeld"
 	eventScene    = "sceneRecalledAtConsole"
 )
@@ -38,7 +37,7 @@ func (p *prober) checkDeskMove(ctx context.Context, eng *api.Engine, rec *engine
 	}
 	defer func() { _ = eng.Apply(gestureCmd("holdEnd", ch, "fader", "")) }()
 	t0 := time.Now()
-	done, err := p.cfg.prompt.Step(ctx, stepMoveFader, fmt.Sprintf("Move the fader of input %d on the console a little, then press Enter.", ch))
+	done, err := p.cfg.prompt.Step(ctx, stepMoveFader, fmt.Sprintf("Move the fader of input %d %s a little, then press Enter.", ch, p.cfg.fam.surface))
 	if err != nil {
 		return err
 	}
@@ -84,8 +83,7 @@ func (p *prober) checkSceneRecall(ctx context.Context, eng *api.Engine, rec *eng
 		return fmt.Errorf("mixprobe: hold: %w", err)
 	}
 	defer func() { _ = eng.Apply(gestureCmd("holdEnd", ch, "fader", "")) }()
-	done, err := p.cfg.prompt.Step(ctx, stepRecallScene,
-		"Press Enter, then within 10 s recall any scene on the console (this changes the console; amplifiers must be off).")
+	done, err := p.cfg.prompt.Step(ctx, stepRecallScene, p.recallText())
 	if err != nil || !done {
 		p.add(Finding{ID: "scene-recall", Facts: []string{"X32-F60"}, Title: "desk scene recall", Status: Skipped, Detail: "operator skipped"})
 		return err
@@ -96,7 +94,7 @@ func (p *prober) checkSceneRecall(ctx context.Context, eng *api.Engine, rec *eng
 		return err
 	}
 	p.guard.touchAll() // a recall may have changed every allowed parameter
-	p.add(sceneFinding(msgs))
+	p.add(sceneFinding(msgs, p.cfg.fam.sceneMarkers))
 	p.add(sceneEngineFinding(rec.since(t0), ch))
 	return nil
 }
@@ -114,14 +112,22 @@ func collectRenewing(s *rawClient, d time.Duration) ([]rxMsg, error) {
 	return append(first, rest...), err
 }
 
-func sceneFinding(msgs []rxMsg) Finding {
+// recallText is the scene-recall instruction for the family.
+func (p *prober) recallText() string {
+	if p.cfg.fam.name == "xair" {
+		return "Press Enter, then within 10 s load a lab snapshot (1..63, never 64, XA-F63) " + p.cfg.fam.surface +
+			" (this changes the mixer; amplifiers must be off)."
+	}
+	return "Press Enter, then within 10 s recall any scene on the console (this changes the console; amplifiers must be off)."
+}
+
+func sceneFinding(msgs []rxMsg, markers []string) Finding {
 	f := Finding{ID: "scene-recall-pushes", Facts: []string{"X32-F60", "X32-F61", "X32-F62"},
 		Title: "what a desk scene recall pushes", Status: Measured, Evidence: map[string]string{}}
 	distinct := map[string]bool{}
 	for _, m := range msgs {
 		distinct[m.Address] = true
-		switch m.Address {
-		case undoAddr, preposAddr:
+		if slices.Contains(markers, m.Address) {
 			f.Evidence[m.Address+" pushed"] = argString(m.Arg) + " at " + stamp(m.At)
 		}
 	}
@@ -130,8 +136,11 @@ func sceneFinding(msgs []rxMsg) Finding {
 		return f
 	}
 	span := msgs[len(msgs)-1].At.Sub(msgs[0].At)
-	f.Detail = fmt.Sprintf("%d pushes, %d distinct addresses over %s, at most %d distinct addresses within %s; /-undo/time pushed: %t; /-show/prepos/current pushed: %t",
-		len(msgs), len(distinct), ms(span), maxDistinctIn(msgs, burstWindow), ms(burstWindow), f.Evidence[undoAddr+" pushed"] != "", f.Evidence[preposAddr+" pushed"] != "")
+	f.Detail = fmt.Sprintf("%d pushes, %d distinct addresses over %s, at most %d distinct addresses within %s",
+		len(msgs), len(distinct), ms(span), maxDistinctIn(msgs, burstWindow), ms(burstWindow))
+	for _, mk := range markers {
+		f.Detail += fmt.Sprintf("; %s pushed: %t", mk, f.Evidence[mk+" pushed"] != "")
+	}
 	return f
 }
 
