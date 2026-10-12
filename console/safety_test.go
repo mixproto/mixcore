@@ -294,3 +294,45 @@ func TestShowMode_RaiseAfterPendingLowering(t *testing.T) {
 		}
 	})
 }
+
+// Review HIGH 2: each opened wall continues from that wall; opening a second
+// (and third) wall must not count the first offset twice (a jump down).
+func TestSlipGuard_OpenSeveralWallsWithoutJump(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, drv := startSafe(t, SafetyConfig{Client: ClientSafety{SlipGuard: true}}, safetyState(-6))
+		_, _ = sup.HoldWindow(ch1Fader, gesture, true)
+		prev := math.Inf(-1)
+		push := func(cand, want float64, st GestureState) {
+			t.Helper()
+			r, err := sup.Write(set(ch1Fader, lvl(t, cand), gesture))
+			if err != nil || math.Abs(dbIn(t, r)-want) > 1e-9 || r.State != st {
+				t.Fatalf("candidate %v -> %v %s (%v), want %v %s", cand, dbIn(t, r), r.State, err, want, st)
+			}
+			if dbIn(t, r) < prev {
+				t.Fatalf("value fell from %v to %v while the finger only moved up", prev, dbIn(t, r))
+			}
+			prev = dbIn(t, r)
+		}
+		open := func(wantWall float64) {
+			t.Helper()
+			time.Sleep(300 * time.Millisecond) // wall.dwell
+			if r, err := sup.OpenWall(ch1Fader, gesture); err != nil || r.Window.WallUp != wantWall {
+				t.Fatalf("open: wall %v, %v", r.Window.WallUp, err)
+			}
+		}
+		push(4, 0, StateAtWall) // finger 4 dB past the first wall
+		open(6)
+		push(4, 0, StateFree) // resting finger: no jump
+		push(12, 6, StateAtWall)
+		open(12)
+		push(12, 6, StateFree) // the reviewer's probe wrote +2 here
+		push(13, 7, StateFree)
+		push(20, 12, StateAtWall)
+		open(18)
+		push(20, 12, StateFree) // third wall
+		push(21, 13, StateFree)
+		if max := maxWrite(drv); max != 13 {
+			t.Fatalf("highest write %v", max)
+		}
+	})
+}

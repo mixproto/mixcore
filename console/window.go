@@ -104,7 +104,10 @@ func (w *window) openWall() bool {
 	if !w.OpensByRest || w.state != StateAtWall {
 		return false
 	}
-	w.offset += w.lastAt - w.position(w.WallUp)
+	// lastAt is the raw finger position (no offset applied), so the new
+	// offset replaces the old one: adding them counted the first twice
+	// (review HIGH 2).
+	w.offset = w.lastAt - w.position(w.WallUp)
 	w.WallUp += slipStepDB
 	w.state = StateFree
 	return true

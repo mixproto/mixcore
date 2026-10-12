@@ -82,6 +82,21 @@ func line(holdMs, dur int, dx, dy float64) []pathPoint {
 
 func any1(pts []pathPoint) []pathVariant { return []pathVariant{{Orientation: "any", Points: pts}} }
 
+// climb repeats n times: up dy in moveMs, then a rest of restMs.
+func climb(n int, dy float64, moveMs, restMs int) []pathPoint {
+	pts := []pathPoint{{}}
+	for i := range n {
+		base, y0 := i*(moveMs+restMs), float64(i)*dy
+		for _, p := range line(0, moveMs, 0, dy)[1:] {
+			pts = append(pts, pathPoint{T: base + p.T, Y: y0 + p.Y})
+		}
+		for t := pathSampleMs; t <= restMs; t += pathSampleMs {
+			pts = append(pts, pathPoint{T: base + moveMs + t, Y: y0 + dy})
+		}
+	}
+	return pts
+}
+
 // buildPaths returns P1..P8, P1D and P1R..P6R as specified (phone-safety
 // acceptance, "Touch paths").
 func buildPaths() pathsFile {
@@ -117,6 +132,8 @@ func buildPaths() pathsFile {
 		{ID: "P8", Motion: "a large contact lands on the cap and moves up 100 in 200 ms", Why: "the hand holding the phone",
 			LargeContact: true, Variants: any1(line(0, 200, 0, 100))},
 		{ID: "P1D", Motion: "down 60 in 40 ms", Why: "the emergency pull must never be stopped", Variants: any1(line(0, 40, 0, -60))},
+		{ID: "P9", Motion: "five times: up 40 in 200 ms, then rest 400 ms", Why: "a deliberate climb that opens several slip-guard walls in one gesture (review HIGH 2)",
+			Variants: any1(climb(5, 40, 200, 400))},
 	}
 	for _, p := range ps[:6] { // P1R..P6R: rotated 90 degrees clockwise, up becomes right
 		r := gesturePath{ID: p.ID + "R", Motion: p.Motion + ", rotated 90 degrees clockwise", Why: p.Why + " on a horizontal control"}

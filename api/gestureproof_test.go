@@ -154,6 +154,10 @@ func TestTouchPaths_FaderNeverJumps(t *testing.T) {
 		for _, p := range paths.Paths {
 			v := variantFor(p, g.orientation)
 			r := replay(t, ctlFader, g.track, v, p.LargeContact)
+			if p.ID == "P9" {
+				checkClimb(t, g.orientation, r)
+				continue
+			}
 			if r.max() > start+6+writeTol || r.max() >= 10 {
 				t.Errorf("%s %s: wrote up to %.2f dB", g.orientation, p.ID, r.max())
 			}
@@ -238,4 +242,22 @@ func sortedKeys(m map[string]bool) []string {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// checkClimb: P9 only moves up and rests at each wall, so its writes never
+// fall (review HIGH 2: a second opened wall made the fader jump down), and
+// it opens more than one wall.
+func checkClimb(t *testing.T, orientation string, r run) {
+	t.Helper()
+	for i := 1; i < len(r.writes); i++ {
+		if r.writes[i] < r.writes[i-1]-writeTol {
+			t.Errorf("%s P9: write %d fell from %.2f to %.2f while the finger only moved up", orientation, i, r.writes[i-1], r.writes[i])
+			return
+		}
+	}
+	// The 152 pt landscape throw ends after the first wall (the finger is at
+	// the top of the track), so only portrait can reach a second wall.
+	if (orientation == "portrait" && r.walls < 2) || r.max() >= 10+writeTol {
+		t.Errorf("%s P9: %d wall arrivals, highest %.2f; want two or more walls in portrait", orientation, r.walls, r.max())
+	}
 }
