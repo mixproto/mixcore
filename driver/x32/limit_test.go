@@ -164,7 +164,8 @@ func TestLimit_RereadsFindUnpushedChanges(t *testing.T) {
 			if err := rr.Reread(); err != nil {
 				t.Fatal(err)
 			}
-			if _, ok := nextOf[driver.ParamChanged](events, 15*time.Second); !ok {
+			// The second pass starts RereadGap after the first ended (never back to back).
+			if _, ok := nextOf[driver.ParamChanged](events, DefaultTiming.RereadGap+passTime); !ok {
 				t.Fatalf("pass %d did not find the change", i+1)
 			}
 			time.Sleep(passTime) // the pass ends before the next one starts

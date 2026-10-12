@@ -230,7 +230,7 @@ func (s *session) Run(ctx context.Context, events chan<- driver.Event) error {
 		case <-s.meterReady:
 			s.requestMeters()
 		case <-s.rereadReady:
-			s.startReread(time.Now())
+			s.requestReread(time.Now())
 		case now := <-tick.C:
 			if err := s.onTick(now); err != nil {
 				return err

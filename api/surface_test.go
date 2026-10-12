@@ -71,15 +71,23 @@ func TestIdleEngine_RereadsInTheBackgroundButNeverWrites(t *testing.T) {
 		e.startLive(t)
 		time.Sleep(time.Hour)
 		synctest.Wait()
-		reads := 0
+		// The supervisor asks every 15 s; a pass starts 15 s after the
+		// previous one ended (about 17 s of reads on x32), so ch 1 is read
+		// every 15 s + one pass, never back to back.
+		var at []time.Time
 		for _, entry := range e.sim.Log() {
 			if entry.Class == simx32.ClassRead && entry.Address == "/ch/01/mix/fader" {
-				reads++
+				at = append(at, entry.At)
 			}
 		}
-		want := 1 + int(time.Hour/console.DefaultRereadEvery)
-		if reads < want-1 || reads > want {
-			t.Fatalf("ch1 fader read %d times in an hour, want about %d", reads, want)
+		const minEvery, maxEvery = console.DefaultRereadEvery + 10*time.Second, console.DefaultRereadEvery + 25*time.Second
+		if len(at) < int(time.Hour/maxEvery) {
+			t.Fatalf("ch1 fader read %d times in an hour, want at least %d", len(at), int(time.Hour/maxEvery))
+		}
+		for i := 2; i < len(at); i++ { // at[0] is the connect read
+			if d := at[i].Sub(at[i-1]); d < minEvery || d > maxEvery {
+				t.Fatalf("read %d came %v after the previous, want %v..%v", i, d, minEvery, maxEvery)
+			}
 		}
 		if n := len(e.sim.Writes()); n != 0 {
 			t.Fatalf("an idle engine wrote %d times", n) // safety rule 2

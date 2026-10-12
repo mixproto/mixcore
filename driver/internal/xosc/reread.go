@@ -20,8 +20,11 @@ const rereadBatch = ReadWindow
 // rereadPass is the owner-goroutine state of a background re-read.
 type rereadPass struct {
 	active bool
-	skip   map[int]bool // parameters left out of the current pass (held)
-	next   int          // next parameter index to read
+	// wanted: a requested pass waits for RereadGap after endedAt.
+	wanted  bool
+	endedAt time.Time
+	skip    map[int]bool // parameters left out of the current pass (held)
+	next    int          // next parameter index to read
 	// asked holds the parameters read in the current step. The value is true
 	// once the read is superseded (see markTouched).
 	asked map[int]bool
@@ -54,6 +57,24 @@ func (s *session) RereadExcept(skip []model.ParamRef) error {
 	return nil
 }
 
+// requestReread starts a requested pass, or defers it while a pass runs
+// or until RereadGap after the previous pass ended (onTick starts it).
+func (s *session) requestReread(now time.Time) {
+	if s.rr.active || (!s.rr.endedAt.IsZero() && now.Sub(s.rr.endedAt) < s.timing.RereadGap) {
+		s.rr.wanted = true
+		return
+	}
+	s.startReread(now)
+}
+
+// rereadDue starts a deferred pass once the gap after the last one passed.
+func (s *session) rereadDue(now time.Time) {
+	if s.rr.wanted && !s.rr.active && now.Sub(s.rr.endedAt) >= s.timing.RereadGap {
+		s.rr.wanted = false
+		s.startReread(now)
+	}
+}
+
 // startReread begins a pass unless one is running.
 func (s *session) startReread(now time.Time) {
 	if s.rr.active {
@@ -64,6 +85,7 @@ func (s *session) startReread(now time.Time) {
 	s.rr.skip, s.rrSkip = s.rrSkip, nil
 	s.mu.Unlock()
 	s.passStarted()
+	s.live.lastStep = now // this is the pass's first step: the next one waits PingEvery, or its replies would be dropped
 	s.rereadStep(now)
 }
 
@@ -91,7 +113,7 @@ func (s *session) rereadStep(now time.Time) {
 		sent++
 	}
 	if s.rr.next >= len(s.params.all) {
-		s.rr.active, s.lim.evaluate = false, true
+		s.rr.active, s.lim.evaluate, s.rr.endedAt = false, true, now
 	}
 }
 

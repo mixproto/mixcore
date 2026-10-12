@@ -60,6 +60,11 @@ type Timing struct {
 	ConnectTimeout  time.Duration // identify + full initial read
 	ReadRetryEvery  time.Duration // re-send unanswered reads and /xinfo during connect (X32-F07)
 	EchoWindow      time.Duration // how long a sent value is matched against pushes
+	// RereadGap: a requested background re-read starts no earlier than this
+	// after the previous pass ended, so passes never run back to back (lead
+	// decision 2026-10-12). Recovery passes (scene recall, served again)
+	// start at once.
+	RereadGap time.Duration
 }
 
 // DefaultTiming is used for every zero field of a Timing.
@@ -73,6 +78,7 @@ var DefaultTiming = Timing{
 	ConnectTimeout:  5 * time.Second,
 	ReadRetryEvery:  300 * time.Millisecond,
 	EchoWindow:      2 * time.Second,
+	RereadGap:       15 * time.Second,
 }
 
 // WithDefaults fills every zero field from DefaultTiming.
@@ -89,7 +95,7 @@ func (t Timing) WithDefaults() Timing {
 		DeadAfter: or(t.DeadAfter, d.DeadAfter), StaleAfter: or(t.StaleAfter, d.StaleAfter),
 		QuietProbeAfter: or(t.QuietProbeAfter, d.QuietProbeAfter), LivenessTick: or(t.LivenessTick, d.LivenessTick),
 		ConnectTimeout: or(t.ConnectTimeout, d.ConnectTimeout), ReadRetryEvery: or(t.ReadRetryEvery, d.ReadRetryEvery),
-		EchoWindow: or(t.EchoWindow, d.EchoWindow),
+		EchoWindow: or(t.EchoWindow, d.EchoWindow), RereadGap: or(t.RereadGap, d.RereadGap),
 	}
 }
 
