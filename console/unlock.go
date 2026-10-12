@@ -20,7 +20,6 @@ const (
 	unlockIdle = 20 * time.Second // an unlock ends after 20 s without a command on it
 	undoGrace  = 10 * time.Second // an undo of an unlock entry stays allowed this long after the relock
 	maxUndoTo  = 32               // values before entries remembered per unlock (the first ones are kept)
-	undoMatch  = 0.25             // dB: half of the 0.5 dB Gain step
 )
 
 // Unlock end reasons (state event gainUnlockEnded).
@@ -69,9 +68,9 @@ func (u *unlocks) touch(h int) {
 
 // noteEntry records an accepted Gain write during an unlock and the value
 // Gain had before it, the only value an undo may return to after the relock.
-func (u *unlocks) noteEntry(h int, before float64) {
+func (u *unlocks) noteEntry(h int, before, tol float64) {
 	e, ok := u.active[h]
-	if !ok || len(e.undoTo) >= maxUndoTo || slices.ContainsFunc(e.undoTo, near(before)) {
+	if !ok || len(e.undoTo) >= maxUndoTo || slices.ContainsFunc(e.undoTo, near(before, tol)) {
 		return
 	}
 	e.undoTo = append(slices.Clip(e.undoTo), before)
@@ -79,17 +78,17 @@ func (u *unlocks) noteEntry(h int, before float64) {
 
 // allowsRaise: the headamp is unlocked, or this is an undo within the grace
 // after the relock, back to a value Gain had before an entry of that unlock.
-func (u *unlocks) allowsRaise(h int, undo bool, v float64) bool {
+func (u *unlocks) allowsRaise(h int, undo bool, v, tol float64) bool {
 	if _, ok := u.active[h]; ok {
 		return true
 	}
 	r, ok := u.relocked[h]
-	return undo && ok && time.Since(r.at) <= undoGrace && slices.ContainsFunc(r.undoTo, near(v))
+	return undo && ok && time.Since(r.at) <= undoGrace && slices.ContainsFunc(r.undoTo, near(v, tol))
 }
 
-// near matches a Gain value within half a step of the coarsest law (0.5 dB).
-func near(v float64) func(float64) bool {
-	return func(x float64) bool { return math.Abs(x-v) <= undoMatch }
+// near matches a Gain value within tol (half a step of the headamp law).
+func near(v, tol float64) func(float64) bool {
+	return func(x float64) bool { return math.Abs(x-v) <= tol }
 }
 
 func (u *unlocks) end(h int, reason string) {

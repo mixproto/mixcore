@@ -211,7 +211,8 @@ func (s *Supervisor) gainRulesLocked(w Write, cur, v float64, st GestureState, w
 	if hasPend {
 		floor = math.Min(cur, pend)
 	}
-	if s.safe.showMode && v > floor && !s.safe.unlocks.allowsRaise(h, w.Undo, v) {
+	tol := s.halfStepDB(h)
+	if s.safe.showMode && v > floor && !s.safe.unlocks.allowsRaise(h, w.Undo, v, tol) {
 		if win == nil {
 			return 0, 0, nil, fmt.Errorf("%w: raising %s", ErrShowMode, w.Param)
 		}
@@ -223,8 +224,16 @@ func (s *Supervisor) gainRulesLocked(w Write, cur, v float64, st GestureState, w
 		}
 		v, st = math.Min(math.Max(v, lo), math.Max(lo, hi)), StateAtCap
 	}
-	s.safe.unlocks.noteEntry(h, entryBase(cur, pend, hasPend, win)) // any accepted Gain write during an unlock is an entry (undo grace)
+	s.safe.unlocks.noteEntry(h, entryBase(cur, pend, hasPend, win), tol) // any accepted Gain write during an unlock is an entry (undo grace)
 	return v, st, windowOf(win), nil
+}
+
+// halfStepDB is half a step of headamp h's own law: two Gain values closer
+// than that are the same console value (re-review LOW F). 0 (exact) when
+// the capabilities do not describe h.
+func (s *Supervisor) halfStepDB(h int) float64 {
+	info, _ := s.caps.Headamp(h)
+	return info.StepDB / 2
 }
 
 // entryBase is the Gain an undo of this entry returns to: the start of the

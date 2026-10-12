@@ -329,3 +329,37 @@ func TestHeadamp_ReadOnlyGainRefusedWhateverTheValue(t *testing.T) {
 		}
 	})
 }
+
+// Re-review LOW F: the undo grace matches within half a step of that
+// headamp's own law, not a fixed 0.25 dB. On a 0.25 dB law (a trim-like
+// step) 32.7 is not the 32.5 the entry started from.
+func TestShowMode_UndoMatchIsHalfAStepOfTheLaw(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		caps := gainCaps
+		caps.Headamps = micHeadamps(3)
+		caps.Headamps[2].StepDB = 0.25
+		drv := &fakeDriver{snapshot: safetyState(-6), caps: caps}
+		sup, err := New(Config{Driver: drv, Rand: func() float64 { return 0.5 }, Options: driver.Options{Meters: &meters.Slot{}}, Safety: SafetyConfig{ShowMode: true}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sup.Start(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(sup.Stop)
+		synctest.Wait()
+		_ = sup.Unlock(gain3, gesture)
+		if _, err := sup.Write(set(gain3, lvl(t, 30.5), gesture)); err != nil { // the entry, from 32.5
+			t.Fatal(err)
+		}
+		drv.session(0).push <- driver.ParamChanged{Param: gain3, Value: lvl(t, 30.5), Origin: gesture}
+		synctest.Wait()
+		_ = sup.Relock(gain3, gesture)
+		if _, err := sup.Write(undo(t, 32.7)); !errors.Is(err, ErrShowMode) {
+			t.Fatalf("undo to 32.7 on a 0.25 dB law: %v", err)
+		}
+		if _, err := sup.Write(undo(t, 32.5)); err != nil {
+			t.Fatalf("undo to 32.5: %v", err)
+		}
+	})
+}

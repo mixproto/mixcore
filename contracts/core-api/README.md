@@ -167,7 +167,7 @@ behave the same and a UI bug cannot bypass them:
     live, also inside a hold: the window stops at the start with state `locked`). `unlock` (after the UI's 1 s hold)
     allows raising Gain on that headamp until `relock`, 20 s without a command on it, stale, pause or stop
     (event `gainUnlockEnded`). For 10 s after the relock an `undo` set may raise Gain on that headamp, but only back
-    to a value Gain had before an entry of that unlock (within 0.25 dB: the start of the hold, else the value in
+    to a value Gain had before an entry of that unlock (within half a step of that headamp's law: the start of the hold, else the value in
     flight, else the console value); any other raise is `ERR_SHOW_MODE`.
     Show mode survives reconnects; the UI restores it at `Start` from `safety.showMode`. Future gates (no such command
     exists in the core yet, each gets `ERR_SHOW_MODE` when added): 48 V phantom, polarity, EQ/GEQ `Flat`, `Mute all in
