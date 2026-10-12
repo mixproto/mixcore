@@ -249,8 +249,8 @@ returns to FX sends 07..10 are `[TO-VERIFY]`.
 ### 3.4 Processing (later phases; not in driver v1)
 | Field | Address | Encoding | Source |
 |---|---|---|---|
-| headamp gain | `/headamp/NN/gain` (2 digits, 01..24) | mic inputs: dB = -12 + 72 f, 145 steps of 0.5 dB; line inputs: dB = -12 + 32 f, 65 steps of 0.5 dB | XS5 `constants.js` `LIMITS` `h145`, `h65`, `HA_CONFIG` `[PERMISSIVE-CODE MIT]`; XS10 `input/gain.js` `[PERMISSIVE-CODE Apache-2.0]`. XS12 lists only -12..+20 for `/headamp/01/gain` (contradiction, trust the code) |
-| phantom | `/headamp/NN/phantom` | `i` 0/1, mic inputs only, per headamp (as X32) | XS5 `HA_CONFIG` (`ph: true` on 1..16) `[PERMISSIVE-CODE MIT]` |
+| headamp gain | `/headamp/NN/gain` (2 digits, 01..24) | mic inputs: dB = -12 + 72 f, 145 steps of 0.5 dB; line inputs: dB = -12 + 32 f, 65 steps of 0.5 dB; details and contradictions in section 3.6 (XA-F110..F112) | XS5 `constants.js` `LIMITS` `h145`, `h65`, `HA_CONFIG` `[PERMISSIVE-CODE MIT]`; XS10 `input/gain.js` `[PERMISSIVE-CODE Apache-2.0]`. XS12 lists only -12..+20 for `/headamp/01/gain` (contradiction, trust the code) |
+| phantom | `/headamp/NN/phantom` | `i` 0/1, mic inputs only, per headamp (as X32); XA-F113 | XS5 `HA_CONFIG` (`ph: true` on 1..16) `[PERMISSIVE-CODE MIT]` |
 | input source | `/ch/NN/config/insrc` (`i`), `/ch/NN/preamp/rtnsw` (0 = preamp, 1 = USB), `/ch/NN/config/rtnsrc` (USB 1..18) | range of `insrc` contradictory in XS12 ("0-15", 17 labels) | XS12 `[COMMUNITY]`; XS10 README ("`rtnsw` decides whether `insrc` or `rtnsrc` is active") `[PERMISSIVE-CODE Apache-2.0]`; `[TO-VERIFY]` |
 | USB trim | `<s>/preamp/rtntrim` | dB = -18 + 36 f, 145 steps | XS5 `LIMITS` `r145` `[PERMISSIVE-CODE MIT]` |
 | polarity | `<s>/preamp/invert` | `i` 0/1 | XS5, XS6 `[PERMISSIVE-CODE MIT]` |
@@ -274,6 +274,40 @@ Quirk for later phases: XS10 never writes 1.0 to gain, gate, pan and FX paramete
 | Read current snapshot | `/-snap/index` (no argument) | |
 
 These byte strings were computed with OSC 1.0 rules (XA-F02); the layout is the one of the X32 example in X32-F43.
+
+### 3.6 Headamp gain, trim and phantom (for core rule CR-23)
+Same as X32 (`x32.md` X32-F70..F79): gain and phantom live on the headamp (the physical input), not on the channel;
+mic gain uses the same linear law, range and step. Differs: two-digit 1-based indices, a second law for line inputs,
+no channel trim, no `/-ha` index, no stage boxes or AES50, no gain split. The vendor protocol document (XS1) has no
+headamp entry; everything below is from MIT/Apache code and the quick start guides.
+
+| ID | Fact | Source |
+|---|---|---|
+| XA-F110 | **Addresses.** `/headamp/NN/gain` (`f`) and `/headamp/NN/phantom` (`i`), NN two digits, **1-based**. Mic inputs `01`..`16` on XR18/X18/MR18, `01`..`08` on XR16, `01`..`04` on XR12. On the 18-channel models `17` is the stereo aux (RCA) input, **one gain for both sides** (XS10 sends the gain of aux L, aux R and the stereo aux all to `/headamp/17`). **Contradiction on XR16/XR12 line inputs:** XS5 addresses them as `/headamp/17`..`24` ("TRS 1..8"); XS10 addresses them as the next numbers after the mic inputs (`/headamp/09`..`16` on XR16, `/05`..`12` on XR12). `[TO-VERIFY]`, item 21; proposed default until then: line-input gain on XR16/XR12 is absent in mixcore. | XS5 `constants.js:162-235` (`HA_CONFIG`), `buildHADefs.js:13-15` `[PERMISSIVE-CODE MIT]`; XS6 `headamp.py` (`index + 1`, 2 digits) `[PERMISSIVE-CODE MIT]`; XS11 `mixer_type_xair.py:60-75` (2 digits), `mixer_type_xr18.py:13`, `_xr16.py:12`, `_xr12.py:12` (16, 8, 4 headamps) `[PERMISSIVE-CODE MIT]`; XS10 `device/input/options.js` (`inputOsc`, input numbers), `device/input/gain.js` (`gainOsc`) `[PERMISSIVE-CODE Apache-2.0]` |
+| XA-F111 | **Mic gain = X32 law** (X32-F71, X32-F72): linear, **dB = 72 f - 12**, **-12.0 to +60.0 dB**, **0.5 dB steps, 145 values** (f = k/144). Four code sources agree; XS12 lists -12..+20 for `/headamp/01/gain` (contradiction, probably the line range). | XS5 `constants.js:35` (`h145: -12..60`), `:45` (145 steps) `[PERMISSIVE-CODE MIT]`; XS6 `headamp.py` (`lin_get(-12, 60, ...)`) `[PERMISSIVE-CODE MIT]`; XS10 `device/input/gain.js` (`GAIN_MINIMUM_INPUT` -12, `GAIN_MAXIMUM_INPUT` 60, linear scale) `[PERMISSIVE-CODE Apache-2.0]`; XS12 `[COMMUNITY]` |
+| XA-F112 | **Line and aux gain:** linear, **dB = 32 f - 12**, **-12.0 to +20.0 dB**, **0.5 dB steps, 65 values** (f = k/64). Applies to the line headamps of XR16/XR12 and to `/headamp/17` (aux) on the 18-channel models. Two code sources; no vendor or community confirmation `[TO-VERIFY]`, item 22. | XS5 `constants.js:38` (`h65: -12..20`, "aux gain"), `HA_CONFIG` (`fSteps: 65` on 17..24) `[PERMISSIVE-CODE MIT]`; XS10 `device/input/gain.js` (`GAIN_MINIMUM_LINE` -12, `GAIN_MAXIMUM_LINE` 20) `[PERMISSIVE-CODE Apache-2.0]` |
+| XA-F113 | **Phantom:** `/headamp/NN/phantom` `i`, **0 = off, 1 = on**, mic headamps only (no phantom on line or aux headamps). Vendor specification: "Phantom power, switchable per input 48 V". | XS5 `HA_CONFIG` (`ph: true` only on 1..16), `buildHADefs.js:40-58` `[PERMISSIVE-CODE MIT]`; XS6 `headamp.py` (1/0) `[PERMISSIVE-CODE MIT]`; XS10 `device/input/phantom.js` (preamp inputs only) `[PERMISSIVE-CODE Apache-2.0]`; XS2, XS3 specification tables `[VENDOR-DOC]` |
+| XA-F114 | **No channel digital trim.** No source has `/ch/NN/preamp/trim` on X Air (X32: X32-F75). The only input trim is `<s>/preamp/rtntrim`, the **USB return trim**: linear, dB = 36 f - 18, **-18 to +18 dB, 0.25 dB, 145 values**, on `/ch/01..16` and `/rtn/aux`, effective when `<s>/preamp/rtnsw` = 1 (USB source). XS5 labels it "USB Trim (x18 only)"; on XR16/XR12 `[TO-VERIFY]`, item 23. | XS5 `defStrip.js` (`hasTrim`), `buildStripDefs.js:488-530` (`/preamp/rtntrim`, 145 steps), `constants.js:36` (`r145: -18..+18`) `[PERMISSIVE-CODE MIT]`; XS6 `shared.py` `Preamp.usbtrim` (`rtntrim`, -18..18) `[PERMISSIVE-CODE MIT]`; XS10 `device/bus/input.js:15-17`, `:249-253` (`preamp/rtntrim`, -18..18) `[PERMISSIVE-CODE Apache-2.0]` |
+| XA-F115 | **Channel to headamp.** No `/-ha/NN/index` exists in any X Air source. A channel's input is `/ch/NN/config/insrc` (`i`), unless `/ch/NN/preamp/rtnsw` = 1, when it is USB return `config/rtnsrc` and has no headamp gain. In XS10 the `insrc` values are: 18-channel models 0..15 = mic 1..16 (`/headamp/01..16`), 16, 17 = aux L, R (`/headamp/17`), 18 = off; XR16 0..7 = mic 1..8, 8..15 = line, 16, 17 = USB L, R, 18 = off; XR12 0..3 = mic 1..4, 4..11 = line, 12, 13 = USB L, R, 18 = off. One source; XS12's `insrc` range is contradictory (section 3.4, input source row) `[TO-VERIFY]`, item 24. Several channels may use one headamp. | XS10 `device/input/options.js` (`optionsPerModelAndBusType`, `xAirId`), `device/bus/input.js` (`idRead`) `[PERMISSIVE-CODE Apache-2.0]`; XS12 `[COMMUNITY]` |
+| XA-F116 | **Rounding and echo** are as unknown as for X32 (X32-F72, X32-F79): the driver sends grid values only (k/144 mic, k/64 line, k/144 USB trim) and matches echoes within half a step. XS10 never writes 1.0 to gain (it scales to 0.999999, "Strange bug when setting 1", XA-F101), so its +60 dB is 59.99993 dB on the wire; whether 1.0 is safe `[TO-VERIFY]`, item 22. A gain change from another app is pushed like any parameter under the echo rules of section 2 `[TO-VERIFY]`. | XS10 `shared.js:39`, `device/input/gain.js` `[PERMISSIVE-CODE Apache-2.0]` |
+| XA-F117 | **Scope of a gain change.** X Air has no AES50 or stage-box sharing (XA-F73), and no source mentions gain split or gain compensation, so a headamp gain change reaches every channel that uses that input and every mix of this one mixer. A snapshot load can change gain and phantom: snapshot scope has "source" and "input" flags (XA-F60); which of them covers headamp gain is `[TO-VERIFY]`, item 25. | XS1 p.4 (scope flags) `[VENDOR-DOC]`; XS2, XS3 (no AES50 port) `[VENDOR-DOC]` |
+
+Reference points for the line law (the mic law has the X32 table, `x32.md` after X32-F79; the USB trim has the X32
+trim column):
+
+| Line gain dB | k (of 64) | f = k/64 | float32 hex |
+|---|---|---|---|
+| -12.0 (min) | 0 | 0.000000 | `00000000` |
+| 0.0 | 24 | 0.375000 | `3ec00000` |
+| +10.0 | 44 | 0.687500 | `3f300000` |
+| +19.5 | 63 | 0.984375 | `3f7c0000` |
+| +20.0 (max) | 64 | 1.000000 | `3f800000` |
+
+Example: mic headamp 1 to 0 dB, `/headamp/01/gain ,f 0.16666667` =
+`2f68656164616d702f30312f6761696e000000002c6600003e2aaaab`.
+
+Consequence for CR-23: the core takes range and step from the headamp kind (mic -12..+60 dB, line/aux -12..+20 dB,
+both 0.5 dB), not from the family. A 6 dB bound is 12 steps on both laws; on a line input the whole range is 32 dB.
 
 ## 4. Value encodings
 
@@ -551,11 +585,35 @@ hardware we legally use. "mixprobe" marks items a `--family xair` mode can autom
 19. **Mute semantics (section 3.2)**, manual, as `x32.md` item 13 with `/-prefs/dcamute` and `/-prefs/hardmute`.
 20. **Liveness on a quiet mixer (XA-F25)**, mixprobe. Idle 10 min with the session running. Pass: no stale event.
 
+Headamp items (section 3.6). Safety for every write: nothing plugged into the input under test, phantom off unless the
+item switches it, the channels using it muted, amplifiers off; restore every value afterwards.
+
+21. **Headamp numbering (XA-F110)**, mixprobe plus manual. On an XR16 and an XR12 read `/headamp/04/gain`,
+    `/headamp/05/gain`, `/headamp/09/gain`, `/headamp/12/gain`, `/headamp/16/gain`, `/headamp/17/gain`,
+    `/headamp/24/gain`; then change the gain of line input 1 in X AIR Edit and log which `/headamp/NN/gain` is pushed.
+    On an XR18 read `/headamp/17/gain` and `/headamp/18/gain` and change the aux input gain in X AIR Edit. Pass: the
+    address set per model (XS5 or XS10 numbering) and whether aux has one headamp.
+22. **Gain law, ends and rounding (XA-F111, XA-F112, XA-F116)**, mixprobe plus manual. On mic headamp `01` write 0.0,
+    0.16666667 and 1.0, read back each and note the dB X AIR Edit shows (expect -12.0, 0.0, +60.0); write the off-grid
+    0.17, read back and log the push (expect 0.16666667 if the mixer rounds). On a line or aux headamp write 0.375 and
+    1.0 (expect 0.0 and +20.0 dB). Pass: ranges, k/144 and k/64 grids, 1.0 accepted or not.
+23. **USB trim (XA-F114)**, mixprobe. On every model read `/ch/01/preamp/trim` (expect no reply),
+    `/ch/01/preamp/rtntrim`, `/rtn/aux/preamp/rtntrim`; write `rtntrim` 0.6666667 (+6 dB) with `rtnsw` 0 and read back;
+    restore 0.5. Pass: which addresses exist per model.
+24. **Channel source (XA-F115)**, mixprobe plus manual. Read `/ch/01/config/insrc` and `/ch/01/preamp/rtnsw`; in X AIR
+    Edit set ch 01 input to mic 2, then aux L, then USB 1, logging each push; restore. Pass: the `insrc` value per source
+    and per model.
+25. **Snapshot scope and gain (XA-F117)**, manual. In a lab slot (never 64) save a snapshot with mic 1 gain at +10 dB;
+    set +20 dB; load the slot with the scope flag "input" on, then with only "source" on; log `/headamp/01/gain` pushes.
+    Pass: which scope flag restores headamp gain and phantom.
+
 `cmd/mixprobe --lab -family xair` checks items 1, 2, 3, 5, 8, 9, 11, 12, 14 and 16, item 20 for 20 s (not 10 min), and
 the read parts of 10, 13 and 18 in one guided session, plus fader quantization (7, without the pan write), mute-group polarity, a snapshot load
 from another app (13), unplug and reboot (15). Read-only checks run first; every write is guarded (levels and sends
 only down, mutes only on, one channel name) and restored. Items 4, 6, 17, 19, the pan part of 7, the link part of 10
-and the write part of 18 need a person or a write mixprobe cannot bound; the report lists them as skipped.
+and the write part of 18 need a person or a write mixprobe cannot bound; the report lists them as skipped. Items 21-25
+are not in mixprobe yet: the read parts of 21, 23 and 24 can be automated; the writes of 22 (+60 dB) and 25 need a
+person.
 
 ## Open questions for the lead (with recommended defaults)
 - Warn on firmware older than 1.18 (XA-F76)? Default: one-time non-blocking hint.
