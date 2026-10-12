@@ -155,6 +155,31 @@ func FaderDB(position float64) (db float64) {
 	return engine.FaderDB(position)
 }
 
+// MeterScale returns the meter display scale (meter-scale.schema.json).
+func MeterScale() (scale string) {
+	defer recoverQuiet()
+	return engine.MeterScale()
+}
+
+// MeterPosition maps a level in dBFS to 0..1 on the meter scale.
+func MeterPosition(dbfs float64) (pos float64) {
+	defer recoverQuiet()
+	return engine.MeterPosition(dbfs)
+}
+
+// MeterRelease is one meter ballistics step (meter-frame.md).
+func MeterRelease(shownDB, inputDB, elapsedMs float64) (db float64) {
+	defer recoverQuiet()
+	return engine.MeterRelease(shownDB, inputDB, elapsedMs)
+}
+
+// FaderStep applies a discrete fader step with the bottom-of-scale rule
+// (-inf <-> -60 dB, design CR-21).
+func FaderStep(db, deltaDB float64) (next float64) {
+	defer recoverQuiet()
+	return engine.FaderStep(db, deltaDB)
+}
+
 // SetDiscoveryListener sets (or clears, with nil) the discovery listener.
 func SetDiscoveryListener(l DiscoveryListener) {
 	defer recoverQuiet()

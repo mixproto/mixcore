@@ -12,6 +12,8 @@ working unchanged. What v0.1 adds:
 |---|---|---|
 | Connection | `staleSinceMs` and `offline` in every state message; stale after 1.5 s without any packet from the console | SR-05, CR-06, 8.1 |
 | Client limit | `limited` and `limitedReason`: the console does not send this engine updates (slots full); input locked, holds cancelled with reason `limited` | SR-17, CR-10 |
+| Meters | Main L/R as levels 32/33 of the meter frame; `MeterScale`, `MeterPosition`, `MeterRelease` so every UI draws meters alike | CR-17, OQ 24, OQ 27 |
+| Fader steps | `FaderStep(db, deltaDB)`: the bottom-of-scale rule (`-inf` <-> -60 dB) for keyboard, screen reader and +/- buttons | CR-21, OQ 26 |
 
 ## Calls
 
@@ -33,6 +35,10 @@ working unchanged. What v0.1 adds:
 | `SetLogSink(sink, minLevel)` | `LogSink` with `Log(level int, line string)`; levels -4 debug, 0 info, 4 warn, 8 error | | no. Lines come from one dedicated goroutine (bounded queue, overflow counted and reported) |
 | `SetSocketBinder(b)` | `SocketBinder` with `BindSocket(fd int) error` | | no. Android only: every socket opened afterwards is passed to it before use; an error keeps that socket closed. Apple and Windows never call it |
 | `ReadMeterFrame(dst)` (Go) / `MixMeterFrame(buf, cap)` (C) | caller buffer | frame length | **never blocks, never allocates**; snprintf style when the buffer is short (`capi.md`) |
+| `MeterScale()` (v0.1) | | `meter-scale.schema.json` | **never blocks**: constant |
+| `MeterPosition(dbfs)` (v0.1) | dBFS (`-inf` allowed) | position 0..1 on the meter scale | **never blocks**: pure |
+| `MeterRelease(shownDB, inputDB, elapsedMs)` (v0.1) | shown and new level in dBFS, ms since the last tick | level to show | **never blocks**: pure (`meter-frame.md`) |
+| `FaderStep(db, deltaDB)` (v0.1) | level (`-inf` allowed), step in dB (+1, -1, +0.1, +5, ...) | next level | **never blocks**: pure. Up from `-inf` gives -60 dB; down from -60 dB or below gives `-inf`; otherwise the level rounded to 0.1 dB plus the step, rounded to 0.1 dB, at most the top of the family's fader law (x32: +10 dB). A step of 0 or NaN returns the level unchanged |
 
 `FaderPosition`/`FaderDB` use 64-bit floats, which carry `-inf` natively (Swift `-Double.infinity`, Kotlin
 `Double.NEGATIVE_INFINITY`, C# `double.NegativeInfinity`). NaN input gives position 0 / `-inf`.
@@ -99,6 +105,8 @@ Both bindings expose the calls above and nothing else; behaviour is identical be
 | `Apply`, `Discover` | `MobileApply(_ json: String?, _ error: NSErrorPointer) -> Bool` | `Mobile.apply(String)` throws `Exception` |
 | `MeterFrame` | `MobileMeterFrame() -> Data?` | `Mobile.meterFrame(): ByteArray` |
 | `FaderPosition`, `FaderDB` | `MobileFaderPosition(_ db: Double) -> Double` | `Mobile.faderPosition(Double): Double` |
+| `MeterScale` (v0.1) | `MobileMeterScale() -> String` | `Mobile.meterScale(): String` |
+| `MeterPosition`, `FaderStep`, `MeterRelease` (v0.1) | `MobileMeterPosition(_ dbfs: Double) -> Double`, `MobileFaderStep(_ db: Double, _ deltaDB: Double) -> Double`, `MobileMeterRelease(_ shownDB: Double, _ inputDB: Double, _ elapsedMs: Double) -> Double` | `Mobile.meterPosition(Double): Double`, `Mobile.faderStep(Double, Double): Double`, `Mobile.meterRelease(Double, Double, Double): Double` |
 | `SetStateListener` | `MobileSetStateListener(_ l: MobileStateListenerProtocol?)` | `Mobile.setStateListener(StateListener)` |
 | `SetDiscoveryListener` | `MobileSetDiscoveryListener(_ l: MobileDiscoveryListenerProtocol?)` | `Mobile.setDiscoveryListener(DiscoveryListener)` |
 | `SetLogSink` | `MobileSetLogSink(_ s: MobileLogSinkProtocol?, _ minLevel: Int)` | `Mobile.setLogSink(LogSink, Long)` |

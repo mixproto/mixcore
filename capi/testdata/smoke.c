@@ -11,6 +11,7 @@
 #endif
 #include <pthread.h>
 #include <stdint.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -108,11 +109,11 @@ static void gesture(void) {
 static void meters(uint8_t* frame) {
 	int32_t n = 0;
 	for (int i = 0; i < WAIT_STEPS && (n = MixMeterFrame(frame, MIX_METER_FRAME_MAX_BYTES)) <= 24; i++) sleep_ms(10);
-	CHECK(n == 24 + 32 * 4 && memcmp(frame, "MXMF", 4) == 0 && frame[6] == 32, "meter frame of %d bytes", n);
+	CHECK(n == 24 + 34 * 4 && memcmp(frame, "MXMF", 4) == 0 && frame[6] == 34, "meter frame of %d bytes", n);
 	uint8_t small[8] = {0};
 	CHECK(MixMeterFrame(small, (int32_t)sizeof small) == n && small[0] == 0, "short buffer must not be written");
 	CHECK(MixMeterFrame(NULL, 0) == n, "size query");
-	printf("meters: frame of %d bytes, 32 input levels\n", n);
+	printf("meters: frame of %d bytes, 32 input levels + Main L/R\n", n);
 }
 
 static int timing(uint8_t* frame) {
@@ -157,6 +158,12 @@ int main(int argc, char** argv) {
 	CHECK(wait_for(&live_seen), "engine never went live");
 	printf("state: live\n");
 	CHECK(MixFaderPosition(0.0) == 0.75, "fader law");
+	CHECK(MixFaderStep(-INFINITY, 1.0) == -60.0 && isinf(MixFaderStep(-60.0, -1.0)), "fader step rule");
+	CHECK(MixMeterPosition(-30.0) == 0.5 && MixMeterRelease(-10.0, -40.0, 100.0) == -12.0, "meter helpers");
+	char* scale = NULL;
+	int32_t scale_len = 0;
+	CHECK(MixMeterScale(&scale, &scale_len) == MIX_OK && scale_len > 0 && strstr(scale, "\"peakHoldMs\":1500") != NULL, "meter scale");
+	MixFree(scale);
 
 	static uint8_t frame[MIX_METER_FRAME_MAX_BYTES];
 	gesture();

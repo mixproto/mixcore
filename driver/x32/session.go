@@ -137,7 +137,7 @@ func (s *session) SetMeters(req driver.MeterRequest) error {
 		return driver.ErrClosed
 	}
 	s.metersOn.Store(req.Inputs)
-	s.c.meters.enabled.Store(req.Inputs)
+	s.c.meters.switchOn(req.Inputs)
 	signal(s.meterReady)
 	return nil
 }
@@ -260,10 +260,12 @@ func (s *session) sendSub(addr string, args ...osc.Arg) {
 	}
 }
 
-// requestMeters (re)starts the bank 1 stream while meters are on (X32-F50, X32-F52).
+// requestMeters (re)starts the bank 1 (inputs) and bank 2 (Main L/R) streams
+// while meters are on (X32-F50, X32-F52, X32-F55).
 func (s *session) requestMeters() {
 	if s.metersOn.Load() {
-		s.sendSub(addrMeters, osc.StringBytes([]byte(meterBank1)))
+		s.sendSub(addrMeters, osc.String(meterBank1))
+		s.sendSub(addrMeters, osc.String(meterBank2))
 	}
 }
 

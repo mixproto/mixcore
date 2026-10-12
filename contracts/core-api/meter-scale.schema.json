@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/meter-scale.schema.json",
+  "title": "mixcore core API v0.1: MeterScale()",
+  "description": "The meter display scale and ballistics every UI uses (design CR-17, open question 24). Family-independent; the protocols send raw levels only.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "minDB",
+    "maxDB",
+    "ticksDB",
+    "clipDB",
+    "nominalDB",
+    "releaseDBPerSecond",
+    "peakHoldMs"
+  ],
+  "properties": {
+    "version": {
+      "$ref": "common.schema.json#/$defs/version"
+    },
+    "minDB": {
+      "const": -60,
+      "description": "Bottom of the drawn scale; lower levels and -inf draw as empty."
+    },
+    "maxDB": {
+      "const": 0,
+      "description": "Top of the drawn scale (0 dBFS)."
+    },
+    "ticksDB": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "description": "Tick marks, top to bottom."
+    },
+    "clipDB": {
+      "type": "number",
+      "description": "A level at or above this lights the clip block."
+    },
+    "nominalDB": {
+      "type": "number",
+      "description": "Nominal operating level, drawn as a mark."
+    },
+    "releaseDBPerSecond": {
+      "type": "number",
+      "description": "How fast a shown level falls (MeterRelease)."
+    },
+    "peakHoldMs": {
+      "type": "integer",
+      "description": "How long a peak indicator holds before it falls."
+    }
+  },
+  "examples": [
+    {
+      "version": 0,
+      "minDB": -60,
+      "maxDB": 0,
+      "ticksDB": [
+        0,
+        -6,
+        -12,
+        -18,
+        -30,
+        -60
+      ],
+      "clipDB": 0,
+      "nominalDB": -18,
+      "releaseDBPerSecond": 20,
+      "peakHoldMs": 1500
+    }
+  ]
+}

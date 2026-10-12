@@ -75,6 +75,21 @@ func TestExports_WithoutCgoArguments(t *testing.T) {
 	if got := MixFaderDB(0); !math.IsInf(float64(got), -1) {
 		t.Fatalf("MixFaderDB(0) = %v", got)
 	}
+	if got := MixMeterPosition(-30); got != 0.5 {
+		t.Fatalf("MixMeterPosition(-30) = %v", got)
+	}
+	if got := MixMeterRelease(-10, -40, 100); got != -12 {
+		t.Fatalf("MixMeterRelease = %v", got)
+	}
+	if got := MixFaderStep(-60, -1); !math.IsInf(float64(got), -1) {
+		t.Fatalf("MixFaderStep(-60, -1) = %v, want -inf", got)
+	}
+	if got := MixFaderStep(-75, 1); got != -74 {
+		t.Fatalf("MixFaderStep(-75, +1) = %v", got)
+	}
+	if got := MixMeterScale(nil, nil); got != 14 {
+		t.Fatalf("MixMeterScale(NULL) = %d", got)
+	}
 	if MixSetStateListener(nil, 0) != 0 || MixSetDiscoveryListener(nil, 0) != 0 || MixSetLogSink(nil, 0, 0) != 0 {
 		t.Fatal("clearing callbacks must succeed")
 	}

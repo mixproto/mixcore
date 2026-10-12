@@ -24,6 +24,7 @@ const (
 	addrXremote = "/xremote"  // X32-F20
 	addrMeters  = "/meters"   // X32-F50
 	meterBank1  = "/meters/1" // X32-F51, X32-F52
+	meterBank2  = "/meters/2" // X32-F55
 )
 
 // param is one console parameter the driver reads and writes.

@@ -363,7 +363,7 @@ func TestMeterFrame(t *testing.T) {
 		e.sim.SetInputLevels([]float32{1})
 		e.startLive(t)
 		b := e.eng.MeterFrame()
-		if string(b[:4]) != meters.FrameMagic || binary.LittleEndian.Uint16(b[6:]) != 32 {
+		if string(b[:4]) != meters.FrameMagic || binary.LittleEndian.Uint16(b[6:]) != 34 { // 32 inputs + Main L/R
 			t.Fatalf("live frame header = %x", b[:meters.FrameHeaderSize])
 		}
 		if l := math.Float32frombits(binary.LittleEndian.Uint32(b[24:])); l != 0 {

@@ -23,6 +23,10 @@ func TestZeroAlloc_MeterPathAndFaderWrite(t *testing.T) {
 	if n := testing.AllocsPerRun(200, func() { sink.handle(pkt, now) }); n != 0 {
 		t.Fatalf("meter packet handling allocates %v times, budget 0", n)
 	}
+	bus, _ := osc.AppendString(nil, meterBank2, osc.Blob(bank2Blob(0.5, 1)))
+	if n := testing.AllocsPerRun(200, func() { sink.handle(bus, now) }); n != 0 {
+		t.Fatalf("bank 2 packet handling allocates %v times, budget 0", n)
+	}
 	buf := make([]byte, 0, 64)
 	if n := testing.AllocsPerRun(200, func() {
 		f, _ := dbToFader(-12.5)
