@@ -73,7 +73,7 @@ func (w *window) clampFader(candidate float64) (float64, GestureState) {
 		v = w.level(pos - w.offset)
 	}
 	st := StateFree
-	if w.HasWall && v > w.WallUp {
+	if w.HasWall && v >= w.WallUp { // arriving at the wall counts (one rigid haptic, SR-26)
 		v, st, w.lastAt = w.WallUp, StateAtWall, pos
 	}
 	if w.HasCeiling && v > w.Ceiling {
@@ -87,9 +87,9 @@ func (w *window) clampFader(candidate float64) (float64, GestureState) {
 func (w *window) clampGain(candidate float64) (float64, GestureState) {
 	v, st := candidate, StateFree
 	switch {
-	case v > w.CapUp:
+	case v >= w.CapUp: // arriving at the cap counts (SR-25)
 		v, st = w.CapUp, StateAtCap
-	case v < w.CapDown:
+	case v <= w.CapDown:
 		v, st = w.CapDown, StateAtCap
 	}
 	w.state = st
