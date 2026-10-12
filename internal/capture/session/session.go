@@ -181,9 +181,45 @@ func (d *Dir) ReadMeta() (Meta, error) {
 }
 
 // CheckLocation refuses a directory inside the public mixcore repository
-// (a parent holding a go.mod of module github.com/mixproto/mixcore).
+// (a parent holding a go.mod of module github.com/mixproto/mixcore). Both the
+// path as given and its real location are checked: the deepest existing
+// ancestor is resolved with EvalSymlinks, so a symlink into the repository
+// does not bypass the guard.
 func CheckLocation(abs string) error {
-	for dir := filepath.Clean(abs); ; dir = filepath.Dir(dir) {
+	abs = filepath.Clean(abs)
+	real, err := resolveExisting(abs)
+	if err != nil {
+		return fmt.Errorf("session: %w", err)
+	}
+	for _, p := range []string{abs, real} {
+		if err := checkParents(p); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// resolveExisting resolves symlinks in the deepest existing ancestor of abs
+// and appends the part that does not exist yet.
+func resolveExisting(abs string) (string, error) {
+	rest := ""
+	for dir := abs; ; dir = filepath.Dir(dir) {
+		if _, err := os.Lstat(dir); err == nil {
+			real, err := filepath.EvalSymlinks(dir)
+			if err != nil {
+				return "", err
+			}
+			return filepath.Join(real, rest), nil
+		}
+		if filepath.Dir(dir) == dir {
+			return abs, nil
+		}
+		rest = filepath.Join(filepath.Base(dir), rest)
+	}
+}
+
+func checkParents(abs string) error {
+	for dir := abs; ; dir = filepath.Dir(dir) {
 		if isMixcoreModule(filepath.Join(dir, "go.mod")) {
 			return fmt.Errorf("%w (%s); use the private research repository", ErrPublicRepo, dir)
 		}

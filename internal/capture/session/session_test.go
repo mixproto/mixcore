@@ -210,3 +210,25 @@ func TestCreateRefusesAnExistingSession(t *testing.T) {
 	}
 	_ = d2.Close()
 }
+
+// Regression (go-reviewer L1): a symlink outside the repository that points
+// into it bypassed the lexical parent walk.
+func TestCreateRefusesThePublicRepoThroughASymlink(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module github.com/mixproto/mixcore\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, "research"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "captures")
+	if err := os.Symlink(filepath.Join(repo, "research"), link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Create(filepath.Join(link, "xr18", "2026-10-12"), false); !errors.Is(err, ErrPublicRepo) {
+		t.Fatalf("err = %v, want ErrPublicRepo", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "research", "xr18")); err == nil {
+		t.Fatal("a directory was created inside the repository")
+	}
+}
