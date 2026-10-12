@@ -7,7 +7,9 @@ protocol researcher pastes into `docs/protocols/<family>.md` as `[CAPTURE]` fact
 
 Legal basis: black-box observation of traffic between hardware we use and its own app (CLAUDE.md invariant 8 of the
 product repository; lawyer confirmed). Never decompile apps or firmware, never bypass authentication or encryption,
-never copy vendor or GPL code into the repository.
+never copy vendor or GPL code into the repository. Where possible, prefer capturing the console talking to its own
+surface or to a second console; when you use the vendor app, use it as an ordinary user does (normal screens and
+controls, no modified or debug builds).
 
 ## What mixcapture never does
 - It never sends anything to a console on its own. The relay (option B) forwards only the bytes the vendor app sent;
