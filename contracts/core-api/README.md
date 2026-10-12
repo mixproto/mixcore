@@ -166,8 +166,10 @@ behave the same and a UI bug cannot bypass them:
    timer, because Gain echo is unverified (X32-F79, XA-F116): a report within half a step of an in-flight value ends
    that value; any other report only updates the console value; the core's own re-read of a Gain it wrote ends them
    all; stale, a reconnect, Stop, Pause or a failed send end them too. A set of the console value while other values
-   are in flight is sent, never skipped; a value already in flight is sent again at most once per echo window (2 s),
-   so a drag held at a cap on a console that does not echo sends the cap once (`written: false` meanwhile).
+   are in flight is sent, never skipped; a set is skipped (`written: false`) only when it repeats the latest value
+   sent, no report of that parameter arrived since, and less than an echo window (2 s) has passed: a drag held at a cap
+   on a console that does not echo sends the cap once, while a return to an earlier value or the same value after a
+   report is sent.
 9. **Typed raises (CR-26, SR-30).** A `typed` set that raises a fader or Gain by more than 6 dB from the console value
    returns `ERR_NEEDS_CONFIRM` unless `confirmed`; the UI shows `Raise ... from {from} to {to}?` and resends with
    `confirmed: true`. Lowering never asks.

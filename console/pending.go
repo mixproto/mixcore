@@ -25,9 +25,12 @@ import (
 //   - stale, adopt, Stop and Pause clear every set; a failed send removes
 //     its own value;
 //   - a full set (maxInFlight) refuses the next value with ErrGainBound;
-//   - a value already in flight is sent again at most once per resendEvery
-//     (review pass 3, LOW 5), so a drag held past the cap of a console that
-//     does not echo sends the cap value once, not every frame.
+//   - a re-send is skipped only when the value is the latest one sent, no
+//     report of the parameter arrived since, and it was sent less than
+//     resendEvery ago (review pass 3 LOW 5, pass 4 MEDIUM 2): a drag held
+//     past the cap of a console that does not echo sends the cap once, and
+//     a return to an earlier value, or the same value after a report, is a
+//     real change and is sent.
 
 const (
 	// maxInFlight caps the values in flight per headamp.
@@ -40,6 +43,12 @@ const (
 type inFlight struct {
 	db     float64
 	sentAt time.Time
+}
+
+// lastSend is the latest value sent for a parameter with no report since.
+type lastSend struct {
+	db float64
+	at time.Time
 }
 
 // inFlightOf returns the values in flight for p (nil: none).
@@ -59,25 +68,29 @@ func (s *safety) inFlightOf(p model.ParamRef) []float64 {
 // sent less than resendEvery ago; ok is false when the set is full and the
 // value is not in it.
 func (s *safety) noteSent(p model.ParamRef, db float64, now time.Time) (send, ok bool) {
+	if l, has := s.latest[p]; has && l.db == db && now.Sub(l.at) < resendEvery {
+		return false, true // the same latest value, no report since, within the echo window
+	}
 	set := s.pending[p]
 	if i := slices.IndexFunc(set, func(v inFlight) bool { return v.db == db }); i >= 0 {
-		if now.Sub(set[i].sentAt) < resendEvery {
-			return false, true
-		}
 		set = slices.Clone(set)
 		set[i].sentAt = now
 		s.pending[p] = set
-		return true, true
+	} else {
+		if len(set) >= maxInFlight {
+			return false, false
+		}
+		s.pending[p] = append(slices.Clip(set), inFlight{db: db, sentAt: now})
 	}
-	if len(set) >= maxInFlight {
-		return false, false
-	}
-	s.pending[p] = append(slices.Clip(set), inFlight{db: db, sentAt: now})
+	s.latest[p] = lastSend{db: db, at: now}
 	return true, true
 }
 
 // forgetSent removes one value whose send failed.
 func (s *safety) forgetSent(p model.ParamRef, db float64) {
+	if l, has := s.latest[p]; has && l.db == db {
+		delete(s.latest, p) // never sent: a retry is a real send
+	}
 	set := s.pending[p]
 	if i := slices.IndexFunc(set, func(v inFlight) bool { return v.db == db }); i >= 0 {
 		s.pending[p] = slices.Delete(slices.Clone(set), i, i+1)
@@ -91,6 +104,7 @@ func (s *safety) forgetSent(p model.ParamRef, db float64) {
 // authoritative one clears the set; otherwise the in-flight value nearest
 // to it within tol (half a step of the law) is removed, if any.
 func (s *safety) noteReport(c Change, tol float64) {
+	delete(s.latest, c.Param) // after a report the same value is a real change again
 	set := s.pending[c.Param]
 	if len(set) == 0 {
 		return
@@ -117,7 +131,10 @@ func (s *safety) noteReport(c Change, tol float64) {
 
 // dropAllPending forgets every value in flight: they belonged to a session
 // that is gone (stale, Stop, Pause) or was replaced by a fresh read (adopt).
-func (s *safety) dropAllPending() { clear(s.pending) }
+func (s *safety) dropAllPending() {
+	clear(s.pending)
+	clear(s.latest)
+}
 
 // gainBounds is the range a Gain write may move to: within 6 dB of the
 // console value and of every value in flight.

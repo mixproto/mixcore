@@ -272,3 +272,37 @@ func TestSlipGuard_TrembleAtRestOpensTheWallWithoutTrack(t *testing.T) {
 		}
 	})
 }
+
+// Review pass 4, MEDIUM 2, probe 1: the re-send dedupe only skips the
+// latest value sent. A drag 33.5 -> 34.5 -> 35.5 (cap) -> back to 34.5
+// with no echo must send 34.5 again: the console is at 35.5.
+func TestInFlight_BackToAnEarlierValueIsSent(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, drv := startSafe(t, SafetyConfig{}, safetyState(-6))
+		_, _ = sup.HoldWindow(gain3, gesture, true)
+		var r Result
+		for _, c := range []float64{33.5, 34.5, 35.5, 34.5} {
+			r, _ = sup.Write(set(gain3, lvl(t, c), gesture))
+		}
+		if w := gainWrites(drv); !r.Written || len(w) != 4 || w[3] != 34.5 {
+			t.Fatalf("back to 34.5: written %v, writes %v", r.Written, w)
+		}
+	})
+}
+
+// Review pass 4, MEDIUM 2, probe 2: a report since the last send makes the
+// same value a real change again. 33.5 sent, the desk moves to 30, a typed
+// 33.5 within 2 s is sent.
+func TestInFlight_SameValueAfterAReportIsSent(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, drv := startSafe(t, SafetyConfig{}, safetyState(-6))
+		_, _ = sup.Write(set(gain3, lvl(t, 33.5), gesture))
+		pushGain(t, drv, 30, desk, false)
+		typed := set(gain3, lvl(t, 33.5), gesture)
+		typed.Typed = true
+		r, err := sup.Write(typed)
+		if err != nil || !r.Written || len(gainWrites(drv)) != 2 {
+			t.Fatalf("typed 33.5 after the desk moved to 30: written %v, %v, writes %v", r.Written, err, gainWrites(drv))
+		}
+	})
+}

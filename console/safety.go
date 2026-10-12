@@ -69,11 +69,12 @@ type safety struct {
 	unlocks  unlocks
 	engineer map[model.ParamRef]float64    // latest value not from a monitor client (SR-28)
 	pending  map[model.ParamRef][]inFlight // Gain values in flight (pending.go)
+	latest   map[model.ParamRef]lastSend   // latest Gain value sent, no report since (pending.go)
 }
 
 func newSafety(cfg SafetyConfig) safety {
 	return safety{cfg: cfg, clients: map[string]ClientSafety{}, windows: map[holdKey]*window{}, showMode: cfg.ShowMode,
-		unlocks: newUnlocks(), engineer: map[model.ParamRef]float64{}, pending: map[model.ParamRef][]inFlight{}}
+		unlocks: newUnlocks(), engineer: map[model.ParamRef]float64{}, pending: map[model.ParamRef][]inFlight{}, latest: map[model.ParamRef]lastSend{}}
 }
 
 func (s *safety) client(id string) ClientSafety {
