@@ -198,11 +198,8 @@ func TestStart_ServesMovingMetersAndStops(t *testing.T) {
 					t.Fatalf("/xinfo reply %v", msg)
 				}
 				c.send("/meters", osc.String("/meters/1"))
-				_, first, ok1 := c.recv(time.Second)
-				time.Sleep(400 * time.Millisecond)
-				_, later, ok2 := c.recv(time.Second)
-				if !ok1 || !ok2 || bytes.Equal(first, later) {
-					t.Fatal("meters must arrive and move")
+				if pkts := c.packets(400 * time.Millisecond); len(pkts) < 2 || !anyDiffer(pkts) {
+					t.Fatalf("meters must arrive and move: %d packets", len(pkts))
 				}
 				m.Stop()
 				m.Stop() // idempotent
@@ -339,5 +336,49 @@ func TestXAirRaw(t *testing.T) {
 		if got := xairRaw(tc.db); got != tc.want {
 			t.Fatalf("xairRaw(%v) = %d, want %d", tc.db, got, tc.want)
 		}
+	}
+}
+
+// packets returns every packet that arrives during d.
+func (c *client) packets(d time.Duration) [][]byte {
+	c.t.Helper()
+	var out [][]byte
+	for end := time.Now().Add(d); time.Now().Before(end); {
+		if _, raw, ok := c.recv(time.Until(end)); ok {
+			out = append(out, bytes.Clone(raw))
+		}
+	}
+	return out
+}
+
+func anyDiffer(pkts [][]byte) bool {
+	for _, p := range pkts[1:] {
+		if !bytes.Equal(p, pkts[0]) {
+			return true
+		}
+	}
+	return false
+}
+
+// The animator ticks half a period out of phase with the simulator's meter
+// loop, so a fresh level always lands between two packets and the demo
+// never sends the same frame twice in a row.
+func TestStart_EveryMeterPacketIsFresh(t *testing.T) {
+	for _, fam := range []string{FamilyX32, FamilyXAir} {
+		synctest.Test(t, func(t *testing.T) {
+			n, m := startMem(t, Config{Family: fam})
+			defer m.Stop()
+			c := newClient(t, n, m)
+			c.send("/meters", osc.String("/meters/1"))
+			pkts := c.packets(2 * time.Second)
+			if len(pkts) < 30 {
+				t.Fatalf("%s: %d packets in 2 s", fam, len(pkts))
+			}
+			for i := 1; i < len(pkts); i++ {
+				if bytes.Equal(pkts[i], pkts[i-1]) {
+					t.Fatalf("%s: packets %d and %d carry the same frame", fam, i-1, i)
+				}
+			}
+		})
 	}
 }

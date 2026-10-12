@@ -63,8 +63,17 @@ func newAnimator(sim console, law driver.FaderLaw, fam family, out meterOut, log
 	return a
 }
 
-// run ticks until ctx ends. deskEvery 0 disables desk changes.
+// run ticks until ctx ends. deskEvery 0 disables desk changes. It starts
+// half a tick after the simulator's meter loop (same period), so a fresh
+// level always lands between two packets: no packet repeats the previous one.
 func (a *animator) run(ctx context.Context, tick, deskEvery time.Duration) {
+	phase := time.NewTimer(tick / 2)
+	select {
+	case <-ctx.Done():
+		phase.Stop()
+		return
+	case <-phase.C:
+	}
 	meters := time.NewTicker(tick)
 	defer meters.Stop()
 	var desk <-chan time.Time
