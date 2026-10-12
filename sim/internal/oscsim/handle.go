@@ -176,6 +176,14 @@ func (c *Core) Value(addr string) (osc.Arg, bool) {
 	return v.Arg(), true
 }
 
+// Addresses returns every modelled parameter address, sorted (a test oracle
+// for tools that harvest the tree from traffic).
+func (c *Core) Addresses() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Sorted(maps.Keys(c.cfg.Params))
+}
+
 // CheckBatchLocked verifies that every address of values is modelled with
 // the value's type. Callers hold the lock.
 func (c *Core) CheckBatchLocked(values map[string]osc.Arg) error {
