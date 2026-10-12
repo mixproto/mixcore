@@ -461,6 +461,32 @@ read-only). ОЦЕНКА of pass length for the v1 table: 16 inputs x 5 paramete
 bitmap) + main 2 (fader, mute) + 4 mute groups + 4 DCAs (mute) = 90 reads; at 16 reads per 1 s step a pass takes
 ceil(90 / 16) = 6 s (X32's 32-input table: 32 x 5 + 3 + 6 + 8 = 177 reads, 12 s).
 
+## As implemented (driver/xair, sim/xair; branch feat/core-xair, 2026-10-12)
+Design choices made when implementing this file. None is a new protocol fact; each `[TO-VERIFY]` item keeps the safe
+behaviour above and has a test that pins it, so a hardware result changes one default.
+- **Shared engine.** The section 12 "reuse" rows live in `driver/internal/xosc` (session, sockets, link, liveness,
+  limit, re-read, scene heuristic, conversions, meter sink, discovery); `driver/x32` and `driver/xair` are profiles of
+  it (port, address layout, meter codec, scene markers, push limit). The x32 wire trace is pinned byte for byte by
+  `driver/x32/testdata/wire_trace.golden`, the xair one by `driver/xair/testdata/wire_trace.golden`.
+- **Strips.** Inputs 1..12 must answer (every source agrees on them); inputs 13..16 are optional strips: a model that
+  does not answer one connects with the inputs below it (XA-F72, test item 12). Group membership of a missing strip
+  does not switch mute groups or DCAs off. Main is `/lr` without `grp/mute`; the model reports no main membership
+  (capability `MainMuteGroups` false) and the core API omits the field. 90 reads per full pass (section 12 estimate).
+- **Echo.** Plain `/xremote`, two sockets, unchanged from X32 (section 2 "Echo design"); tests run H1, H2 and H3.
+- **Meters.** `/meters ,si "/meters/1" 0` (XA-F57) with every `/xremote` renewal (3 s). A bank 1 blob is accepted
+  only if its count fits the blob and reaches Main R (value 37); values 0..15 and 36/37 are converted (v/256 dBFS,
+  -32768 is `-inf`) into a frame of 18 levels.
+- **Scene recall.** `/-snap/index` pushed with an int 1..64 is the recall marker and names the loaded snapshot; any
+  other argument is dropped. The driver never reads `/-snap/index` at connect and never sends any other `/-snap/`
+  address, so snapshot 64 (XA-F63) is never touched.
+- **Discovery.** `/xinfo` to 10024 (XA-F12). The core API classifies replies: port 10024 is xair unless the model is
+  an X32 model; port 10023 is x32 unless the model starts with XR, X18 or MR; on other ports the model decides.
+- **Simulator defaults** (`sim/xair`, options for every `[TO-VERIFY]`): push to the sender with `/xremote` (H2,
+  option `NoEchoToSender` for H1), no reply to a set (option `ReplyToSet` for H3), ninth client ignored
+  (`EvictOldestWhenFull`), `/status` always "active" (`StandbyWhenNotServed`), `/-snap/index` not pushed on a load
+  (`PushSnapIndex`), 16 inputs and 6 buses (`InputChannels`, `Buses`), names up to 12 characters (`NameMaxLen`),
+  meters every 50 ms for 10 s.
+
 ## 13. To verify with mixprobe or hardware
 Setup: an X Air or M Air on a wired switch with a laptop; amplifiers off; record `/xinfo` (model, firmware) and the
 hardware version shown by X AIR Edit. Captures go to `research/captures/xair/<item>/` (pcap plus log), taken only on
@@ -515,6 +541,12 @@ hardware we legally use. "mixprobe" marks items a `--family xair` mode can autom
     `/ch/01/mix/fader`; write 1.5 to `/ch/01/mix/pan` (amps off, restore after). Pass: replies or silence, stored values.
 19. **Mute semantics (section 3.2)**, manual, as `x32.md` item 13 with `/-prefs/dcamute` and `/-prefs/hardmute`.
 20. **Liveness on a quiet mixer (XA-F25)**, mixprobe. Idle 10 min with the session running. Pass: no stale event.
+
+`cmd/mixprobe --lab -family xair` checks items 1, 2, 3, 5, 8, 9, 11, 12, 14 and 16, item 20 for 20 s (not 10 min), and
+the read parts of 10, 13 and 18 in one guided session, plus fader quantization (7, without the pan write), mute-group polarity, a snapshot load
+from another app (13), unplug and reboot (15). Read-only checks run first; every write is guarded (levels and sends
+only down, mutes only on, one channel name) and restored. Items 4, 6, 17, 19, the pan part of 7, the link part of 10
+and the write part of 18 need a person or a write mixprobe cannot bound; the report lists them as skipped.
 
 ## Open questions for the lead (with recommended defaults)
 - Warn on firmware older than 1.18 (XA-F76)? Default: one-time non-blocking hint.

@@ -238,7 +238,7 @@ type SceneRecalled struct {
 	Confidence       string
 	Signals          []string
 	HighlightedScene int // NoScene when unknown; never "the loaded scene"
-	LoadedScene      int // NoScene when unknown; set only by families whose marker names the loaded scene (xair)
+	LoadedScene      int // 1-based; NoScene or 0 when unknown. Set only by families whose marker names the loaded scene (xair)
 	At               time.Time
 }
 
