@@ -30,6 +30,11 @@ GOOS=linux GOARCH=arm64 go build -o mixcapture-linux-arm64 ./cmd/mixcapture  # e
 Live capture (option A) uses `tcpdump`, which ships with macOS (`/usr/sbin/tcpdump`). Reading pcap and pcapng files
 (option C) needs nothing else.
 
+Capture rights (once per Mac), preferred: install the ChmodBPF package that comes with Wireshark (the
+"Install ChmodBPF" package in the Wireshark disk image), log out and in, and check that `ls -l /dev/bpf*` shows group
+`access_bpf` with read/write. Then `mixcapture live` runs as your user and nothing runs as root. Fallback: `sudo
+mixcapture live ...`; the tool then gives the session files and the directories it created back to your user.
+
 ## Choose a setup
 
 | Setup | Hardware | Works when | You see |
@@ -63,12 +68,11 @@ on purpose.
    ```
 4. Join the tablet or phone to the Mac's Wi-Fi network. In the vendor app, enter the console IP manually
    (192.168.1.62). The Mac routes the traffic and sees it on `bridge100`.
-5. Record (tcpdump needs root on macOS; mixcapture gives the files back to your user when run with sudo):
+5. Record (with ChmodBPF installed, see Build; otherwise prefix `sudo`):
    ```bash
-   sudo mixcapture live -i bridge100 -console 192.168.1.62 \
+   mixcapture live -i bridge100 -console 192.168.1.62 \
      -out ~/Desktop/dybyskz-mix/research/captures/<console>/2026-10-12
    ```
-   Without sudo, install Wireshark's ChmodBPF helper (it grants your user capture rights) and run without sudo.
 
 Not verified on hardware yet: whether a given vendor app accepts a console behind the Mac's NAT (meters on some
 consoles use broadcast or multicast and may not arrive). If the app refuses, use C.
@@ -98,9 +102,9 @@ incoming connections, allow it.
 Connect the console and the vendor app's access point to a managed switch, mirror the console's port to a port
 connected to the capturing machine, and capture:
 ```bash
-sudo tcpdump -i en5 -s 0 -w mirror.pcap host 192.168.1.62     # or save a pcapng from Wireshark
+tcpdump -i en5 -s 0 -w mirror.pcap host 192.168.1.62     # ChmodBPF or sudo; or save a pcapng from Wireshark
 ```
-If the capturing machine is the Mac, prefer `sudo mixcapture live -i en5 -console 192.168.1.62 -out ...`: you get
+If the capturing machine is the Mac, prefer `mixcapture live -i en5 -console 192.168.1.62 -out ...`: you get
 live marks. Otherwise analyze the file afterwards, with marks written as times in a text file:
 ```bash
 mixcapture read -pcap mirror.pcap -console 192.168.1.62 -marks marks.txt \
@@ -174,7 +178,7 @@ until the console answers `ERROR`, a reply times out (`-timeout 2s`) or `-max` e
 `docs/protocols/yamaha-rcp.md`. Run it when no vendor app needs the connection slot.
 
 ## Troubleshooting
-- `live` fails with a permission error: run with `sudo` or install ChmodBPF (see A).
+- `live` fails with a permission error: install ChmodBPF (see Build), or run with `sudo`.
 - Nothing decoded: check `-console`; the report's Traffic line counts packets "not to or from the console".
 - A flow decoded as `binary` that you know is OSC or text: force it with `-decoder <port>=osc` and run `report`.
 - Too many candidates per mark: shorten `-window`, or touch one control per mark.

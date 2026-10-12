@@ -14,6 +14,8 @@
 ```bash
 cd ~/Desktop/mixcore && go build -o ~/bin/mixcapture ./cmd/mixcapture
 ```
+Права на запись трафика (один раз): установить пакет ChmodBPF из образа Wireshark ("Install ChmodBPF"), выйти из
+системы и войти снова. После этого `sudo` не нужен. Без ChmodBPF добавляйте `sudo` перед `mixcapture live`.
 
 ## Вариант А (рекомендуемый): Mac раздаёт Wi-Fi
 Что куда:
@@ -34,7 +36,7 @@ cd ~/Desktop/mixcore && go build -o ~/bin/mixcapture ./cmd/mixcapture
 4. Запустить запись:
    ```bash
    mkdir -p ~/Desktop/dybyskz-mix/research/captures/<пульт>
-   sudo mixcapture live -i bridge100 -console 192.168.1.62 \
+   mixcapture live -i bridge100 -console 192.168.1.62 \
      -out ~/Desktop/dybyskz-mix/research/captures/<пульт>/2026-10-12
    ```
 
@@ -52,7 +54,7 @@ mixcapture relay -console 192.168.1.62 -listen 192.168.1.10 -app <IP планш�
 ## Вариант В: управляемый коммутатор с зеркалированием порта
 Пульт и точка доступа планшета - в коммутатор; порт пульта зеркалируется на порт, куда подключён Mac:
 ```bash
-sudo mixcapture live -i en5 -console 192.168.1.62 -out ~/Desktop/dybyskz-mix/research/captures/<пульт>/2026-10-12
+mixcapture live -i en5 -console 192.168.1.62 -out ~/Desktop/dybyskz-mix/research/captures/<пульт>/2026-10-12
 ```
 (`en5` - интерфейс переходника; список: `ifconfig`). Готовый файл pcap/pcapng с другого компьютера:
 `mixcapture read -pcap file.pcapng -out ...`.
@@ -69,5 +71,5 @@ sudo mixcapture live -i en5 -console 192.168.1.62 -out ~/Desktop/dybyskz-mix/res
 5. Сцены: `:s до`, вызвать сцену на пульте, `:s после` - увидите всё, что сцена поменяла.
 6. `:q` - остановить. Отчёт `report.md` и таблицы `*.csv` в папке сессии передайте protocol-researcher.
 
-Если что-то пошло не так: ошибка прав у `live` - запускайте через `sudo`; ничего не распознано - проверьте IP пульта
+Если что-то пошло не так: ошибка прав у `live` - установите ChmodBPF или запускайте через `sudo`; ничего не распознано - проверьте IP пульта
 в `-console`.

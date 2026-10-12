@@ -93,8 +93,9 @@ func liveSession(ctx context.Context, o liveOptions, rec *recording, e *engine, 
 	defer func() { _ = capFile.Close() }()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	// -U: write each packet as it arrives; -w -: pcap to stdout; -s 0: whole packets.
-	cmd := exec.CommandContext(ctx, o.tcpdump, "-i", o.iface, "-U", "-w", "-", "-s", "0", o.filter) //nolint:gosec // G204: the operator chooses tcpdump and its filter
+	// -U: write each packet as it arrives; -w -: pcap to stdout; -s 0: whole
+	// packets; "--" ends the options, so the filter can never be read as one.
+	cmd := exec.CommandContext(ctx, o.tcpdump, "-i", o.iface, "-U", "-w", "-", "-s", "0", "--", o.filter) //nolint:gosec // G204: the operator chooses tcpdump and its filter
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	stdout, err := cmd.StdoutPipe()
@@ -154,7 +155,7 @@ func readFrames(ctx context.Context, r io.Reader, frames chan<- flow.Frame) erro
 func tcpdumpError(err error, stderr string) error {
 	hint := ""
 	if strings.Contains(stderr, "ermission") || strings.Contains(stderr, "Operation not permitted") {
-		hint = " (capturing needs root: run with sudo, or install Wireshark's ChmodBPF; see docs/tools/mixcapture.md)"
+		hint = " (capturing needs BPF rights: install Wireshark's ChmodBPF, or run with sudo; see docs/tools/mixcapture.md)"
 	}
 	return fmt.Errorf("live: tcpdump: %w: %s%s", err, strings.TrimSpace(stderr), hint)
 }

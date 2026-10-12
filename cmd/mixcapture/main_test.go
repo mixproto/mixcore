@@ -332,3 +332,21 @@ func TestReadRefusesAnExistingSessionWithoutForce(t *testing.T) {
 		t.Fatalf("read -force: %v\n%s", err, got)
 	}
 }
+
+// Regression (go-reviewer L3): the filter is passed after "--", so a filter
+// that starts with '-' can never be read by tcpdump as an option (e.g. -w).
+func TestLive_FilterAfterDoubleDash(t *testing.T) {
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "args")
+	fake := filepath.Join(dir, "tcpdump")
+	writeFile(t, fake, "#!/bin/sh\nfor a in \"$@\"; do echo \"$a\"; done > '"+argsFile+"'\n")
+	if err := os.Chmod(fake, 0o700); err != nil { //nolint:gosec // G302: the test's own stand-in executable
+		t.Fatal(err)
+	}
+	_, _ = runCmd(t, "live", "-i", "bridge100", "-console", "192.168.1.62", "-tcpdump", fake,
+		"-filter", "-w /tmp/evil", "-out", filepath.Join(dir, "s"))
+	args := strings.Split(strings.TrimSpace(readFile(t, argsFile)), "\n")
+	if n := len(args); n < 2 || args[n-2] != "--" || args[n-1] != "-w /tmp/evil" {
+		t.Fatalf("tcpdump argv = %q, want the filter last, after --", args)
+	}
+}

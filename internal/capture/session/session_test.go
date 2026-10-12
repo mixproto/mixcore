@@ -232,3 +232,22 @@ func TestCreateRefusesThePublicRepoThroughASymlink(t *testing.T) {
 		t.Fatal("a directory was created inside the repository")
 	}
 }
+
+// Regression (go-reviewer L3): under sudo, parent directories that Create made
+// stayed owned by root. Create reports them so Chown can give them back.
+func TestCreateReportsTheDirectoriesItMade(t *testing.T) {
+	base := t.TempDir()
+	d, err := Create(filepath.Join(base, "captures", "xr18", "2026-10-12"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = d.Close() }()
+	want := []string{filepath.Join(base, "captures"), filepath.Join(base, "captures", "xr18"),
+		filepath.Join(base, "captures", "xr18", "2026-10-12")}
+	if got := d.Created(); strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("Created() = %v, want %v", got, want)
+	}
+	if err := d.Chown(os.Getuid(), os.Getgid()); err != nil {
+		t.Fatal(err)
+	}
+}

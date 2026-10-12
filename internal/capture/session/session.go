@@ -23,6 +23,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -64,8 +65,9 @@ type Meta struct {
 
 // Dir is an open session directory. Files can only be created inside it.
 type Dir struct {
-	path string
-	root *os.Root
+	path    string
+	root    *os.Root
+	created []string // directories Create made, outermost first
 }
 
 // Create makes the session directory at path and claims it by creating
@@ -80,12 +82,17 @@ func Create(path string, overwrite bool) (*Dir, error) {
 	if err := CheckLocation(abs); err != nil {
 		return nil, err
 	}
+	created := missingDirs(abs)
 	if err := os.MkdirAll(abs, dirPerm); err != nil {
 		return nil, fmt.Errorf("session: %w", err)
 	}
 	d, err := Open(abs)
-	if err != nil || overwrite {
-		return d, err
+	if err != nil {
+		return nil, err
+	}
+	d.created = created
+	if overwrite {
+		return d, nil
 	}
 	f, err := d.root.OpenFile(FileMeta, os.O_WRONLY|os.O_CREATE|os.O_EXCL, filePerm)
 	if err != nil {
@@ -101,6 +108,21 @@ func Create(path string, overwrite bool) (*Dir, error) {
 	}
 	return d, nil
 }
+
+// missingDirs lists abs and its ancestors that do not exist yet, outermost first.
+func missingDirs(abs string) []string {
+	var out []string
+	for dir := abs; ; dir = filepath.Dir(dir) {
+		if _, err := os.Lstat(dir); err == nil || filepath.Dir(dir) == dir {
+			return out
+		}
+		out = append([]string{dir}, out...)
+	}
+}
+
+// Created returns the directories Create made for this session (the session
+// directory and any missing parents), outermost first.
+func (d *Dir) Created() []string { return slices.Clone(d.created) }
 
 // Open opens an existing session directory.
 func Open(path string) (*Dir, error) {
@@ -146,14 +168,24 @@ func (d *Dir) WriteFile(name string, data []byte) error {
 }
 
 // Chown gives every file of the directory to uid:gid, through the root so a
-// symlink cannot lead outside it.
+// symlink cannot lead outside it, and then the parent directories Create
+// made (they would otherwise stay owned by root under sudo).
 func (d *Dir) Chown(uid, gid int) error {
-	return fs.WalkDir(d.root.FS(), ".", func(p string, _ fs.DirEntry, err error) error {
+	err := fs.WalkDir(d.root.FS(), ".", func(p string, _ fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		return d.root.Lchown(p, uid, gid)
 	})
+	if err != nil {
+		return fmt.Errorf("session: chown: %w", err)
+	}
+	for _, dir := range d.created {
+		if err := os.Lchown(dir, uid, gid); err != nil {
+			return fmt.Errorf("session: chown: %w", err)
+		}
+	}
+	return nil
 }
 
 // WriteMeta writes session.json.
