@@ -127,6 +127,11 @@ behave the same and a UI bug cannot bypass them:
   `Stop`, `Pause` and `StopDemo` called from inside `OnState` (on the goroutine that runs it) return `ERR_BUSY` at
   once and change nothing: they would wait for that very goroutine. Call them from the app's own thread; there they
   wait as usual, even while `OnState` runs on the dispatcher. (v0.3)
+  The guard sees only the goroutine that runs `OnState`. So `OnState` must never wait synchronously on another thread
+  that may be calling `Stop`, `Pause` or `StopDemo` (Swift `DispatchQueue.main.sync` or `MainActor` work awaited from
+  a blocking bridge, Kotlin `runBlocking(Dispatchers.Main)`, C# `Dispatcher.Invoke`): that call waits for `OnState`
+  to return while `OnState` waits for it, a deadlock the core cannot detect. Hand the message off without waiting
+  (`DispatchQueue.main.async`, `Handler.post` / a channel, `DispatcherQueue.TryEnqueue`) and return.
 - A panic inside the engine is recovered and returned as `ERR_INTERNAL`; it never crosses the boundary.
 
 ## Safety rules the API enforces (apps do not need to re-implement them)

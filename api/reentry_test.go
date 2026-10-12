@@ -36,29 +36,10 @@ func (r *reentrant) OnState(s string) {
 // a later session to a real console.
 func TestOnState_StopPauseStopDemoAreBusy(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		n := memnet.New()
-		pc, err := n.ListenPacket(consoleIP + ":10023")
-		if err != nil {
-			t.Fatal(err)
-		}
-		sim := simx32.New(simx32.Options{})
-		ctx, cancel := context.WithCancel(context.Background())
-		var wg sync.WaitGroup
-		wg.Go(func() { _ = sim.Serve(ctx, pc) })
-		defer func() { cancel(); wg.Wait(); _ = pc.Close() }()
-		eng := NewEngineWith(Options{ListenPacket: n.Host("10.0.0.2"), DemoListenPacket: n.Host("127.0.0.1")})
-		defer eng.Close()
+		eng, _ := newRealAndDemoEngine(t)
 		r := &reentrant{eng: eng, got: make(chan [3]error, 1)}
 		eng.SetStateListener(r)
-		out, err := eng.StartDemo(`{"version":0,"family":"x32"}`)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var m demoMixerJSON
-		_ = decodeStrict(out, &m)
-		if _, err := eng.Start(demoConfig(m)); err != nil {
-			t.Fatal(err)
-		}
+		startDemoSession(t, eng)
 		select {
 		case errs := <-r.got:
 			for i, err := range errs {
@@ -70,23 +51,45 @@ func TestOnState_StopPauseStopDemoAreBusy(t *testing.T) {
 			t.Fatal("a call from OnState blocked")
 		}
 		eng.SetStateListener(&recorder{})
-		if err := eng.Pause(); err != nil {
-			t.Fatalf("Pause from the app: %v", err)
-		}
-		if err := eng.StopDemo(); err != nil {
-			t.Fatalf("StopDemo from the app: %v", err)
-		}
-		if _, err := eng.StartDemo(`{"version":0,"family":"x32"}`); err != nil {
-			t.Fatalf("StartDemo again: %v", err)
-		}
-		if _, err := eng.Start(configOK); err != nil {
-			t.Fatalf("Start a real console: %v", err)
-		}
-		time.Sleep(time.Second)
-		if err := eng.Stop(); err != nil {
-			t.Fatalf("Stop a real console: %v", err)
-		}
+		assertCallsWorkAfterBusy(t, eng)
 	})
+}
+
+// startDemoSession starts the x32 demo and a session to it.
+func startDemoSession(t *testing.T, eng *Engine) demoMixerJSON {
+	t.Helper()
+	out, err := eng.StartDemo(`{"version":0,"family":"x32"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m demoMixerJSON
+	_ = decodeStrict(out, &m)
+	if _, err := eng.Start(demoConfig(m)); err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+// assertCallsWorkAfterBusy: after ERR_BUSY nothing is stuck; Pause,
+// StopDemo, StartDemo and a real console's Start and Stop all work.
+func assertCallsWorkAfterBusy(t *testing.T, eng *Engine) {
+	t.Helper()
+	if err := eng.Pause(); err != nil {
+		t.Fatalf("Pause from the app: %v", err)
+	}
+	if err := eng.StopDemo(); err != nil {
+		t.Fatalf("StopDemo from the app: %v", err)
+	}
+	if _, err := eng.StartDemo(`{"version":0,"family":"x32"}`); err != nil {
+		t.Fatalf("StartDemo again: %v", err)
+	}
+	if _, err := eng.Start(configOK); err != nil {
+		t.Fatalf("Start a real console: %v", err)
+	}
+	time.Sleep(time.Second)
+	if err := eng.Stop(); err != nil {
+		t.Fatalf("Stop a real console: %v", err)
+	}
 }
 
 func TestGoroutineID(t *testing.T) {

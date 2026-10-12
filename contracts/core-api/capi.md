@@ -75,7 +75,7 @@ If `capacity` is smaller than the frame, nothing is written and the needed lengt
 ## Threading
 - Every call may come from any thread and returns quickly; none does network I/O on the calling thread.
 - Each callback kind is called from one Go-owned thread at a time (state: the dispatcher; discovery: the probe;
-  log: the log goroutine). They must not block. `MixStop`, `MixPause` and `MixStopDemo` called from inside the state callback return `MIX_ERR_BUSY` at once and change nothing (v0.3); call them from the app's thread.
+  log: the log goroutine). They must not block. `MixStop`, `MixPause` and `MixStopDemo` called from inside the state callback return `MIX_ERR_BUSY` at once and change nothing (v0.3); call them from the app's thread. The callback must never wait synchronously on a thread that may call them (for example C# `Dispatcher.Invoke`): that is a deadlock the core cannot see; post the message and return.
 - A panic anywhere in Go is recovered; it never crosses into the host process.
 
 ## Build
