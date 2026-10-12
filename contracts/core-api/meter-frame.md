@@ -36,6 +36,9 @@ The display scale and ballistics come from the core, not from each UI (design CR
   above `clipDB` lights the clip block.
 
 ## Reading without allocation
-`MeterFrame()` (gomobile) returns a new copy each call. The Go API `ReadMeterFrame(dst)` and the C call
-`MixMeterFrame(buf, cap)` copy the same bytes into a caller-owned buffer instead, with no allocation per frame; a frame
-is never larger than 536 bytes (`MeterFrameMaxBytes`, `MIX_METER_FRAME_MAX_BYTES`: 24 + 4 x 128). See `capi.md`.
+`MeterFrame()` (gomobile) returns a new copy each call. `ReadMeterFrame(dst)` (Go and, since v0.1, gomobile) and the C
+call `MixMeterFrame(buf, cap)` copy the same bytes into a caller-owned buffer instead, with no allocation per frame in the
+core; a frame is never larger than 536 bytes (`MeterFrameMaxBytes`, `MIX_METER_FRAME_MAX_BYTES`: 24 + 4 x 128). See
+`capi.md`. gomobile passes a `[]byte` argument by reference only for an Objective-C `NSMutableData` (Swift: pass
+`buf as Data` with `buf` an `NSMutableData` kept across frames; any other `Data` is copied by the binding and the frame
+is lost) and for a Java `byte[]` (the JNI layer copies the bytes back after the call); see `README.md`, Bindings.

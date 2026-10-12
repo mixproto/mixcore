@@ -15,6 +15,7 @@ working unchanged. What v0.1 adds:
 | Meters | Main L/R as levels 32/33 of the meter frame; `MeterScale`, `MeterPosition`, `MeterRelease` so every UI draws meters alike | CR-17, OQ 24, OQ 27 |
 | Mute groups and DCAs | strip kinds `muteGroup` and `dca` (field `mute`), membership fields `muteGroups` and `dcas`, derived `effectiveMute` per strip; command type `toggle` | CR-01, CR-02, SR-04 |
 | Scene recall | event `sceneRecalledAtConsole` with `confidence` and `signals`; ends every held fader; background re-read starts | SR-15, CR-03, CR-08 |
+| Meter read | `ReadMeterFrame(dst)` in the gomobile binding: the frame is written into a buffer the app keeps (no new `Data`/`ByteArray` per frame) | S2 finding |
 | Fader steps | `FaderStep(db, deltaDB)`: the bottom-of-scale rule (`-inf` <-> -60 dB) for keyboard, screen reader and +/- buttons | CR-21, OQ 26 |
 
 ## Calls
@@ -36,7 +37,7 @@ working unchanged. What v0.1 adds:
 | `Discover(requestJSON)` | `discover.schema.json` | error code; result later through the listener (`discovery.schema.json`) | **no**: probes on a goroutine; `ERR_BUSY` while one runs. Only reads, never subscribes or writes |
 | `SetLogSink(sink, minLevel)` | `LogSink` with `Log(level int, line string)`; levels -4 debug, 0 info, 4 warn, 8 error | | no. Lines come from one dedicated goroutine (bounded queue, overflow counted and reported) |
 | `SetSocketBinder(b)` | `SocketBinder` with `BindSocket(fd int) error` | | no. Android only: every socket opened afterwards is passed to it before use; an error keeps that socket closed. Apple and Windows never call it |
-| `ReadMeterFrame(dst)` (Go) / `MixMeterFrame(buf, cap)` (C) | caller buffer | frame length | **never blocks, never allocates**; snprintf style when the buffer is short (`capi.md`) |
+| `ReadMeterFrame(dst)` (Go, gomobile v0.1) / `MixMeterFrame(buf, cap)` (C) | caller buffer | frame length | **never blocks, never allocates**; snprintf style when the buffer is short (`capi.md`) |
 | `MeterScale()` (v0.1) | | `meter-scale.schema.json` | **never blocks**: constant |
 | `MeterPosition(dbfs)` (v0.1) | dBFS (`-inf` allowed) | position 0..1 on the meter scale | **never blocks**: pure |
 | `MeterRelease(shownDB, inputDB, elapsedMs)` (v0.1) | shown and new level in dBFS, ms since the last tick | level to show | **never blocks**: pure (`meter-frame.md`) |
@@ -108,6 +109,7 @@ Both bindings expose the calls above and nothing else; behaviour is identical be
 | `Stop`, `Pause`, `Resume`, `RequestSnapshot` | `MobileStop(_ error: NSErrorPointer) -> Bool` (same shape) | `Mobile.stop()` throws `Exception` (same shape) |
 | `Apply`, `Discover` | `MobileApply(_ json: String?, _ error: NSErrorPointer) -> Bool` | `Mobile.apply(String)` throws `Exception` |
 | `MeterFrame` | `MobileMeterFrame() -> Data?` | `Mobile.meterFrame(): ByteArray` |
+| `ReadMeterFrame` (v0.1) | `MobileReadMeterFrame(_ dst: Data?) -> Int`: pass `buf as Data` where `buf` is one `NSMutableData(length: MobileMeterFrameMaxBytes)` kept for the life of the view; the frame is written into `buf` (a plain Swift `Data`, or `Data(referencing:)`, is copied by the binding and receives nothing) | `Mobile.readMeterFrame(ByteArray): Long`, one `ByteArray(Mobile.MeterFrameMaxBytes.toInt())` reused; the JNI layer copies the bytes back |
 | `FaderPosition`, `FaderDB` | `MobileFaderPosition(_ db: Double) -> Double` | `Mobile.faderPosition(Double): Double` |
 | `MeterScale` (v0.1) | `MobileMeterScale() -> String` | `Mobile.meterScale(): String` |
 | `MeterPosition`, `FaderStep`, `MeterRelease` (v0.1) | `MobileMeterPosition(_ dbfs: Double) -> Double`, `MobileFaderStep(_ db: Double, _ deltaDB: Double) -> Double`, `MobileMeterRelease(_ shownDB: Double, _ inputDB: Double, _ elapsedMs: Double) -> Double` | `Mobile.meterPosition(Double): Double`, `Mobile.faderStep(Double, Double): Double`, `Mobile.meterRelease(Double, Double, Double): Double` |

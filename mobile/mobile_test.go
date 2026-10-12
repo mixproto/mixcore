@@ -74,3 +74,18 @@ func TestRecoverErrTurnsPanicsIntoErrInternal(t *testing.T) {
 		t.Fatal("recoverQuiet must return the zero value")
 	}
 }
+
+// ReadMeterFrame fills the caller's buffer and never allocates per frame.
+func TestReadMeterFrame_CallerBuffer(t *testing.T) {
+	buf := make([]byte, MeterFrameMaxBytes)
+	n := ReadMeterFrame(buf)
+	if n != 24 || string(buf[:4]) != "MXMF" {
+		t.Fatalf("ReadMeterFrame = %d bytes %q, want the empty 24-byte frame", n, buf[:4])
+	}
+	if got := ReadMeterFrame(make([]byte, 3)); got != n {
+		t.Fatalf("short buffer: %d, want the needed size %d", got, n)
+	}
+	if allocs := testing.AllocsPerRun(100, func() { ReadMeterFrame(buf) }); allocs != 0 {
+		t.Fatalf("ReadMeterFrame allocates %v times per call", allocs)
+	}
+}
