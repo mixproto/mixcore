@@ -90,6 +90,26 @@ var channels = [...]channel{
 	{"Spare", off, false, 0, 0, 0, 0, voiceSilent},
 }
 
+// preamp is a channel's input stage: its headamp's Gain and 48 V, or a source
+// with no headamp (on x32 the playback and click come from the card).
+type preamp struct {
+	gainDB    float64
+	phantom   bool
+	noHeadamp bool // x32 only: /-ha/NN/index -1 (X32-F74)
+}
+
+// preamps follow channels, one per input.
+var preamps = [len(channels)]preamp{
+	{gainDB: 20}, {gainDB: 25}, {gainDB: 30, phantom: true}, {gainDB: 22}, {gainDB: 22}, // Kick..Tom 2
+	{gainDB: 10, phantom: true}, {gainDB: 32}, {gainDB: 32}, {gainDB: 5}, // Bass DI, Gtr L/R, Keys
+	{gainDB: 32.5}, {gainDB: 34}, {gainDB: 34}, {gainDB: 38, phantom: true}, // Vox 1-3, Pastor mic
+	{gainDB: 18, phantom: true}, {noHeadamp: true}, {noHeadamp: true}, // Ac Gtr, Playback L/R
+	{gainDB: 28, phantom: true}, {gainDB: 28, phantom: true}, {gainDB: 22}, {gainDB: 18}, // OH L/R, Floor Tom, Kick Sub
+	{gainDB: 28}, {gainDB: 25}, {gainDB: 5}, {gainDB: 5}, // Snare Bot, Bass Mic, Keys 2, Synth
+	{gainDB: 40, phantom: true}, {gainDB: 40, phantom: true}, {gainDB: 36, phantom: true}, {gainDB: 34}, // Choir L/R, Host, Vox 4
+	{noHeadamp: true}, {gainDB: 30, phantom: true}, {}, {}, // Click, Talkback, Spare, Spare
+}
+
 // monitorBus is an xair monitor mix: its name and the channels the
 // musician on it wants loud ("more me").
 type monitorBus struct {

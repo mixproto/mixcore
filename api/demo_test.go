@@ -90,7 +90,8 @@ func (d *demoEnv) startDemo(t *testing.T, family string) demoMixerJSON {
 }
 
 func demoConfig(m demoMixerJSON) string {
-	return fmt.Sprintf(`{"version":0,"family":%q,"host":%q,"port":%d,"meters":{"inputs":true}}`, m.Family, m.Host, m.Port)
+	return fmt.Sprintf(`{"version":0,"family":%q,"host":%q,"port":%d,"meters":{"inputs":true},"safety":{"slipGuard":true}}`,
+		m.Family, m.Host, m.Port)
 }
 
 // The journey of the demo button: StartDemo, Start, a gesture and its echo,
@@ -121,6 +122,7 @@ func demoJourney(t *testing.T, fam string) {
 		!st.Strips[12].EffectiveMute.Muted {
 		t.Fatalf("live snapshot %+v", st)
 	}
+	assertDemoHeadamps(t, st, fam)
 	if err := d.eng.Apply(`{"version":0,"type":"set","param":{"strip":{"kind":"input","index":1},"field":"fader"},` +
 		`"value":-10,"origin":{"kind":"gesture","clientId":"ui","seq":1}}`); err != nil {
 		t.Fatal(err)
@@ -132,13 +134,14 @@ func demoJourney(t *testing.T, fam string) {
 		t.Fatalf("echo %+v", echo)
 	}
 	assertDemoMeters(t, d.eng, fam)
+	assertDemoSafetyPath(t, d)
 	for _, raw := range d.rec.raw {
 		if !strings.Contains(raw, `"demo":true`) {
 			t.Fatalf("a demo session message without demo: %s", raw)
 		}
 	}
-	if len(*d.audit) != 1 {
-		t.Fatalf("%d writes reached the demo console, want the one gesture", len(*d.audit))
+	if len(*d.audit) != 3 {
+		t.Fatalf("%d writes reached the demo console, want the three gestures", len(*d.audit))
 	}
 	if err := d.eng.StopDemo(); err != nil {
 		t.Fatal(err)
@@ -469,5 +472,65 @@ func TestDemo_StopDemoIsAtomicWithStart(t *testing.T) {
 			t.Fatalf("trial %d: a session marked demo outlives StopDemo", trial)
 		}
 		_ = eng.Stop()
+	}
+}
+
+// demoVox1 is input 10, "Vox 1": fader -2 dB, headamp 10 at +32.5 dB.
+const (
+	demoVox1Fader = `{"strip":{"kind":"input","index":10},"field":"fader"}`
+	demoVox1Gain  = `{"strip":{"kind":"headamp","index":10},"field":"gain"}`
+	demoVox1DB    = 32.5
+)
+
+// The demo shows Gain: every input's headamp is seeded (x32: local 1..32,
+// playback and click come from the card and have none).
+func assertDemoHeadamps(t *testing.T, st stateJSON, fam string) {
+	t.Helper()
+	var vox *headampJSON
+	for i, h := range st.Headamps {
+		if h.Index == 10 {
+			vox = &st.Headamps[i]
+		}
+	}
+	if vox == nil || vox.GainDB != demoVox1DB || !vox.Writable {
+		t.Fatalf("%s: headamp 10 %+v, want +%v dB writable", fam, vox, demoVox1DB)
+	}
+	if fam == familyX32 && string(st.Strips[14].Headamp) != "null" {
+		t.Fatalf("x32 Playback L headamp %s, want null (card)", st.Strips[14].Headamp)
+	}
+}
+
+// A demo session goes through the same safety path as a console: the slip
+// guard stops a fader at its wall, a Gain drag stops at its cap.
+func assertDemoSafetyPath(t *testing.T, d *demoEnv) {
+	t.Helper()
+	gesture := func(typ, param, extra string) gestureResultJSON {
+		t.Helper()
+		got, err := d.eng.Gesture(cmdJSON(typ, param, extra))
+		var r gestureResultJSON
+		if err != nil || json.Unmarshal([]byte(got), &r) != nil {
+			t.Fatalf("%s %s: %s %v", typ, param, got, err)
+		}
+		return r
+	}
+	hold := gesture("holdBegin", demoVox1Fader, "")
+	if hold.Window == nil || hold.Window.WallUpDB == nil {
+		t.Fatalf("fader window %+v: slipGuard must apply to the demo", hold.Window)
+	}
+	if r := gesture("set", demoVox1Fader, `,"value":10`); r.State != "atWall" || r.Value.(float64) != *hold.Window.WallUpDB {
+		t.Fatalf("fader +10 dB in a slip-guard hold: %+v, want atWall at %v", r, *hold.Window.WallUpDB)
+	}
+	gesture("holdEnd", demoVox1Fader, "")
+	if g := gesture("holdBegin", demoVox1Gain, ""); g.Window == nil || g.Window.CapUpDB == nil || *g.Window.CapUpDB != demoVox1DB+3 {
+		t.Fatalf("Gain window %+v", g.Window)
+	}
+	if r := gesture("set", demoVox1Gain, `,"value":59`); r.State != "atCap" || r.Value.(float64) != demoVox1DB+3 || !r.Written {
+		t.Fatalf("Gain drag to +59 dB: %+v, want atCap at +%v", r, demoVox1DB+3)
+	}
+	gesture("holdEnd", demoVox1Gain, "")
+	time.Sleep(echoWait)
+	synctest.Wait()
+	if c := findChange(d.rec.all(), "headamp", 10, "gain"); c == nil || c.Value.(float64) != demoVox1DB+3 {
+		t.Fatalf("Gain echo %+v", c)
 	}
 }

@@ -116,6 +116,7 @@ func runDemoSession(t *testing.T, out io.Writer, fam string) {
 	s.logf("Start -> %s", desc)
 	s.connected(t0)
 	s.gesture()
+	s.safetyPath()
 	s.meters(fam)
 	s.discovery(fam, m)
 	s.stop(m)
@@ -228,9 +229,30 @@ func (s *demoSession) stop(m demoMixerJSON) {
 		s.t.Fatalf("demo port still held: %v", err)
 	}
 	_ = pc.Close()
-	s.logf("StopDemo in %d ms; session %q; port %d free again; %d state messages, all demo=true; writes on the wire: %d (the gesture)",
+	s.logf("StopDemo in %d ms; session %q; port %d free again; %d state messages, all demo=true; writes on the wire: %d (the three gestures)",
 		time.Since(t0).Milliseconds(), s.msgs[len(s.msgs)-1].st.Status, m.Port, len(raw), writes)
-	if writes != 1 {
-		s.t.Fatalf("%d writes, want only the user's gesture", writes)
+	if writes != 3 {
+		s.t.Fatalf("%d writes, want only the user's three gestures", writes)
 	}
+}
+
+// safetyPath shows the demo session in the console layer's safety path:
+// slip-guard wall on a fader, Gain cap on a headamp, through Gesture.
+func (s *demoSession) safetyPath() {
+	for _, c := range []struct{ typ, param, extra string }{
+		{"holdBegin", demoVox1Fader, ""}, {"set", demoVox1Fader, `,"value":10`}, {"holdEnd", demoVox1Fader, ""},
+		{"holdBegin", demoVox1Gain, ""}, {"set", demoVox1Gain, `,"value":59`}, {"holdEnd", demoVox1Gain, ""},
+	} {
+		got, err := s.eng.Gesture(cmdJSON(c.typ, c.param, c.extra))
+		if err != nil {
+			s.t.Fatalf("%s: %v", c.typ, err)
+		}
+		s.logf("Gesture %s %s%s -> %s", c.typ, c.param, c.extra, got)
+		if c.typ == "set" && !strings.Contains(got, `"state":"atWall"`) && !strings.Contains(got, `"state":"atCap"`) {
+			s.t.Fatalf("the demo session must stop at the wall or the cap: %s", got)
+		}
+	}
+	echo := s.wait("Gain echo", func(m stateJSON) bool { return changeOf(m, "headamp", 10, "gain") != nil })
+	b, _ := json.Marshal(changeOf(echo.st, "headamp", 10, "gain"))
+	s.logf("Gain echo: %s", b)
 }

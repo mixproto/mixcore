@@ -37,6 +37,10 @@ const (
 	// xairBank1Values: /meters/1 holds 40 values (XA-F53).
 	xairBank1Values = 40
 	xairTapPre      = 3 // xair.md section 3.3: tap 0..5 = IN, PREEQ, POSTEQ, PRE, POST, GRP
+	// Mic headamp Gain: -12 + 72 f dB (X32-F71, XA-F111).
+	micGainMinDB  = -12.0
+	micGainSpanDB = 72.0
+	noHeadampHA   = -1 // X32-F74: /-ha/NN/index of a source without a headamp
 	// xairDBSteps: meter values are int16 in 1/256 dB (XA-F52).
 	xairDBSteps = 256
 )
@@ -58,13 +62,20 @@ type family struct {
 	inputs, muteGroups, dcas int
 	mainFader, mainOn        string
 	hasPan                   bool // <strip>/mix/pan is modelled (xair)
+	// headamp is the root of input ch's mic headamp (default patch: ch N, headamp N).
+	headamp  func(ch int) string
+	hasPatch bool // /-ha/NN/index names each channel's headamp (x32)
 }
 
 var families = map[string]family{
 	// X32-F33, X32-F34: /main/st is the main bus.
-	FamilyX32: {inputs: x32Inputs, muteGroups: x32MuteGroups, dcas: x32DCAs, mainFader: "/main/st/mix/fader", mainOn: "/main/st/mix/on"},
+	// X32-F70: /headamp/000..127, three digits, 0-based; local 000..031.
+	FamilyX32: {inputs: x32Inputs, muteGroups: x32MuteGroups, dcas: x32DCAs, mainFader: "/main/st/mix/fader", mainOn: "/main/st/mix/on",
+		headamp: func(ch int) string { return fmt.Sprintf("/headamp/%03d", ch-1) }, hasPatch: true},
 	// xair.md section 3.1: /lr is the main bus; pan per xair.md section 3.2.
-	FamilyXAir: {inputs: xairInputs, muteGroups: xairGroups, dcas: xairGroups, mainFader: "/lr/mix/fader", mainOn: "/lr/mix/on", hasPan: true},
+	// XA-F110: mic headamps /headamp/01..16, two digits, 1-based.
+	FamilyXAir: {inputs: xairInputs, muteGroups: xairGroups, dcas: xairGroups, mainFader: "/lr/mix/fader", mainOn: "/lr/mix/on", hasPan: true,
+		headamp: func(ch int) string { return fmt.Sprintf("/headamp/%02d", ch) }},
 }
 
 // newConsole builds the family's simulator, seeded with the show.
@@ -117,6 +128,21 @@ func (s *seeder) common(fam family) {
 	s.set(fam.mainFader, s.level(mainFaderDB))
 	for g := 1; g <= fam.muteGroups; g++ {
 		s.set(fmt.Sprintf("/config/mute/%d", g), osc.Int(boolInt(engagedMuteGroups&(1<<(g-1)) != 0)))
+	}
+	s.headamps(fam)
+}
+
+// headamps seeds every input's mic headamp: Gain (X32-F71, X32-F72;
+// XA-F111) and 48 V (X32-F73, XA-F113, 1 = on). On x32 a channel whose
+// source has no headamp is patched to none (X32-F74).
+func (s *seeder) headamps(fam family) {
+	for i := range fam.inputs {
+		p, root := preamps[i], fam.headamp(i+1)
+		s.set(root+"/gain", osc.Float(float32((p.gainDB-micGainMinDB)/micGainSpanDB)))
+		s.set(root+"/phantom", osc.Int(boolInt(p.phantom)))
+		if fam.hasPatch && p.noHeadamp {
+			s.set(fmt.Sprintf("/-ha/%02d/index", i), osc.Int(noHeadampHA))
+		}
 	}
 }
 

@@ -7,6 +7,7 @@ package demo
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"math"
 	"net"
 	"net/netip"
@@ -27,6 +28,15 @@ func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
 const dbTolerance = 0.1
 
 var law = x32.New(x32.Config{}).FaderLaw() // xair has the same law (XA-F40)
+
+func mustValue(t *testing.T, c console, addr string) osc.Arg {
+	t.Helper()
+	v, ok := c.Value(addr)
+	if !ok {
+		t.Fatalf("%s is not modelled", addr)
+	}
+	return v
+}
 
 func faderDB(t *testing.T, c console, addr string) float64 {
 	t.Helper()
@@ -58,6 +68,18 @@ func TestNewConsole_SeedsTheShow(t *testing.T) {
 				}
 				if v, _ := sim.Value(root + "/grp/mute"); v.Int != int32(c.groups) {
 					t.Fatalf("ch %d mute groups %b", i+1, v.Int)
+				}
+			}
+			for i := range families[fam].inputs {
+				p, root := preamps[i], families[fam].headamp(i+1)
+				if got := float64(mustValue(t, sim, root+"/gain").Float)*micGainSpanDB + micGainMinDB; math.Abs(got-p.gainDB) > 0.25 {
+					t.Fatalf("ch %d Gain %v dB, want %v", i+1, got, p.gainDB)
+				}
+				if (mustValue(t, sim, root+"/phantom").Int == 1) != p.phantom {
+					t.Fatalf("ch %d phantom", i+1)
+				}
+				if ha, ok := sim.Value(fmt.Sprintf("/-ha/%02d/index", i)); ok && (ha.Int == noHeadampHA) != p.noHeadamp {
+					t.Fatalf("ch %d patched to headamp %d", i+1, ha.Int)
 				}
 			}
 			if v, _ := sim.Value("/config/mute/4"); v.Int != 1 { // Speech engaged (X32-F35)
