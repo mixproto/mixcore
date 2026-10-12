@@ -1,0 +1,9 @@
+# Hand-made MIDI byte stream (generic MIDI 1.0, not any console's map).
+# Lines are chunks as they would arrive in TCP segments; '#' starts a comment.
+B0 63 00 B0 62 17 B0 06 5A      # NRPN select 0x00/0x17 on ch1, data entry MSB 0x5A
+B0 26 03                        # data entry LSB 0x03 -> key "... lsb"
+B0 63 00 62 17 06               # running status: same NRPN, value split across chunks
+F8 5F                           # a real-time clock byte inside the message, then the value 0x5F
+B1 07 64                        # CC 7 on ch2 = 0x64
+F0 00 00 1A 50 10 01 00 02 7F F7  # SysEx, keyed by its first 6 bytes after F0
+C2 05                           # program change ch3 = 5
