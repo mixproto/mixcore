@@ -237,7 +237,7 @@ func (rd *Reader) packet(typ uint32, body []byte) (Record, error) {
 	default: // ngBlockSPB
 		return rd.simplePacket(body)
 	}
-	if int(ifID) >= len(rd.ng.ifaces) {
+	if ifID >= uint32(len(rd.ng.ifaces)) { // uint32: int(ifID) is negative on 32-bit for ifID >= 2^31
 		return Record{}, fmt.Errorf("%w: packet for unknown interface %d", ErrCorrupt, ifID)
 	}
 	if capLen > MaxPacket || int(capLen) > len(data) {

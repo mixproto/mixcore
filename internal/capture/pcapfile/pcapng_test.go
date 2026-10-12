@@ -207,3 +207,23 @@ func FuzzReader(f *testing.F) {
 		t.Fatal("reader did not terminate")
 	})
 }
+
+// Regression (go-reviewer L2): on 32-bit platforms int(0xffffffff) is -1, so
+// "int(ifID) >= len(ifaces)" let the packet through and the interface lookup
+// panicked. The check is done in uint32. (This fails before the fix only on
+// a 32-bit run, e.g. GOARCH=386 or arm.)
+func TestReadPcapngHugeInterfaceID(t *testing.T) {
+	for _, id := range []uint32{0xffffffff, 0x80000000, 1} {
+		g := &ngBuilder{o: binary.LittleEndian}
+		g.shb()
+		g.idb(linkRaw, -1, 0)
+		g.epb(id, 0, []byte{1})
+		rd, err := NewReader(bytes.NewReader(g.b))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := rd.Next(); !errors.Is(err, ErrCorrupt) {
+			t.Fatalf("interface %#x: err = %v, want ErrCorrupt", id, err)
+		}
+	}
+}
