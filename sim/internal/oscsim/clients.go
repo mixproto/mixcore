@@ -119,3 +119,26 @@ func (c *Core) MaxSlotsUsed() int {
 	defer c.mu.Unlock()
 	return c.maxSlots
 }
+
+// InjectPush sends one arbitrary message to every active /xremote client, as
+// a console with unexpected firmware might (a test control: drivers must
+// reject what their protocol document does not allow, never guess).
+func (c *Core) InjectPush(addr string, args ...osc.Arg) error {
+	pkt, err := osc.AppendString(nil, addr, args...)
+	if err != nil {
+		return err
+	}
+	c.Do(func(now time.Time) []Outgoing {
+		if c.OfflineLocked(now) {
+			return nil
+		}
+		var out []Outgoing
+		for _, sub := range c.subs {
+			if now.Before(sub.pushUntil) {
+				out = append(out, Outgoing{To: sub.addr, Pkt: pkt})
+			}
+		}
+		return out
+	})
+	return nil
+}

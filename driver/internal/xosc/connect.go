@@ -41,6 +41,10 @@ func (s *session) connect(ctx context.Context) error {
 		return err
 	}
 	s.ident = ident
+	// Model and firmware are not user content; the device name is (Debug only).
+	// No firmware is refused: absent features stay absent (XA section 1).
+	s.log.Info(s.name+": console identified", "model", ident.Model, "firmware", ident.Firmware)
+	s.log.Debug(s.name+": console name", "name", ident.Name)
 	s.sendSub(addrXremote) // before the read, so changes during the read are not missed (X32-F20)
 	state, err := s.readAll(ctx)
 	if err != nil {
