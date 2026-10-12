@@ -80,7 +80,7 @@ func testCall(f func(*C.char) C.int32_t, s string) int32 {
 	return int32(f(cs))
 }
 
-func testApply(cmd string) int32    { return testCall(MixApply, cmd) }
+func testApply(cmd string) int32 { return testCall(MixApply, cmd) }
 
 // testGesture calls MixGesture with C memory and frees the result with MixFree.
 func testGesture(cmd string) (string, int32) {

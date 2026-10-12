@@ -112,8 +112,8 @@ behave the same and a UI bug cannot bypass them:
    or a MixLink client) carries that client's origin and is an external change for everyone else's holds.
 6. Background re-read: while live, the core re-reads the console state every 15 s (read-only, paced) to recover a
    change whose push was lost. Only values that differ from the last one seen reach the listener, as ordinary diffs with
-   origin `console`. A pass is skipped while any fader is held, and parameters with a recent write of ours are not
-   re-read. It never writes.
+   origin `console`. v0.3: parameters that are held (`holdBegin` without `holdEnd`, also a resting finger) and parameters with a
+   recent write of ours are left out of a pass; everything else is still re-read. It never writes.
 
 7. **Gesture window (v0.3, CR-22).** `holdBegin` opens a window for that client and parameter; every `set` of that
    client on that parameter until `holdEnd` is a candidate the core clamps, so no value ever moves past the window in

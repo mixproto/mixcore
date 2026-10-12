@@ -20,7 +20,8 @@ const rereadBatch = ReadWindow
 // rereadPass is the owner-goroutine state of a background re-read.
 type rereadPass struct {
 	active bool
-	next   int // next parameter index to read
+	skip   map[int]bool // parameters left out of the current pass (held)
+	next   int          // next parameter index to read
 	// asked holds the parameters read in the current step. The value is true
 	// once the read is superseded (see markTouched).
 	asked map[int]bool
@@ -30,10 +31,25 @@ var _ driver.Rereader = (*session)(nil)
 
 // Reread implements driver.Rereader: it asks the owner goroutine for one
 // read-only pass over every parameter and returns at once.
-func (s *session) Reread() error {
+func (s *session) Reread() error { return s.RereadExcept(nil) }
+
+var _ driver.SelectiveRereader = (*session)(nil)
+
+// RereadExcept implements driver.SelectiveRereader: one pass that leaves
+// out the given parameters (held by a person). It returns at once.
+func (s *session) RereadExcept(skip []model.ParamRef) error {
 	if s.stopped.Load() {
 		return driver.ErrClosed
 	}
+	set := map[int]bool{}
+	for _, p := range skip {
+		if _, ok := s.params.byRef(p); ok {
+			set[s.params.index(p)] = true
+		}
+	}
+	s.mu.Lock()
+	s.rrSkip = set
+	s.mu.Unlock()
 	signal(s.rereadReady)
 	return nil
 }
@@ -44,6 +60,9 @@ func (s *session) startReread(now time.Time) {
 		return
 	}
 	s.rr.active, s.rr.next = true, 0
+	s.mu.Lock()
+	s.rr.skip, s.rrSkip = s.rrSkip, nil
+	s.mu.Unlock()
 	s.passStarted()
 	s.rereadStep(now)
 }
@@ -64,7 +83,7 @@ func (s *session) rereadStep(now time.Time) {
 	}
 	for sent := 0; sent < rereadBatch && s.rr.next < len(s.params.all); s.rr.next++ {
 		idx := s.rr.next
-		if s.writtenRecently(idx, now) || s.isAbsent(s.params.all[idx]) {
+		if s.writtenRecently(idx, now) || s.isAbsent(s.params.all[idx]) || s.rr.skip[idx] {
 			continue // a gesture is moving it (its echo keeps us in sync), or the console lacks it
 		}
 		s.sendRead(s.params.all[idx].addr)

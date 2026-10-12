@@ -26,6 +26,7 @@ type fakeDriver struct {
 	snapshot  model.State
 	caps      model.Capabilities
 	law       driver.FaderLaw
+	selective bool // sessions implement driver.SelectiveRereader
 	sessions  []*fakeSession
 	connectAt []time.Time
 }
@@ -44,6 +45,9 @@ func (d *fakeDriver) Connect(ctx context.Context, _ driver.Endpoint, _ driver.Op
 	d.sessions = append(d.sessions, s)
 	if d.flaky {
 		s.lose()
+	}
+	if d.selective {
+		return selectiveSession{s}, nil
 	}
 	return s, nil
 }
@@ -87,6 +91,17 @@ type fakeSession struct {
 	closed  bool
 	meters  driver.MeterRequest
 	rereads int
+	skips   [][]model.ParamRef // RereadExcept calls (selective sessions)
+}
+
+// selectiveSession is a fakeSession that can leave held parameters out of a re-read.
+type selectiveSession struct{ *fakeSession }
+
+func (s selectiveSession) RereadExcept(skip []model.ParamRef) error {
+	s.mu.Lock()
+	s.skips = append(s.skips, skip)
+	s.mu.Unlock()
+	return s.Reread()
 }
 
 func (s *fakeSession) Identity() driver.Identity        { return driver.Identity{Name: "fake"} }

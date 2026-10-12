@@ -31,6 +31,7 @@ func TestReread_EveryIntervalWhileLiveAndNeverWrites(t *testing.T) {
 	})
 }
 
+// A session that cannot leave parameters out keeps the old rule.
 func TestReread_SkippedWhileAHoldIsActive(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		drv := &fakeDriver{snapshot: stateWith(0)}
@@ -51,6 +52,32 @@ func TestReread_SkippedWhileAHoldIsActive(t *testing.T) {
 		synctest.Wait()
 		if n := drv.session(0).rereadCount(); n != 1 {
 			t.Fatalf("%d re-reads after the finger was lifted, want 1", n)
+		}
+	})
+}
+
+// A resting finger (holdBegin from touch-down) must not stop the recovery
+// of every other parameter: a selective session re-reads all but the held
+// parameters (Apple review, S2c).
+func TestReread_SkipsOnlyTheHeldParameters(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		drv := &fakeDriver{snapshot: stateWith(0), selective: true}
+		sup := start(t, drv)
+		synctest.Wait()
+		if err := sup.Hold(ch1Fader, gesture, true); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(3 * DefaultRereadEvery)
+		synctest.Wait()
+		sess := drv.session(0)
+		sess.mu.Lock()
+		skips := sess.skips
+		sess.mu.Unlock()
+		if len(skips) != 3 || len(skips[0]) != 1 || skips[0][0] != ch1Fader {
+			t.Fatalf("re-reads while held: %v", skips)
+		}
+		if n := len(sess.writes()); n != 0 {
+			t.Fatalf("%d writes", n)
 		}
 	})
 }

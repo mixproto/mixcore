@@ -183,6 +183,15 @@ type Rereader interface {
 	Reread() error
 }
 
+// SelectiveRereader is a Rereader that can leave parameters out of a pass:
+// the ones a person is holding (a resting finger must not stop the recovery
+// of every other parameter, and a re-read must not end a held gesture).
+// RereadExcept is Reread without those parameters. Errors: ErrClosed.
+type SelectiveRereader interface {
+	Rereader
+	RereadExcept(skip []model.ParamRef) error
+}
+
 // Event is emitted by Session.Run.
 type Event interface{ isEvent() }
 
