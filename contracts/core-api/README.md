@@ -279,7 +279,7 @@ Rules the core keeps:
   (without the Android `SocketBinder`, so the demo works with no network at all). Both refuse to send to, and drop
   packets from, any address that is not loopback.
 - **Never a real console.** `Discover` never lists the demo, even when `127.0.0.1` and its port are probed as a manual
-  host. `demo` is set by the core from the running demo's family, host and port, never by the app; a `Start` to the
+  host or the demo stops during the probe (the core filters every address a demo of this engine has used). `demo` is set by the core from the running demo's family, host and port, never by the app; a `Start` to the
   demo's address with another family is `ERR_INVALID_CONFIG`.
 - **Nothing runs unless started.** No goroutine, socket or timer exists before `StartDemo` or after `StopDemo`.
 - **Content.** Named channels of a small church or club band (Kick, Snare, Hi-Hat, Toms, Bass, Gtr L/R, Keys, Vox 1-3,

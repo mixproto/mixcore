@@ -19,10 +19,17 @@ import (
 	"github.com/mixproto/mixcore/internal/safe"
 )
 
+// maxDemoEndpoints bounds the demo addresses discovery keeps filtering.
+const maxDemoEndpoints = 64
+
 // demoSlot is the engine's one demo mixer (contracts/core-api README, "Demo mixer").
 type demoSlot struct {
 	mu    sync.Mutex
 	mixer *demo.Mixer
+	// used holds every address a demo of this engine has listened on (the
+	// newest maxDemoEndpoints): a probe that got a reply before StopDemo
+	// still must not list it.
+	used []netip.AddrPort
 	// session: the current (or last) session targets the demo. Written by
 	// Start under e.mu, read by the dispatcher for the demo flag.
 	session atomic.Bool
@@ -91,6 +98,7 @@ func (e *Engine) StartDemo(requestJSON string) (out string, err error) {
 		return "", err
 	}
 	e.demo.mixer = m
+	e.demo.remember(ep)
 	return string(b), nil
 }
 
@@ -139,17 +147,26 @@ func (d *demoSlot) targetsDemo(cfg configJSON) (bool, error) {
 	return true, nil
 }
 
-// withoutDemo drops a discovery reply that comes from the demo mixer.
+// remember adds a demo address for withoutDemo. Callers hold d.mu.
+func (d *demoSlot) remember(ep netip.AddrPort) {
+	if slices.Contains(d.used, ep) {
+		return
+	}
+	if len(d.used) == maxDemoEndpoints {
+		d.used = slices.Delete(d.used, 0, 1)
+	}
+	d.used = append(d.used, ep)
+}
+
+// withoutDemo drops a discovery reply from any address a demo of this engine
+// has listened on, running or already stopped.
 func (d *demoSlot) withoutDemo(found []x32.Found) []x32.Found {
 	d.mu.Lock()
-	m := d.mixer
+	used := slices.Clone(d.used)
 	d.mu.Unlock()
-	if m == nil {
-		return found
-	}
 	return slices.DeleteFunc(found, func(f x32.Found) bool {
 		ip, err := netip.ParseAddr(f.Endpoint.Host)
-		return err == nil && netip.AddrPortFrom(ip.Unmap(), uint16(f.Endpoint.Port)) == m.Endpoint()
+		return err == nil && slices.Contains(used, netip.AddrPortFrom(ip.Unmap(), uint16(f.Endpoint.Port)))
 	})
 }
 

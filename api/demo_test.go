@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net/netip"
 	"os"
 	"runtime"
 	"strings"
@@ -382,5 +383,49 @@ func TestDemo_NothingRunsUnlessStarted(t *testing.T) {
 	}
 	if demoRunning() {
 		t.Fatal("a demo goroutine survived StopDemo")
+	}
+}
+
+// A demo that answers a probe and is stopped before the probe ends is still
+// never listed: the filter knows every demo this engine has run.
+func TestDemo_DiscoveryNeverListsADemoStoppedDuringTheProbe(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		n := memnet.New()
+		eng := NewEngineWith(Options{ListenPacket: n.Host("127.0.0.1"), DemoListenPacket: n.Host("127.0.0.1")})
+		defer eng.Close()
+		rec := &discoveryRecorder{}
+		eng.SetDiscoveryListener(rec)
+		out, err := eng.StartDemo(`{"version":0,"family":"xair"}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m demoMixerJSON
+		_ = decodeStrict(out, &m)
+		req := fmt.Sprintf(`{"version":0,"family":"xair","hosts":[{"host":"127.0.0.1","port":%d}],"waitMs":500}`, m.Port)
+		if err := eng.Discover(req); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(300 * time.Millisecond)
+		if err := eng.StopDemo(); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Second)
+		synctest.Wait()
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		if len(rec.msgs) != 1 || rec.msgs[0].Status != "done" || len(rec.msgs[0].Consoles) != 0 {
+			t.Fatalf("discovery listed the demo: %+v", rec.msgs)
+		}
+	})
+}
+
+func TestDemoSlot_RemembersABoundedSetOfEndpoints(t *testing.T) {
+	var d demoSlot
+	for p := range maxDemoEndpoints + 5 {
+		d.remember(netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), uint16(1000+p)))
+	}
+	d.remember(netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), 1000+maxDemoEndpoints+4)) // already known
+	if len(d.used) != maxDemoEndpoints || d.used[0].Port() != 1005 {
+		t.Fatalf("%d endpoints, oldest %v", len(d.used), d.used[0])
 	}
 }
