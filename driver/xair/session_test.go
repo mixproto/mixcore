@@ -265,11 +265,11 @@ func TestMeters_Bank1PublishedInDBFS(t *testing.T) {
 func wantHeadamps(n int) []model.HeadampInfo {
 	out := make([]model.HeadampInfo, n)
 	for i := range out {
-		out[i] = model.HeadampInfo{Index: i + 1, Bank: model.BankLocal, Number: i + 1, MinDB: -12, MaxDB: 60, StepDB: 0.5,
+		out[i] = model.HeadampInfo{Index: i + 1, Bank: model.BankLocal, Number: i + 1, MinDB: -12, MaxDB: 60, WriteMaxDB: 59.5, StepDB: 0.5,
 			Writable: true, HasPhantom: true}
 	}
 	if n == 16 {
-		out = append(out, model.HeadampInfo{Index: 17, Bank: model.BankAux, Number: 1, MinDB: -12, MaxDB: 20, StepDB: 0.5})
+		out = append(out, model.HeadampInfo{Index: 17, Bank: model.BankAux, Number: 1, MinDB: -12, MaxDB: 20, WriteMaxDB: 19.5, StepDB: 0.5})
 	}
 	return out
 }

@@ -191,10 +191,10 @@ func TestSafety_SnapshotHeadamps(t *testing.T) {
 		e.rec.mu.Lock()
 		raw := e.rec.raw[len(e.rec.raw)-1]
 		e.rec.mu.Unlock()
-		want := `"headamps":[{"index":1,"gainDB":0,"minDB":-12,"maxDB":60,"stepDB":0.5,"writable":true,"bank":"local","number":1,"phantom":false},` +
-			`{"index":2,"gainDB":0,"minDB":-12,"maxDB":60,"stepDB":0.5,"writable":true,"bank":"local","number":2,"phantom":false},` +
-			`{"index":3,"gainDB":32.5,"minDB":-12,"maxDB":60,"stepDB":0.5,"writable":true,"bank":"local","number":3,"phantom":false},` +
-			`{"index":4,"gainDB":0,"minDB":-12,"maxDB":60,"stepDB":0.5,"writable":true,"bank":"local","number":4,"phantom":false}]`
+		want := `"headamps":[{"index":1,"gainDB":0,"minDB":-12,"maxDB":60,"writeMaxDB":59.5,"stepDB":0.5,"writable":true,"bank":"local","number":1,"phantom":false},` +
+			`{"index":2,"gainDB":0,"minDB":-12,"maxDB":60,"writeMaxDB":59.5,"stepDB":0.5,"writable":true,"bank":"local","number":2,"phantom":false},` +
+			`{"index":3,"gainDB":32.5,"minDB":-12,"maxDB":60,"writeMaxDB":59.5,"stepDB":0.5,"writable":true,"bank":"local","number":3,"phantom":false},` +
+			`{"index":4,"gainDB":0,"minDB":-12,"maxDB":60,"writeMaxDB":59.5,"stepDB":0.5,"writable":true,"bank":"local","number":4,"phantom":false}]`
 		if !strings.Contains(raw, want) {
 			t.Fatalf("snapshot %s", raw)
 		}

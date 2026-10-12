@@ -163,7 +163,7 @@ func (s *Supervisor) openWindowLocked(k holdKey) *window {
 	case model.FieldGain:
 		w.HasCap, w.CapUp, w.CapDown = true, start+gainCapUpDB, start-gainCapDnDB
 		if h, ok := s.caps.Headamp(k.param.Strip.Index); ok { // this headamp's own law (CR-23)
-			w.CapUp, w.CapDown = math.Min(w.CapUp, h.MaxDB), math.Max(w.CapDown, h.MinDB)
+			w.CapUp, w.CapDown = math.Min(w.CapUp, h.WriteMaxDB), math.Max(w.CapDown, h.MinDB) // the writable top (re-review LOW D)
 		}
 	case model.FieldFader:
 		w.law = s.cfg.Driver.FaderLaw()

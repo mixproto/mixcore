@@ -86,7 +86,8 @@ func (g HeadampGroup) has(index int) bool { return index >= g.First && index < g
 
 func (g HeadampGroup) info(index int) model.HeadampInfo {
 	return model.HeadampInfo{Index: index, Bank: g.Bank, Number: index - g.First + 1, MinDB: g.Law.MinDB,
-		MaxDB: g.Law.MaxDB(), StepDB: g.Law.StepDB, Writable: g.Writable, HasPhantom: g.Phantom}
+		MaxDB: g.Law.MaxDB(), WriteMaxDB: g.Law.MaxDB() - g.Law.StepDB, StepDB: g.Law.StepDB, // the wire maximum is never written (convert.go gainToWire)
+		Writable: g.Writable, HasPhantom: g.Phantom}
 }
 
 // maxHeadamp is the largest headamp index of the layout (0: none).

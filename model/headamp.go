@@ -47,8 +47,12 @@ type HeadampInfo struct {
 	Bank                 HeadampBank
 	Number               int // the console's own number within the bank, from 1
 	MinDB, MaxDB, StepDB float64
-	Writable             bool
-	HasPhantom           bool
+	// WriteMaxDB is the highest value the driver writes, below MaxDB when
+	// the wire maximum is not confirmed safe to write (xair.md XA-F116,
+	// x32.md X32-F72: +59.5 on the mic law, +19.5 on the line law).
+	WriteMaxDB float64
+	Writable   bool
+	HasPhantom bool
 }
 
 // Headamp returns the description of headamp index.

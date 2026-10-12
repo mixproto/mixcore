@@ -40,7 +40,7 @@ func safetyState(faderDB float64) model.State {
 func micHeadamps(n int) []model.HeadampInfo {
 	out := make([]model.HeadampInfo, n)
 	for i := range out {
-		out[i] = model.HeadampInfo{Index: i + 1, Bank: model.BankLocal, Number: i + 1, MinDB: -12, MaxDB: 60, StepDB: 0.5, Writable: true}
+		out[i] = model.HeadampInfo{Index: i + 1, Bank: model.BankLocal, Number: i + 1, MinDB: -12, MaxDB: 60, WriteMaxDB: 59.5, StepDB: 0.5, Writable: true}
 	}
 	return out
 }
@@ -541,6 +541,20 @@ func TestSlipGuard_RestMeansStillness(t *testing.T) {
 		time.Sleep(300 * time.Millisecond) // now still
 		if r, _ := sup.OpenWall(ch1Fader, gesture); r.State != StateFree || r.Window.WallUp != 6 {
 			t.Fatalf("after 300 ms still: %s %v", r.State, r.Window.WallUp)
+		}
+	})
+}
+
+// Re-review LOW D: the Gain cap of a gesture stops at the headamp's
+// writable top (+59.5 dB), never at the wire maximum the driver refuses.
+func TestGain_CapStopsAtTheWritableTop(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		st, _ := stateWith(-6).WithHeadamps([]model.Headamp{{Index: 1}, {Index: 2}, {Index: 3, GainDB: 58}})
+		sup, drv := startSafe(t, SafetyConfig{}, st)
+		w, _ := sup.HoldWindow(gain3, gesture, true)
+		r, _ := sup.Write(set(gain3, lvl(t, 61), gesture))
+		if w.Window.CapUp != 59.5 || dbIn(t, r) != 59.5 || r.State != StateAtCap || lastWrite(drv) != 59.5 {
+			t.Fatalf("cap %v, applied %v %s", w.Window.CapUp, dbIn(t, r), r.State)
 		}
 	})
 }

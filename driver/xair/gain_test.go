@@ -35,7 +35,7 @@ func TestGain_RoundTripAtBothRangeEnds(t *testing.T) {
 		for i, pt := range []struct {
 			db  float64
 			hex uint32
-		}{{-12, 0x00000000}, {0, 0x3e2aaaab}, {0.5, 0x3e31c71c}, {24, 0x3f000000}, {59.5, 0x3f7e38e4}, {60, 0x3f800000}} {
+		}{{-12, 0x00000000}, {0, 0x3e2aaaab}, {0.5, 0x3e31c71c}, {24, 0x3f000000}, {59.5, 0x3f7e38e4}} { // +60: see TestGain_WireMaximumNeverWritten
 			h := i + 1
 			if err := sess.Apply(driver.Command{Param: headamp(h), Value: level(t, pt.db), Origin: gesture}); err != nil {
 				t.Fatal(err)
@@ -53,9 +53,10 @@ func TestGain_RoundTripAtBothRangeEnds(t *testing.T) {
 
 func headampAddr(h int) string { return fmt.Sprintf("/headamp/%02d/gain", h) }
 
-// AC-PS-20: no in-range value encodes to the wire maximum except the range
-// maximum; values outside the range are errors, never clamped.
-func TestGain_WireMaximumOnlyForTheMaximum(t *testing.T) {
+// AC-PS-20 and re-review LOW D: no value is ever written as the wire
+// maximum 1.0 (XS10 never writes it, XA-F116, item 22): +60 dB is refused
+// like a value outside the range, never clamped; reading 1.0 is +60 dB.
+func TestGain_WireMaximumNeverWritten(t *testing.T) {
 	c, ok := New(Config{}).Codec(headamp(1))
 	if !ok {
 		t.Fatal("no headamp 1")
@@ -74,10 +75,7 @@ func TestGain_WireMaximumOnlyForTheMaximum(t *testing.T) {
 			t.Fatalf("%v dB -> %v, %v", db, f, err)
 		}
 	}
-	if f, err := toWire(60); err != nil || f != 1 {
-		t.Fatalf("60 dB -> %v, %v", f, err)
-	}
-	for _, bad := range []float64{-12.01, 60.01, math.Inf(1), math.Inf(-1), math.NaN()} {
+	for _, bad := range []float64{60, -12.01, 60.01, math.Inf(1), math.Inf(-1), math.NaN()} {
 		if _, err := toWire(bad); !errors.Is(err, model.ErrInvalidValue) {
 			t.Errorf("%v dB accepted: %v", bad, err)
 		}

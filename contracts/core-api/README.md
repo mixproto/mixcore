@@ -66,6 +66,10 @@ behave the same and a UI bug cannot bypass them:
   | x32 | local `/headamp/000..031` (probed) | NNN + 1 | -12..+60 dB, 0.5 dB (k/144) | yes | yes |
   | x32 | AES50 A `032..079`, B `080..127`, only those a channel's `/-ha` index points at | NNN + 1 | same | no: ownership unknown (X32-F76) | no |
 
+  The wire maximum (`maxDB`, f = 1.0) is read but never written until hardware confirms it (xair.md item 22, x32.md
+  item 17; XS10 avoids it): each entry's `writeMaxDB` is the top a write may reach (+59.5 mic, +19.5 line); a set above
+  it is `ERR_INVALID_VALUE`, and a Gain gesture's cap stops there.
+
   The index is a model number, never UI text: the UI names a headamp by `bank` and `number` ("Local 1", "AES50 A 05",
   "Aux"). On x32 an input's `headamp` field says which headamp feeds it (`null`: none, the channel has no Gain); xair
   does not model it yet, so a UI there names headamps only. **Trim** (x32 `/ch/NN/preamp/trim`, -18..+18 dB) is not

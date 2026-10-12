@@ -356,7 +356,8 @@ func mustLevel(t *testing.T, db float64) model.Value {
 // the model gets a value of the documented law or nothing: Gain on the
 // grid of its own law within its range (X32-F72, XA-F111, XA-F112),
 // phantom only 0/1 (X32-F73), a /-ha index -1 or a known headamp
-// (X32-F74). A parsed Gain re-encodes to the same grid value.
+// (X32-F74). A parsed Gain re-encodes to the same grid value, except the
+// top of the law, which is never written.
 func FuzzHeadampFromWire(f *testing.F) {
 	f.Add(float32(0.5), int32(-1))
 	f.Add(float32(1), int32(127))
@@ -385,6 +386,12 @@ func FuzzHeadampFromWire(f *testing.F) {
 				tt.Fatalf("%s: wire %v -> %v dB off the law", p.addr, fv, db)
 			}
 			back, err := toWire(p, v)
+			if db == top { // the wire maximum is read, never written (re-review LOW D)
+				if !errors.Is(err, model.ErrInvalidValue) {
+					tt.Fatalf("%s: the top %v dB encoded: %v", p.addr, db, err)
+				}
+				continue
+			}
 			if err != nil || !sameWire(p, back, osc.Float(float32(math.Round(float64(fv)*float64(p.gainSteps))/float64(p.gainSteps)))) {
 				tt.Fatalf("%s: %v dB re-encodes to %v, %v", p.addr, db, back.Float, err)
 			}

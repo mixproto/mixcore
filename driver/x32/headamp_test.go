@@ -54,9 +54,9 @@ func TestHeadamp_ConnectReadsLocalAndTheChannelPatch(t *testing.T) {
 			t.Fatalf("caps: inputHeadamps %v, %d headamps", c.InputHeadamps, len(c.Headamps))
 		}
 		for idx, want := range map[int]model.HeadampInfo{
-			1:   {Index: 1, Bank: model.BankLocal, Number: 1, MinDB: -12, MaxDB: 60, StepDB: 0.5, Writable: true, HasPhantom: true},
-			37:  {Index: 37, Bank: model.BankAES50A, Number: 5, MinDB: -12, MaxDB: 60, StepDB: 0.5},
-			128: {Index: 128, Bank: model.BankAES50B, Number: 48, MinDB: -12, MaxDB: 60, StepDB: 0.5},
+			1:   {Index: 1, Bank: model.BankLocal, Number: 1, MinDB: -12, MaxDB: 60, WriteMaxDB: 59.5, StepDB: 0.5, Writable: true, HasPhantom: true},
+			37:  {Index: 37, Bank: model.BankAES50A, Number: 5, MinDB: -12, MaxDB: 60, WriteMaxDB: 59.5, StepDB: 0.5},
+			128: {Index: 128, Bank: model.BankAES50B, Number: 48, MinDB: -12, MaxDB: 60, WriteMaxDB: 59.5, StepDB: 0.5},
 		} {
 			if got, ok := c.Headamp(idx); !ok || got != want {
 				t.Errorf("headamp %d: %+v", idx, got)
@@ -152,7 +152,7 @@ func TestHeadamp_LocalGainRoundTrip(t *testing.T) {
 		for i, pt := range []struct {
 			db  float64
 			hex uint32
-		}{{-12, 0x00000000}, {0, 0x3e2aaaab}, {0.5, 0x3e31c71c}, {24, 0x3f000000}, {59.5, 0x3f7e38e4}, {60, 0x3f800000}} {
+		}{{-12, 0x00000000}, {0, 0x3e2aaaab}, {0.5, 0x3e31c71c}, {24, 0x3f000000}, {59.5, 0x3f7e38e4}} {
 			p := headamp(i+1, model.FieldGain)
 			if err := sess.Apply(driver.Command{Param: p, Value: level(t, pt.db), Origin: gesture}); err != nil {
 				t.Fatal(err)
@@ -237,6 +237,30 @@ func TestHeadamp_RereadReportsGainWithAnUnconfirmedWrite(t *testing.T) {
 		}
 		if w := r.sim.WriteCount(); w != 0 {
 			t.Fatalf("%d writes reached the console", w)
+		}
+	})
+}
+
+// Re-review LOW D: whether writing the wire maximum 1.0 is safe is
+// unverified (X32-F72 item 17); +60 dB is refused and nothing is sent, a
+// console at +60 dB still reads as +60 dB, and the writable top is +59.5.
+func TestHeadamp_WireMaximumReadNeverWritten(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t, simx32.Options{})
+		if err := r.sim.SurfaceSet("/headamp/001/gain", osc.Float(1)); err != nil {
+			t.Fatal(err)
+		}
+		sess := r.connect()
+		if v, _ := sess.Snapshot().Value(headamp(2, model.FieldGain)); !v.Equal(level(t, 60)) {
+			t.Fatalf("read 1.0 as %v", v)
+		}
+		err := sess.Apply(driver.Command{Param: headamp(1, model.FieldGain), Value: level(t, 60), Origin: gesture})
+		synctest.Wait()
+		if !errors.Is(err, model.ErrInvalidValue) || r.sim.WriteCount() != 0 {
+			t.Fatalf("+60 dB: %v, %d writes", err, r.sim.WriteCount())
+		}
+		if h, _ := sess.Capabilities().Headamp(1); h.MaxDB != 60 || h.WriteMaxDB != 59.5 {
+			t.Fatalf("law max %v, writable max %v", h.MaxDB, h.WriteMaxDB)
 		}
 	})
 }

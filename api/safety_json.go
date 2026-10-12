@@ -56,15 +56,16 @@ func resultJSON(r console.Result) gestureResultJSON {
 
 // headampJSON is one snapshot headamp with its own law and label (v0.3).
 type headampJSON struct {
-	Index    int     `json:"index"`
-	GainDB   float64 `json:"gainDB"`
-	MinDB    float64 `json:"minDB"`
-	MaxDB    float64 `json:"maxDB"`
-	StepDB   float64 `json:"stepDB"`
-	Writable bool    `json:"writable"`
-	Bank     string  `json:"bank"`
-	Number   int     `json:"number"`
-	Phantom  *bool   `json:"phantom,omitempty"`
+	Index      int     `json:"index"`
+	GainDB     float64 `json:"gainDB"`
+	MinDB      float64 `json:"minDB"`
+	MaxDB      float64 `json:"maxDB"`
+	WriteMaxDB float64 `json:"writeMaxDB"`
+	StepDB     float64 `json:"stepDB"`
+	Writable   bool    `json:"writable"`
+	Bank       string  `json:"bank"`
+	Number     int     `json:"number"`
+	Phantom    *bool   `json:"phantom,omitempty"`
 }
 
 // headampsJSON lists the headamps of the state with their description. A
@@ -77,7 +78,7 @@ func headampsJSON(st model.State, c model.Capabilities) []headampJSON {
 		if !ok {
 			continue
 		}
-		j := headampJSON{Index: h.Index, GainDB: h.GainDB, MinDB: info.MinDB, MaxDB: info.MaxDB, StepDB: info.StepDB,
+		j := headampJSON{Index: h.Index, GainDB: h.GainDB, MinDB: info.MinDB, MaxDB: info.MaxDB, WriteMaxDB: info.WriteMaxDB, StepDB: info.StepDB,
 			Writable: info.Writable, Bank: info.Bank.String(), Number: info.Number}
 		if h.HasPhantom {
 			on := h.Phantom

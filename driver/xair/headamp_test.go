@@ -34,7 +34,11 @@ func TestAux_LineLawRoundTrip(t *testing.T) {
 		hex uint32
 	}{{-12, 0x00000000}, {0, 0x3ec00000}, {19.5, 0x3f7c0000}, {20, 0x3f800000}} {
 		a, err := c.ToWire(level(t, pt.db))
-		if err != nil || math.Float32bits(a.Float) != pt.hex {
+		if pt.db == 20 { // the wire maximum is read, never written (re-review LOW D)
+			if !errors.Is(err, model.ErrInvalidValue) {
+				t.Errorf("+20 dB encodes: %08x, %v", math.Float32bits(a.Float), err)
+			}
+		} else if err != nil || math.Float32bits(a.Float) != pt.hex {
 			t.Errorf("%v dB -> %08x, %v (want %08x)", pt.db, math.Float32bits(a.Float), err, pt.hex)
 		}
 		v, err := c.FromWire(osc.Float(math.Float32frombits(pt.hex)))

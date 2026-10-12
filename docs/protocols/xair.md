@@ -308,6 +308,8 @@ Example: mic headamp 1 to 0 dB, `/headamp/01/gain ,f 0.16666667` =
 
 Consequence for CR-23: the core takes range and step from the headamp kind (mic -12..+60 dB, line/aux -12..+20 dB,
 both 0.5 dB), not from the family. A 6 dB bound is 12 steps on both laws; on a line input the whole range is 32 dB.
+mixcore never writes the wire maximum 1.0 until item 22 shows it is safe (XA-F116; lead decision 2026-10-12, re-review
+LOW D): the writable top is +59.5 dB on the mic law and +19.5 dB on the line law; reading 1.0 is +60 / +20 dB.
 
 ## 4. Value encodings
 

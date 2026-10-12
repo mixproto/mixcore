@@ -210,19 +210,22 @@ func fromWire(p param, a osc.Arg) (model.Value, error) {
 	}
 }
 
-// gainToWire converts Gain in dB to the wire float k/steps (XA section 4).
-// A value outside the range is an error, never clamped (phone-safety.md 5.1:
-// "Out of range: error, no clamp"). It rounds to the nearest console step,
-// except that only the range maximum itself encodes to the wire maximum
-// (AC-PS-20).
+// gainToWire converts Gain in dB to the wire float k/steps (X32-F71,
+// XA-F111, XA-F112). A value outside the range is an error, never clamped
+// (phone-safety.md 5.1: "Out of range: error, no clamp"). It rounds to the
+// nearest console step below the top. The wire maximum 1.0 is never
+// written: XS10 avoids it ("strange bug when setting 1") and whether it is
+// safe is unverified (XA-F116 item 22, X32-F72 item 17); it is also exactly
+// what a jump to the maximum would send (re-review LOW D). So the top of
+// the law (+60 mic, +20 line) is refused; reading 1.0 is fine.
 func gainToWire(p param, db float64) (float32, error) {
 	top := p.gainMin + float64(p.gainSteps)*p.gainStep
 	if math.IsNaN(db) || db < p.gainMin || db > top {
 		return 0, fmt.Errorf("gain %v dB outside %v..%v: %w", db, p.gainMin, top, model.ErrInvalidValue)
 	}
-	k := int(math.Round((db - p.gainMin) / p.gainStep))
-	if k == p.gainSteps && db < top {
-		k--
+	k := min(int(math.Round((db-p.gainMin)/p.gainStep)), p.gainSteps-1)
+	if db >= top {
+		return 0, fmt.Errorf("gain %v dB would write the wire maximum, unverified (XA-F116, X32-F72): %w", db, model.ErrInvalidValue)
 	}
 	return float32(float64(k) / float64(p.gainSteps)), nil
 }
