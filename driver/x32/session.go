@@ -34,9 +34,10 @@ type pendingWrite struct {
 }
 
 type sentWrite struct {
-	arg    osc.Arg
-	origin driver.Origin
-	at     time.Time
+	arg     osc.Arg
+	origin  driver.Origin
+	at      time.Time
+	changes bool // the value differed from the newest one seen (client-limit evidence)
 }
 
 // session is one live connection. Apply, SetMeters and Close may be called from
@@ -75,6 +76,8 @@ type session struct {
 	// wall-clock step cannot fake or hide a loss.
 	lastPong time.Time
 	live     liveness
+	lim      limitState
+	outbox   []driver.Event // events produced outside handleInbound, sent by Run
 	tx       []byte
 	msg      osc.Message
 	sent     map[int][]sentWrite
@@ -221,7 +224,27 @@ func (s *session) Run(ctx context.Context, events chan<- driver.Event) error {
 			s.sendSub(addrXremote) // X32-F20, X32-F27
 			s.requestMeters()
 		}
+		if !s.flushOutbox(ctx, events) {
+			return nil
+		}
 	}
+}
+
+// emit queues an event for Run to deliver after the current step.
+func (s *session) emit(ev driver.Event) { s.outbox = append(s.outbox, ev) }
+
+// flushOutbox delivers queued events; false when ctx ended meanwhile.
+func (s *session) flushOutbox(ctx context.Context, events chan<- driver.Event) bool {
+	for len(s.outbox) > 0 {
+		select {
+		case events <- s.outbox[0]:
+			s.outbox = s.outbox[1:]
+		case <-ctx.Done():
+			return false
+		}
+	}
+	s.outbox = s.outbox[:0]
+	return true
 }
 
 // sendSub sends an argument-less message on the subscription socket.
@@ -259,12 +282,22 @@ func (s *session) flushPending() {
 			continue
 		}
 		idx := s.params.index(w.param.ref)
-		s.rememberSent(idx, sentWrite{arg: w.arg, origin: w.origin, at: now})
+		s.rememberSent(idx, sentWrite{arg: w.arg, origin: w.origin, at: now, changes: s.changesKnown(idx, w)})
 		s.markTouched(idx)
 		if s.audit != nil {
 			s.audit(driver.WriteRecord{Param: w.param.ref, Address: w.param.addr, Origin: w.origin, At: now})
 		}
 	}
+}
+
+// changesKnown reports whether w sets a value other than the newest one we
+// wrote (still in the echo history) or, without one, the newest one seen.
+func (s *session) changesKnown(idx int, w pendingWrite) bool {
+	if h := s.sent[idx]; len(h) > 0 {
+		return !sameWire(h[len(h)-1].arg, w.arg)
+	}
+	v, err := fromWire(w.param, w.arg)
+	return err != nil || idx >= len(s.known) || !s.known[idx].Equal(v)
 }
 
 func (s *session) rememberSent(idx int, w sentWrite) {
@@ -318,6 +351,7 @@ func (s *session) decodeChange(p inPacket) (driver.ParamChanged, bool) {
 	}
 	s.markTouched(idx)
 	s.remember(idx, v)
+	s.onPush() // a push (or our echo) on the /xremote socket: we are served
 	origin := s.matchEcho(idx, arg, p.at)
 	return driver.ParamChanged{Param: par.ref, Value: v, Origin: origin, At: p.at}, true
 }

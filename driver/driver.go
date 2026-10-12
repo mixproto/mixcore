@@ -201,12 +201,26 @@ type StateReplaced struct {
 	Reason string
 }
 
-// ClientLimitHit means the console accepts us but will not push updates.
-type ClientLimitHit struct{ Limit int }
+// Reasons of ClientLimitHit.
+const (
+	LimitNoEcho          = "noEchoOfOwnWrites"          // our writes got no echo while the console answered
+	LimitUnpushedChanges = "rereadFoundUnpushedChanges" // re-reads found changes that were never pushed
+)
 
-func (ParamChanged) isEvent()   {}
-func (StateReplaced) isEvent()  {}
-func (ClientLimitHit) isEvent() {}
+// ClientLimitHit means the console accepts us but does not push updates to
+// us: its client slots are full. Values may be stale until ClientLimitCleared.
+type ClientLimitHit struct {
+	Limit  int
+	Reason string // LimitNoEcho or LimitUnpushedChanges
+}
+
+// ClientLimitCleared means updates arrive again after a ClientLimitHit.
+type ClientLimitCleared struct{}
+
+func (ParamChanged) isEvent()       {}
+func (StateReplaced) isEvent()      {}
+func (ClientLimitHit) isEvent()     {}
+func (ClientLimitCleared) isEvent() {}
 
 // Sentinel errors. Compare with errors.Is.
 var (

@@ -42,6 +42,17 @@
       "type": "integer",
       "description": "v0.1. Present only while status is stale: when the connection was lost, as Unix time in milliseconds (wall clock of this device). The UI counts up from it ('Reconnecting 0:07'). It does not move while reconnect attempts fail; it disappears when the status leaves stale."
     },
+    "limited": {
+      "type": "boolean",
+      "description": "v0.1. True while the console accepts this engine but does not send it updates because its remote client slots are full (design SR-17, CR-10; x32: four push clients). Values may be stale and are shown as such; Apply returns ERR_STALE and every hold is cancelled (holdCancelled, reason limited) although status stays live. It clears by itself as soon as an update arrives; a Pause and Resume retries. There is no polling fallback (CR-15 is unverified). Absent means false."
+    },
+    "limitedReason": {
+      "enum": [
+        "noEchoOfOwnWrites",
+        "rereadFoundUnpushedChanges"
+      ],
+      "description": "v0.1. Present with limited: the evidence. noEchoOfOwnWrites: three writes that changed a value got no confirmation while the console answered. rereadFoundUnpushedChanges: two background re-reads in a row found values that changed without an update."
+    },
     "offline": {
       "type": "boolean",
       "description": "v0.1. True once status has been stale for 30 s (design 8.1 'Offline', a stronger label only: the core keeps retrying at the same pace). Absent means false."
@@ -165,7 +176,7 @@
               "clientId",
               "reason"
             ],
-            "description": "The hold was cancelled because the console went stale or the engine was stopped/paused. No write resumes when the status returns to live: the UI must send a new holdBegin.",
+            "description": "The hold was cancelled because the console went stale, the engine was stopped/paused or (v0.1) the console stopped sending updates (limited). No write resumes when the status returns to live: the UI must send a new holdBegin.",
             "properties": {
               "type": {
                 "const": "holdCancelled"
@@ -179,8 +190,10 @@
               "reason": {
                 "enum": [
                   "stale",
-                  "stopped"
-                ]
+                  "stopped",
+                  "limited"
+                ],
+                "description": "limited is v0.1."
               }
             }
           }

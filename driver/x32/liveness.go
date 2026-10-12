@@ -41,6 +41,7 @@ func (s *session) onTick(now time.Time) error {
 		s.sendSub(addrXinfo) // a read, never a write
 		s.live.lastProbe = now
 	}
+	s.expireUnechoed(now)
 	if now.Sub(s.live.lastStep) >= s.timing.PingEvery {
 		s.live.lastStep = now
 		s.rereadStep(now)

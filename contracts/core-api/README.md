@@ -11,6 +11,7 @@ working unchanged. What v0.1 adds:
 | Area | Addition | Design ref |
 |---|---|---|
 | Connection | `staleSinceMs` and `offline` in every state message; stale after 1.5 s without any packet from the console | SR-05, CR-06, 8.1 |
+| Client limit | `limited` and `limitedReason`: the console does not send this engine updates (slots full); input locked, holds cancelled with reason `limited` | SR-17, CR-10 |
 
 ## Calls
 
@@ -48,8 +49,8 @@ working unchanged. What v0.1 adds:
 ## Safety rules the API enforces (apps do not need to re-implement them)
 1. `Start` and `Resume` read the console; they never write.
 2. `Apply` accepts only origin kinds `gesture` and `macro`. `console`/`system` give `ERR_NOT_USER_ORIGIN`.
-3. While the status is not `live`, `Apply` returns `ERR_STALE`. Nothing is queued, so nothing is replayed after a
-   reconnect. The UI shows stale values dimmed and locks input.
+3. While the status is not `live`, or the state says `limited` (v0.1), `Apply` returns `ERR_STALE` and `holdBegin` is
+   refused. Nothing is queued, so nothing is replayed after a reconnect. The UI shows stale values dimmed and locks input.
 4. Held faders (`holdBegin` .. `holdEnd`): the UI draws the finger position while held. If the desk, a scene recall
    or another client changes that fader (anything except this client's own echo), the core at once publishes the
    console's value, ends the gesture and reports an `externalChangeOnHeld` event with the new value (UI: "Changed at
@@ -74,7 +75,7 @@ these codes (details go to the log, never to the user):
 | `ERR_INVALID_COMMAND` | command JSON malformed, wrong version, unknown type/field, value of the wrong type |
 | `ERR_INVALID_VALUE` | value outside what the console accepts (for x32: a name longer than 12 characters or not printable ASCII) |
 | `ERR_NOT_USER_ORIGIN` | origin kind is not `gesture` or `macro` |
-| `ERR_STALE` | not live: connecting, stale, paused or stopped |
+| `ERR_STALE` | not live: connecting, stale, limited (v0.1), paused or stopped |
 | `ERR_GESTURE_ENDED` | the hold this write belongs to was ended by an external change or cancelled by a connection loss; send `holdBegin` again |
 | `ERR_UNSUPPORTED` | the console has no such parameter, or hold on a non-fader field |
 | `ERR_NOT_STARTED` | call needs `Start` first |

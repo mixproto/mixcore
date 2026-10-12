@@ -17,7 +17,6 @@ package console
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"math/rand/v2"
 	"sync"
@@ -79,11 +78,15 @@ type Update struct {
 	Reason     string    // why the status last changed (empty when live)
 	StaleSince time.Time // when the status became stale; zero unless stale
 	Offline    bool      // stale for at least OfflineAfter
-	Identity   driver.Identity
-	State      model.State
-	Full       bool
-	Changes    []Change
-	Events     []HoldEvent
+	// Limited: live, but the console does not send us updates (client slots
+	// full). Input is locked like stale; LimitedReason says why we think so.
+	Limited       bool
+	LimitedReason string
+	Identity      driver.Identity
+	State         model.State
+	Full          bool
+	Changes       []Change
+	Events        []HoldEvent
 }
 
 // Config configures a Supervisor.
@@ -111,6 +114,7 @@ type Supervisor struct {
 	reason     string
 	staleSince time.Time
 	offline    bool
+	limited    string // reason while the console does not send us updates
 	offlineT   *time.Timer
 	ident      driver.Identity
 	state      model.State
@@ -230,7 +234,7 @@ func (s *Supervisor) Snapshot() Update {
 func (s *Supervisor) snapshotLocked() Update {
 	s.seq++
 	return Update{Seq: s.seq, Status: s.status, Reason: s.reason, StaleSince: s.staleSince, Offline: s.offline,
-		Identity: s.ident, State: s.state}
+		Limited: s.limited != "", LimitedReason: s.limited, Identity: s.ident, State: s.state}
 }
 
 func (s *Supervisor) signal() {
@@ -241,6 +245,7 @@ func (s *Supervisor) signal() {
 }
 
 func (s *Supervisor) setStatusLocked(st Status, reason string) {
+	s.limited = "" // every status change starts a new session's evidence
 	if st == StatusStale && s.status != StatusStale {
 		s.staleSince = time.Now()
 		s.offlineT = time.AfterFunc(OfflineAfter, s.markOffline)
@@ -413,8 +418,14 @@ func (s *Supervisor) handleEvent(ev driver.Event) {
 		s.full = true
 		s.signal()
 	case driver.ClientLimitHit:
-		s.cfg.Logger.Info("console: client limit hit, no updates", "limit", e.Limit)
-		s.reason = fmt.Sprintf("console client limit (%d) reached", e.Limit)
+		s.cfg.Logger.Info("console: client limit hit, no updates", "limit", e.Limit, "reason", e.Reason)
+		s.limited = e.Reason
+		s.holds.cancelAll(ReasonLimited)
+		s.full = true
+		s.signal()
+	case driver.ClientLimitCleared:
+		s.cfg.Logger.Info("console: updates arrive again")
+		s.limited = ""
 		s.full = true
 		s.signal()
 	}
@@ -446,10 +457,10 @@ func (s *Supervisor) Apply(cmd driver.Command) error {
 		return driver.ErrNotUserOrigin // rule 2
 	}
 	s.mu.Lock()
-	sess, status := s.sess, s.status
+	sess, status, limited := s.sess, s.status, s.limited != ""
 	ended := s.holds.isEnded(cmd.Param, cmd.Origin.ClientID)
 	s.mu.Unlock()
-	if status != StatusLive || sess == nil {
+	if status != StatusLive || sess == nil || limited {
 		return driver.ErrStale
 	}
 	if ended {

@@ -44,6 +44,7 @@ func (s *session) startReread(now time.Time) {
 		return
 	}
 	s.rr.active, s.rr.next = true, 0
+	s.passStarted()
 	s.rereadStep(now)
 }
 
@@ -54,6 +55,10 @@ func (s *session) startReread(now time.Time) {
 // the previous step arrived long ago on a LAN; late ones are dropped.
 func (s *session) rereadStep(now time.Time) {
 	clear(s.rr.asked)
+	if s.lim.evaluate { // the last batch had a whole step to answer
+		s.lim.evaluate = false
+		s.passFinished()
+	}
 	if !s.rr.active {
 		return
 	}
@@ -67,7 +72,7 @@ func (s *session) rereadStep(now time.Time) {
 		sent++
 	}
 	if s.rr.next >= len(s.params.all) {
-		s.rr.active = false
+		s.rr.active, s.lim.evaluate = false, true
 	}
 }
 
@@ -113,6 +118,7 @@ func (s *session) rereadReply(idx int, v model.Value, at time.Time) (driver.Para
 		return driver.ParamChanged{}, false
 	}
 	s.remember(idx, v)
+	s.lim.passFound = true // the push of this change never reached us
 	return driver.ParamChanged{Param: s.params.all[idx].ref, Value: v, Origin: driver.Origin{Kind: driver.OriginConsole}, At: at}, true
 }
 

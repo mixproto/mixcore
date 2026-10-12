@@ -18,7 +18,10 @@
 // runs over them, so reconnects never change our source ports (the console
 // counts each new port as a new client, X32-F28).
 //
-// Client limit: four /xremote clients (X32-F21). Subscriptions last 10 s and
+// Client limit: four /xremote clients (X32-F21). The console says nothing
+// when we are not served; three unechoed value-changing writes, or two
+// re-read passes with unpushed changes, raise ClientLimitHit; any push
+// clears it (ClientLimitCleared). Subscriptions last 10 s and
 // are renewed every Timing.RenewEvery. Liveness (X32-F25): any packet from the
 // console counts; after StaleAfter without one the session is lost. A quiet
 // console is probed with /xinfo after QuietProbeAfter, and one /xinfo per
