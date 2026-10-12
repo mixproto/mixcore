@@ -26,7 +26,7 @@
         "setSlipGuard",
         "setShowMode"
       ],
-      "description": "v0.3 adds: openWall (param, after a 300 ms rest at a slip-guard wall: the next upward move continues from the wall, CR-22; the core checks the 300 ms itself and keeps the state atWall before that); unlock and relock (param {strip: headamp, field: gain}: the UI measured the 1 s 'Hold to adjust' in show mode / the sheet closed, CR-24); setSlipGuard (value boolean: 'Stop faders every 6 dB' for this origin's clientId, SR-26); setShowMode (value boolean: show mode for this engine, SR-27). None of them writes to the console."
+      "description": "v0.3 adds: openWall (param, after a 300 ms rest at a slip-guard wall: the next upward move continues from the wall, CR-22; the core checks the 300 ms of stillness itself, candidates within 0.5 dB of fader travel, and keeps the state atWall before that); unlock and relock (param {strip: headamp, field: gain}: the UI measured the 1 s 'Hold to adjust' in show mode / the sheet closed, CR-24); setSlipGuard (value boolean: 'Stop faders every 6 dB' for this origin's clientId, SR-26); setShowMode (value boolean: show mode for this engine, SR-27). None of them writes to the console."
     },
     "param": {
       "$ref": "common.schema.json#/$defs/param"

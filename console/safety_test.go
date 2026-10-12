@@ -429,7 +429,7 @@ func TestSlipGuard_OpenWallNeedsTheRest(t *testing.T) {
 				t.Fatalf("open after %s: %s wall %v %v; must stay at the wall", wait, r.State, r.Window.WallUp, err)
 			}
 		}
-		_, _ = sup.Write(set(ch1Fader, lvl(t, 4), gesture)) // still at the wall: the rest keeps counting
+		_, _ = sup.Write(set(ch1Fader, lvl(t, 3.3), gesture)) // a tremble within the span: the rest keeps counting
 		time.Sleep(time.Millisecond)
 		if r, _ := sup.OpenWall(ch1Fader, gesture); r.State != StateFree || r.Window.WallUp != 6 {
 			t.Fatalf("open after 300 ms: %s wall %v", r.State, r.Window.WallUp)
@@ -517,6 +517,30 @@ func TestGain_FailedApplyIsNotInFlight(t *testing.T) {
 		r, err := sup.Write(set(gain3, lvl(t, 33.5), gesture))
 		if err != nil || !r.Written || len(drv.session(0).writes()) != 1 {
 			t.Fatalf("33.5 again: written %v, %v", r.Written, err)
+		}
+	})
+}
+
+// Re-review LOW C: the rest is stillness, not time at the wall. A UI that
+// keeps pushing the finger up past the wall (12.5 dB/s in the probe) never
+// opens it; once the finger stays within 0.5 dB of fader travel for 300 ms
+// it opens.
+func TestSlipGuard_RestMeansStillness(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, _ := startSafe(t, SafetyConfig{Client: ClientSafety{SlipGuard: true}}, safetyState(-6))
+		_, _ = sup.HoldWindow(ch1Fader, gesture, true)
+		finger := 0.0
+		for range 50 { // 400 ms at 12.5 dB/s, 0.1 dB per 8 ms frame, all past the wall
+			finger += 0.1
+			_, _ = sup.Write(set(ch1Fader, lvl(t, finger), gesture))
+			time.Sleep(8 * time.Millisecond)
+		}
+		if r, _ := sup.OpenWall(ch1Fader, gesture); r.State != StateAtWall || r.Window.WallUp != 0 {
+			t.Fatalf("a moving finger opened the wall: %s %v", r.State, r.Window.WallUp)
+		}
+		time.Sleep(300 * time.Millisecond) // now still
+		if r, _ := sup.OpenWall(ch1Fader, gesture); r.State != StateFree || r.Window.WallUp != 6 {
+			t.Fatalf("after 300 ms still: %s %v", r.State, r.Window.WallUp)
 		}
 	})
 }
