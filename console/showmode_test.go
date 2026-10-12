@@ -191,3 +191,32 @@ func TestShowMode_UndoGraceWithoutEcho(t *testing.T) {
 		}
 	})
 }
+
+// Review MEDIUM 3: a held fader that stands above its ceiling (headroom
+// lowered after the musician raised it) never goes down, holding still or
+// on a small upward move; the window ceiling is never below the start.
+func TestMonitorCeiling_HeldAboveTheCeilingNeverLowers(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, drv := startSafe(t, SafetyConfig{}, safetyState(2))
+		sup.SetClientSafety("mon-2", ClientSafety{Monitor: &MonitorCeiling{HeadroomDB: 10}})
+		drv.session(0).push <- driver.ParamChanged{Param: ch1Fader, Value: lvl(t, 9), Origin: musician} // its own echo
+		synctest.Wait()
+		sup.SetClientSafety("mon-2", ClientSafety{Monitor: &MonitorCeiling{HeadroomDB: 0}}) // ceiling 2 < value 9
+		r, _ := sup.HoldWindow(ch1Fader, musician, true)
+		if r.Window.Ceiling != 9 {
+			t.Fatalf("window ceiling %v, want the start 9", r.Window.Ceiling)
+		}
+		for _, cand := range []float64{9, 9.1, 10} {
+			r, err := sup.Write(set(ch1Fader, lvl(t, cand), musician))
+			if err != nil || dbIn(t, r) != 9 || r.Written {
+				t.Fatalf("candidate %v -> %v written %t (%v): a held value above the ceiling must stay", cand, dbIn(t, r), r.Written, err)
+			}
+		}
+		if n := len(drv.session(0).writes()); n != 0 {
+			t.Fatalf("%d writes", n)
+		}
+		if r, _ := sup.Write(set(ch1Fader, lvl(t, 7), musician)); dbIn(t, r) != 7 {
+			t.Fatal("moving down stays free")
+		}
+	})
+}

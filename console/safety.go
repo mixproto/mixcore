@@ -167,6 +167,7 @@ func (s *Supervisor) openWindowLocked(k holdKey) *window {
 			w.HasWall, w.WallUp, w.OpensByRest = true, slipWall(start), true
 		}
 		w.Ceiling, w.HasCeiling = s.safe.ceiling(k.param, k.client, start)
+		w.Ceiling = math.Max(w.Ceiling, start) // never lower a value to meet the ceiling (review MEDIUM 3)
 	}
 	s.safe.windows[k] = w
 	return w
