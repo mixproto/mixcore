@@ -75,12 +75,18 @@ type env struct {
 // newEnv runs a simulator and an engine on an in-memory network (call inside synctest).
 func newEnv(t *testing.T) *env {
 	t.Helper()
+	return newEnvWith(t, simx32.Options{Name: "FOH"})
+}
+
+// newEnvWith is newEnv with simulator options.
+func newEnvWith(t *testing.T, simOpts simx32.Options) *env {
+	t.Helper()
 	n := memnet.New()
 	pc, err := n.ListenPacket(consoleIP + ":10023")
 	if err != nil {
 		t.Fatal(err)
 	}
-	sim := simx32.New(simx32.Options{Name: "FOH"})
+	sim := simx32.New(simOpts)
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 	wg.Go(func() { _ = sim.Serve(ctx, pc) })

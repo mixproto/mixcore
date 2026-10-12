@@ -11,7 +11,7 @@ folder) or as a binary meter frame (`meter-frame.md`). v0 is unstable until the 
 | `NewEngine()` | | engine | no |
 | `Start(configJSON)` | `config.schema.json` | `session.schema.json` | **no**: returns at once; connecting happens in the background and is reported through the state listener |
 | `Stop()` | | | bounded: closes sockets and joins goroutines (milliseconds), no network wait |
-| `Pause()` | | | bounded like `Stop`. Ends subscriptions and meters (for app suspension). State stays, status becomes `stopped` |
+| `Pause()` | | | bounded like `Stop`. Ends subscriptions and meters (for app suspension). State stays, status becomes `stopped`. The sockets stay open until `Stop`, so a quick `Resume` is not a new client to the console |
 | `Resume()` | | | **no**: reconnects in the background and **re-reads the full state**. Never writes |
 | `SetStateListener(l)` | `StateListener` with `OnState(stateJSON string)` | | no. The next message is a full snapshot |
 | `RequestSnapshot()` | | | **no**: the next listener message is a full snapshot |

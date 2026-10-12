@@ -126,6 +126,29 @@ type Driver interface {
 	Connect(ctx context.Context, ep Endpoint, opts Options) (Session, error)
 }
 
+// LinkOpener is implemented by drivers whose sessions can share one
+// long-lived transport. Some consoles tell clients apart by source port and
+// keep a client slot for a while after its last packet (x32: X32-F28), so a
+// new socket per reconnect can fill the console's client table. A supervisor
+// opens one Link per engine session and reuses it for every reconnect.
+type LinkOpener interface {
+	OpenLink(ctx context.Context, ep Endpoint, opts Options) (Link, error)
+}
+
+// Link owns the sockets to one console. Sessions made by Connect run over
+// them one at a time; closing a session never closes the link.
+type Link interface {
+	// Connect identifies the console, subscribes and reads the full state,
+	// like Driver.Connect, over the link's sockets. A session still open on
+	// the link is closed first. It never writes a parameter.
+	Connect(ctx context.Context) (Session, error)
+	// Err is non-nil once a socket of the link failed; the link must then be
+	// closed and a new one opened.
+	Err() error
+	// Close closes the open session, if any, and the sockets. Idempotent.
+	Close() error
+}
+
 // Session is one live connection, owned by exactly one console.Supervisor.
 type Session interface {
 	Identity() Identity

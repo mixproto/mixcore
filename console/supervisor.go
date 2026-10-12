@@ -113,6 +113,11 @@ type Supervisor struct {
 	seq     uint64
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
+
+	// link is the long-lived transport of drivers that implement
+	// driver.LinkOpener. Only the run goroutine uses it; Stop closes it after
+	// joining that goroutine, Pause keeps it for the next Start.
+	link driver.Link
 }
 
 // New validates cfg and returns a stopped supervisor.
@@ -159,23 +164,33 @@ func (s *Supervisor) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop ends the connect loop and closes the session. Last values stay.
-func (s *Supervisor) Stop() {
+// Stop ends the connect loop, closes the session and the link. Last values stay.
+func (s *Supervisor) Stop() { s.halt(true) }
+
+// Pause ends the connect loop and closes the session like Stop, but keeps the
+// link: a Start soon after reuses the same sockets, so the console does not see
+// a new client (X32-F28). Last values stay; the status is stopped.
+func (s *Supervisor) Pause() { s.halt(false) }
+
+func (s *Supervisor) halt(closeLink bool) {
 	s.life.Lock()
 	defer s.life.Unlock()
 	s.mu.Lock()
 	cancel := s.cancel
 	s.cancel = nil
 	s.mu.Unlock()
-	if cancel == nil {
-		return
+	if cancel != nil {
+		cancel()
+		s.wg.Wait()
+		s.mu.Lock()
+		s.holds.cancelAll(StatusStopped.String())
+		s.setStatusLocked(StatusStopped, "stopped")
+		s.mu.Unlock()
 	}
-	cancel()
-	s.wg.Wait()
-	s.mu.Lock()
-	s.holds.cancelAll(StatusStopped.String())
-	s.setStatusLocked(StatusStopped, "stopped")
-	s.mu.Unlock()
+	if closeLink && s.link != nil {
+		_ = s.link.Close()
+		s.link = nil
+	}
 }
 
 // Notify is signalled (capacity 1) whenever Drain has something new.
@@ -244,7 +259,7 @@ func (s *Supervisor) run(ctx context.Context) {
 func (s *Supervisor) connectAndRun(ctx context.Context) (lived time.Duration, err error) {
 	defer safe.RecoverAsError(&err)
 	started := time.Now()
-	sess, err := s.cfg.Driver.Connect(ctx, s.cfg.Endpoint, s.cfg.Options)
+	sess, err := s.connect(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -254,6 +269,28 @@ func (s *Supervisor) connectAndRun(ctx context.Context) (lived time.Duration, er
 	s.cfg.Logger.Info("console: live", "endpoint", s.cfg.Endpoint.Host, "connect_ms", live.Sub(started).Milliseconds())
 	err = s.runSession(ctx, sess)
 	return time.Since(live), err
+}
+
+// connect makes one session: over the long-lived link when the driver has
+// one (opened on first use, reopened only after it broke), else directly.
+func (s *Supervisor) connect(ctx context.Context) (driver.Session, error) {
+	opener, ok := s.cfg.Driver.(driver.LinkOpener)
+	if !ok {
+		return s.cfg.Driver.Connect(ctx, s.cfg.Endpoint, s.cfg.Options)
+	}
+	if s.link != nil && s.link.Err() != nil {
+		s.cfg.Logger.Info("console: reopening sockets", "endpoint", s.cfg.Endpoint.Host, "err", s.link.Err())
+		_ = s.link.Close()
+		s.link = nil
+	}
+	if s.link == nil {
+		l, err := opener.OpenLink(ctx, s.cfg.Endpoint, s.cfg.Options)
+		if err != nil {
+			return nil, err
+		}
+		s.link = l
+	}
+	return s.link.Connect(ctx)
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) bool {

@@ -342,3 +342,58 @@ func TestQuantizeLevel(t *testing.T) {
 		t.Fatal("Class.String mismatch")
 	}
 }
+
+// X32-F28: a slot belongs to a source port. Under the documented model only
+// ports that sent /xremote hold one; a new port is a new client.
+func TestSim_SlotsBelongToSourcePorts(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := runSim(t, Options{})
+		reader := h.client("10.0.1.1")
+		reader.send("/ch/01/mix/fader")
+		sub := h.client("10.0.1.1")
+		sub.send("/xremote")
+		synctest.Wait()
+		if got := h.sim.Slots(); len(got) != 1 || !got[0].Xremote {
+			t.Fatalf("slots = %+v, want only the /xremote port", got)
+		}
+		again := h.client("10.0.1.1") // same host, new port: a second client
+		again.send("/xremote")
+		synctest.Wait()
+		if n := len(h.sim.Slots()); n != 2 || h.sim.MaxSlotsUsed() != 2 {
+			t.Fatalf("%d slots (max %d), want 2: a new port is a new client", n, h.sim.MaxSlotsUsed())
+		}
+		time.Sleep(DefaultSubscriptionTTL)
+		if n := len(h.sim.Slots()); n != 0 {
+			t.Fatalf("%d slots after the TTL, want 0", n)
+		}
+	})
+}
+
+// [UNVERIFIED] pessimistic variant: every sending port holds a slot, but only
+// /xremote ports get pushes; four readers starve a fifth /xremote client.
+func TestSim_SlotForAnySenderVariant(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := runSim(t, Options{SlotForAnySender: true})
+		for i := range DefaultMaxPushClients {
+			c := h.client("10.0.2." + string(rune('1'+i)))
+			c.send("/ch/01/mix/fader")
+			synctest.Wait()
+			c.drain()
+		}
+		late := h.client("10.0.2.9")
+		late.send("/xremote")
+		synctest.Wait()
+		if n := len(h.sim.Slots()); n != DefaultMaxPushClients {
+			t.Fatalf("%d slots, want %d readers", n, DefaultMaxPushClients)
+		}
+		if err := h.sim.SurfaceSet("/ch/02/mix/on", osc.Int(0)); err != nil {
+			t.Fatal(err)
+		}
+		if _, got := late.recv(time.Second); got {
+			t.Fatal("the fifth client must find no free slot")
+		}
+		if len(h.sim.Subscribers()) != 0 {
+			t.Fatal("readers hold slots but are not push clients")
+		}
+	})
+}

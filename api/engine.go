@@ -186,7 +186,7 @@ func (e *Engine) Pause() (err error) {
 	if err != nil {
 		return err
 	}
-	sup.Stop()
+	sup.Pause() // keeps the sockets, so a quick Resume is not a new client to the console
 	e.slot.Reset()
 	return nil
 }

@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mixproto/mixcore/driver"
@@ -40,6 +41,7 @@ type conn struct {
 	cmd       net.PacketConn // writes only (X32-F23)
 	inbound   chan inPacket
 	errs      chan error // reader failures other than a normal close
+	failed    atomic.Pointer[error]
 	done      chan struct{}
 	meters    *meterSink
 	wg        sync.WaitGroup
@@ -73,9 +75,29 @@ func (c *conn) fail(err error) {
 	if err == nil {
 		return
 	}
+	c.failed.CompareAndSwap(nil, &err)
 	select {
 	case c.errs <- err:
 	default:
+	}
+}
+
+// failure returns the first reader failure, or nil while both sockets work.
+func (c *conn) failure() error {
+	if p := c.failed.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
+// discardInbound drops packets queued for a session that has ended.
+func (c *conn) discardInbound() {
+	for {
+		select {
+		case <-c.inbound:
+		default:
+			return
+		}
 	}
 }
 

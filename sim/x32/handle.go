@@ -58,6 +58,9 @@ func (s *Sim) handlePacket(from netip.AddrPort, b []byte) {
 // dispatch handles one message. Callers hold s.mu.
 func (s *Sim) dispatch(now time.Time, from netip.AddrPort, m *osc.Message) []outgoing {
 	addr := string(m.Address)
+	if s.opts.SlotForAnySender && addr != addrXremote {
+		s.touchSlot(now, from, false)
+	}
 	switch addr {
 	case addrXinfo:
 		s.record(now, from, ClassRead, addr, osc.Arg{}, false)
@@ -125,22 +128,30 @@ func (s *Sim) reply(to netip.AddrPort, addr string, args ...osc.Arg) []outgoing 
 }
 
 // registerXremote adds or renews a push client (X32-F20, X32-F21).
-func (s *Sim) registerXremote(now time.Time, from netip.AddrPort) {
-	s.subs = slices.DeleteFunc(s.subs, func(sub subscriber) bool { return !now.Before(sub.expires) })
-	expires := now.Add(s.opts.SubscriptionTTL)
-	for i := range s.subs {
-		if s.subs[i].addr == from {
-			s.subs[i].expires = expires
-			return
+func (s *Sim) registerXremote(now time.Time, from netip.AddrPort) { s.touchSlot(now, from, true) }
+
+// touchSlot adds or renews the client-table entry of from (X32-F21, X32-F28).
+// xremote also (re)starts its push lifetime. A newcomer finds no free slot when
+// the table is full: it is ignored, or the oldest entry is evicted (option).
+func (s *Sim) touchSlot(now time.Time, from netip.AddrPort, xremote bool) {
+	s.subs = slices.DeleteFunc(s.subs, func(sub subscriber) bool { return !now.Before(sub.slotUntil) })
+	until := now.Add(s.opts.SubscriptionTTL)
+	i := slices.IndexFunc(s.subs, func(sub subscriber) bool { return sub.addr == from })
+	if i < 0 {
+		if len(s.subs) >= s.opts.MaxPushClients {
+			if !s.opts.EvictOldestWhenFull {
+				return // [UNVERIFIED] default: the newcomer gets no slot and no pushes
+			}
+			s.subs = s.subs[1:] // oldest registration first
 		}
+		s.subs = append(s.subs, subscriber{addr: from, since: now})
+		i = len(s.subs) - 1
+		s.maxSlots = max(s.maxSlots, len(s.subs))
 	}
-	if len(s.subs) >= s.opts.MaxPushClients {
-		if !s.opts.EvictOldestWhenFull {
-			return // [UNVERIFIED] default: the newcomer gets no pushes
-		}
-		s.subs = s.subs[1:] // oldest registration first
+	s.subs[i].slotUntil = until
+	if xremote {
+		s.subs[i].pushUntil = until
 	}
-	s.subs = append(s.subs, subscriber{addr: from, since: now, expires: expires})
 }
 
 // registerMeters starts or renews the input meter stream (X32-F50..F52).
@@ -173,7 +184,7 @@ func (s *Sim) pushLocked(now time.Time, addr string, v *value, sender netip.Addr
 	}
 	var out []outgoing
 	for _, sub := range s.subs {
-		if !now.Before(sub.expires) || (sub.addr == sender && !toSender) {
+		if !now.Before(sub.pushUntil) || (sub.addr == sender && !toSender) {
 			continue
 		}
 		out = append(out, outgoing{to: sub.addr, pkt: pkt})

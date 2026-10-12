@@ -45,8 +45,12 @@ type session struct {
 	timing Timing
 	params *paramTable
 	c      *conn
-	log    *slog.Logger
-	audit  func(driver.WriteRecord)
+	// ownLink is set when the session was made by Driver.Connect: closing the
+	// session then closes its sockets. Sessions of a supervisor's link leave
+	// the sockets open for the next session (X32-F28).
+	ownLink *link
+	log     *slog.Logger
+	audit   func(driver.WriteRecord)
 
 	ident    driver.Identity
 	snapshot model.State
@@ -55,6 +59,7 @@ type session struct {
 	order   []int                // pending parameter indexes, first-seen order
 	pending map[int]pendingWrite // latest value per parameter (coalesced)
 
+	done        chan struct{} // closed by Close
 	cmdReady    chan struct{}
 	meterReady  chan struct{}
 	rereadReady chan struct{}
@@ -81,7 +86,7 @@ var _ driver.Session = (*session)(nil)
 func newSession(d *Driver, c *conn, opts driver.Options) *session {
 	return &session{
 		timing: d.timing, params: &d.params, c: c, log: logger(opts), audit: opts.WriteAudit,
-		pending: map[int]pendingWrite{}, cmdReady: make(chan struct{}, 1), meterReady: make(chan struct{}, 1),
+		pending: map[int]pendingWrite{}, done: make(chan struct{}), cmdReady: make(chan struct{}, 1), meterReady: make(chan struct{}, 1),
 		rereadReady: make(chan struct{}, 1), tx: make([]byte, 0, rxBufSize), sent: map[int][]sentWrite{},
 		rr: rereadPass{asked: map[int]bool{}},
 	}
@@ -133,12 +138,18 @@ func (s *session) SetMeters(req driver.MeterRequest) error {
 	return nil
 }
 
-// Close stops the session; queued writes are dropped, never sent.
+// Close stops the session; queued writes are dropped, never sent. Meters stop
+// being published at once. The sockets stay open unless the session owns them.
 func (s *session) Close() error {
 	s.closeOnce.Do(func() {
 		s.stopped.Store(true)
-		s.c.close()
+		s.c.meters.enabled.Store(false)
+		close(s.done)
 		s.dropPending()
+		if l := s.ownLink; l != nil {
+			l.release(s) // Close of the link must not close s again
+			_ = l.Close()
+		}
 	})
 	return nil
 }
@@ -183,6 +194,8 @@ func (s *session) Run(ctx context.Context, events chan<- driver.Event) error {
 	for {
 		select {
 		case <-ctx.Done():
+			return nil
+		case <-s.done:
 			return nil
 		case <-s.c.done:
 			return nil

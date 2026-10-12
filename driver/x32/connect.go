@@ -55,6 +55,8 @@ func (s *session) next(ctx context.Context, wait time.Duration) (inPacket, bool,
 		return inPacket{}, false, fmt.Errorf("%w: %w", driver.ErrConnectionLost, err)
 	case <-t.C:
 		return inPacket{}, false, nil
+	case <-s.done:
+		return inPacket{}, false, driver.ErrClosed
 	case <-ctx.Done():
 		return inPacket{}, false, fmt.Errorf("%w: %w", errNoReply, context.Cause(ctx))
 	}

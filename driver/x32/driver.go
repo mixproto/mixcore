@@ -14,6 +14,10 @@
 // write (EchoesOwnWrites = true). Nothing in this package writes in response
 // to a received packet.
 //
+// Sockets: OpenLink opens both sockets once; every session of a supervisor
+// runs over them, so reconnects never change our source ports (the console
+// counts each new port as a new client, X32-F28).
+//
 // Client limit: four /xremote clients (X32-F21). Subscriptions last 10 s and
 // are renewed every Timing.RenewEvery. Liveness is the time of the last packet
 // received, kept fresh by an /xinfo poll (X32-F25). A scene recall arrives as
@@ -106,27 +110,21 @@ func capabilities() model.Capabilities {
 
 // Connect implements driver.Driver. It identifies the console with /xinfo,
 // registers /xremote and reads every parameter. It never writes a parameter.
+// The session owns its sockets and closes them on Close; a supervisor uses
+// OpenLink instead so that reconnects keep the same sockets (X32-F28).
 func (d *Driver) Connect(ctx context.Context, ep driver.Endpoint, opts driver.Options) (_ driver.Session, err error) {
 	defer safe.RecoverAsError(&err)
-	console, err := resolve(ep)
+	l, err := d.openLink(ctx, ep, opts)
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, d.timing.ConnectTimeout)
-	defer cancel()
-	c, err := openConn(ctx, console, opts)
+	sess, err := l.Connect(ctx)
 	if err != nil {
+		_ = l.Close()
 		return nil, err
 	}
-	s := newSession(d, c, opts)
-	defer func() {
-		if err != nil {
-			_ = s.Close() // also after a recovered panic
-		}
-	}()
-	if err := s.connect(ctx); err != nil {
-		return nil, fmt.Errorf("x32: connect %s: %w", console, err)
-	}
+	s := sess.(*session)
+	s.ownLink = l
 	return s, nil
 }
 
