@@ -350,3 +350,27 @@ func TestLive_FilterAfterDoubleDash(t *testing.T) {
 		t.Fatalf("tcpdump argv = %q, want the filter last, after --", args)
 	}
 }
+
+// Regression (go-reviewer L5): marks-file lines out of time order were
+// applied in file order, so an earlier mark landed after later traffic and
+// lost its candidates. Lines are sorted by time (stable for equal times).
+func TestRead_MarksFileOutOfOrder(t *testing.T) {
+	dir := t.TempDir()
+	lines := strings.SplitAfter(readFile(t, "../../internal/capture/decode/testdata/json-lines.txt"), "\n")
+	var chunks [][]byte
+	for _, l := range lines {
+		if l != "" {
+			chunks = append(chunks, []byte(l))
+		}
+	}
+	pcap := filepath.Join(dir, "ui.pcap")
+	writePcap(t, pcap, chunks)
+	writeFile(t, filepath.Join(dir, "marks.txt"), "+0.45 later\n+0.25 ch1 volume up\n")
+	out := filepath.Join(dir, "session")
+	if got, err := runCmd(t, "read", "-pcap", pcap, "-console", "192.168.1.62", "-marks", filepath.Join(dir, "marks.txt"), "-out", out); err != nil {
+		t.Fatalf("read: %v\n%s", err, got)
+	}
+	if marks := readFile(t, filepath.Join(out, "marks.csv")); !strings.Contains(marks, "1,ch1 volume up,line/ch1/volume,0.5,0.75,") {
+		t.Fatalf("marks.csv:\n%s", marks)
+	}
+}

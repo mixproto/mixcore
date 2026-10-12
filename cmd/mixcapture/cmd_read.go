@@ -13,6 +13,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -162,7 +163,8 @@ func apply(e *engine, a session.Record) {
 }
 
 // readMarksFile parses "+<seconds> <label>" (relative to the first packet)
-// or "<RFC 3339 time> <label>"; a label ":s <name>" is a snapshot.
+// or "<RFC 3339 time> <label>"; a label ":s <name>" is a snapshot. The
+// result is sorted by time.
 func readMarksFile(path string, first time.Time) ([]session.Record, error) {
 	f, err := os.Open(path) //nolint:gosec // G304: the operator names the marks file
 	if err != nil {
@@ -188,6 +190,9 @@ func readMarksFile(path string, first time.Time) ([]session.Record, error) {
 		}
 		out = append(out, rec)
 	}
+	// Replay applies annotations in time order; lines may be written in any
+	// order, and equal times keep their file order.
+	slices.SortStableFunc(out, func(a, b session.Record) int { return a.T.Compare(b.T) })
 	return out, sc.Err()
 }
 
