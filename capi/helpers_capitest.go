@@ -81,6 +81,20 @@ func testCall(f func(*C.char) C.int32_t, s string) int32 {
 }
 
 func testApply(cmd string) int32    { return testCall(MixApply, cmd) }
+
+// testGesture calls MixGesture with C memory and frees the result with MixFree.
+func testGesture(cmd string) (string, int32) {
+	c := C.CString(cmd)
+	defer C.free(unsafe.Pointer(c))
+	var out *C.char
+	var n C.int32_t
+	code := MixGesture(c, &out, &n)
+	if out == nil {
+		return "", int32(code)
+	}
+	defer MixFree(unsafe.Pointer(out))
+	return C.GoStringN(out, C.int(n)), int32(code)
+}
 func testDiscover(req string) int32 { return testCall(MixDiscover, req) }
 
 // testMeterFrame reads a frame into C memory of the given capacity.

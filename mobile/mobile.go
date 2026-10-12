@@ -45,6 +45,9 @@ const (
 	ErrRole           = api.CodeRole
 	ErrBusy           = api.CodeBusy
 	ErrNetwork        = api.CodeNetwork
+	ErrNeedsConfirm   = api.CodeNeedsConfirm // v0.3
+	ErrShowMode       = api.CodeShowMode     // v0.3
+	ErrGainBound      = api.CodeGainBound    // v0.3
 )
 
 // Log levels for SetLogSink and LogSink.Log.
@@ -132,6 +135,14 @@ func RequestSnapshot() (err error) {
 func Apply(commandJSON string) (err error) {
 	defer recoverErr(&err)
 	return engine.Apply(commandJSON)
+}
+
+// Gesture carries one command like Apply and returns what the core did
+// (contracts/core-api/gesture-result.schema.json, v0.3): the applied value,
+// the state for the haptic and the gesture window. Never blocks.
+func Gesture(commandJSON string) (result string, err error) {
+	defer recoverErr(&err)
+	return engine.Gesture(commandJSON)
 }
 
 // MeterFrame returns the newest meter frame (meter-frame.md).

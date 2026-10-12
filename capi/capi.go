@@ -41,6 +41,9 @@ typedef void (*MixLogCallback)(int32_t level, const uint8_t* line, int32_t lengt
 #define MIX_ERR_BUSY 12
 #define MIX_ERR_NETWORK 13
 #define MIX_ERR_INVALID_ARGUMENT 14
+#define MIX_ERR_NEEDS_CONFIRM 15
+#define MIX_ERR_SHOW_MODE 16
+#define MIX_ERR_GAIN_BOUND 17
 
 // Log levels (log/slog values).
 #define MIX_LOG_DEBUG (-4)
@@ -76,6 +79,9 @@ var codeNumbers = map[string]int32{
 	api.CodeBusy:           C.MIX_ERR_BUSY,
 	api.CodeNetwork:        C.MIX_ERR_NETWORK,
 	api.CodeInvalidArg:     C.MIX_ERR_INVALID_ARGUMENT,
+	api.CodeNeedsConfirm:   C.MIX_ERR_NEEDS_CONFIRM,
+	api.CodeShowMode:       C.MIX_ERR_SHOW_MODE,
+	api.CodeGainBound:      C.MIX_ERR_GAIN_BOUND,
 }
 
 // engine is the one engine of the process (the Go runtime is never unloaded).
@@ -143,6 +149,26 @@ func MixApply(commandJSON *C.char) (code C.int32_t) {
 		return C.MIX_ERR_INVALID_ARGUMENT
 	}
 	return codeFor(engine.Apply(C.GoString(commandJSON)))
+}
+
+// MixGesture carries one command like MixApply and writes what the core did
+// (gesture-result.schema.json, v0.3) to *outJSON / *outLen on MIX_OK; free
+// it with MixFree.
+//
+//export MixGesture
+func MixGesture(commandJSON *C.char, outJSON **C.char, outLen *C.int32_t) (code C.int32_t) {
+	defer recoverCode(&code)
+	if commandJSON == nil || outJSON == nil || outLen == nil {
+		return C.MIX_ERR_INVALID_ARGUMENT
+	}
+	*outJSON, *outLen = nil, 0
+	res, err := engine.Gesture(C.GoString(commandJSON))
+	if err != nil {
+		return codeFor(err)
+	}
+	*outJSON = C.CString(res)
+	*outLen = C.int32_t(len(res))
+	return C.MIX_OK
 }
 
 // MixMeterFrame copies the newest meter frame (meter-frame.md) into the
