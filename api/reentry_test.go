@@ -152,3 +152,64 @@ func TestOnState_RacingStartStopNeverOverlap(t *testing.T) {
 		t.Fatalf("%d OnState calls ran at the same time", w)
 	}
 }
+
+// Stop on one thread races Start of a demo session on another: the stopping
+// real console's final message is encoded after the demo session started,
+// and must still carry its own flag (no "demo").
+func TestDeliver_FinalMessageKeepsItsSessionsDemoFlag(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		eng, rec := newRealAndDemoEngine(t)
+		if _, err := eng.Start(configOK); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Second)
+		synctest.Wait()
+		out, err := eng.StartDemo(`{"version":0,"family":"x32"}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m demoMixerJSON
+		_ = decodeStrict(out, &m)
+		hit, release := make(chan struct{}), make(chan struct{})
+		hook := func() { hit <- struct{}{}; <-release }
+		eng.afterGenCheck.Store(&hook)
+		stopped := make(chan error, 1)
+		go func() { stopped <- eng.Stop() }()
+		<-hit // the real console's final delivery passed its generation check
+		eng.afterGenCheck.Store(nil)
+		if _, err := eng.Start(demoConfig(m)); err != nil {
+			t.Fatal(err)
+		}
+		close(release)
+		if err := <-stopped; err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Second)
+		synctest.Wait()
+		for _, raw := range rec.raw {
+			if strings.Contains(raw, `"status":"stopped"`) && strings.Contains(raw, `"demo"`) {
+				t.Fatalf("the real console's final message says demo: %s", raw)
+			}
+		}
+	})
+}
+
+// newRealAndDemoEngine runs a real console simulator at consoleIP and an
+// engine whose demo uses the same in-memory network (call inside synctest).
+func newRealAndDemoEngine(t *testing.T) (*Engine, *recorder) {
+	t.Helper()
+	n := memnet.New()
+	pc, err := n.ListenPacket(consoleIP + ":10023")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sim := simx32.New(simx32.Options{})
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	wg.Go(func() { _ = sim.Serve(ctx, pc) })
+	eng := NewEngineWith(Options{ListenPacket: n.Host("10.0.0.2"), DemoListenPacket: n.Host("127.0.0.1")})
+	rec := &recorder{}
+	eng.SetStateListener(rec)
+	t.Cleanup(func() { eng.Close(); cancel(); wg.Wait(); _ = pc.Close() })
+	return eng, rec
+}

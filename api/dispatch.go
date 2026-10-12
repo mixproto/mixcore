@@ -13,46 +13,58 @@ import (
 	"github.com/mixproto/mixcore/internal/safe"
 )
 
+// dispatchSession is what one session's dispatcher delivers for: its
+// supervisor, its generation and its own demo flag (never the engine's,
+// which a racing Start may already have changed).
+type dispatchSession struct {
+	sup  *console.Supervisor
+	gen  uint64
+	demo bool
+}
+
 // startDispatcher runs the single goroutine that calls the StateListener.
 // Callers hold e.mu.
-func (e *Engine) startDispatcher(sup *console.Supervisor) {
+func (e *Engine) startDispatcher(sup *console.Supervisor, isDemo bool) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup // this session's dispatcher only: stopping it never waits for the next session's
 	e.stopDisp = func() { cancel(); wg.Wait() }
 	e.wantFull.Store(true)
-	gen := e.dispGen.Add(1)
+	s := dispatchSession{sup: sup, gen: e.dispGen.Add(1), demo: isDemo}
 	onPanic := func(err error) { e.opts.Logger.Error("api: state listener panicked", "err", err) }
-	safe.Go(&wg, onPanic, func() { e.dispatch(ctx, sup, gen) })
+	safe.Go(&wg, onPanic, func() { e.dispatch(ctx, s) })
 }
 
 // dispatch delivers supervisor updates as JSON. A slow listener only delays
 // this goroutine; the supervisor coalesces meanwhile. The final state after
 // Stop is delivered before the goroutine ends, unless a newer session
 // already owns the listener (Stop and Start racing on two threads).
-func (e *Engine) dispatch(ctx context.Context, sup *console.Supervisor, gen uint64) {
+func (e *Engine) dispatch(ctx context.Context, s dispatchSession) {
 	var seq uint64
 	for {
 		select {
 		case <-ctx.Done():
-			e.deliver(sup, &seq, gen)
+			e.deliver(s, &seq)
 			return
-		case <-sup.Notify():
+		case <-s.sup.Notify():
 		case <-e.kick:
 		}
-		e.deliver(sup, &seq, gen)
+		e.deliver(s, &seq)
 	}
 }
 
 // deliver runs under deliverMu: a stopping session's dispatcher and the next
 // session's never call OnState at the same time, and only the newest
 // session (gen) reaches the listener.
-func (e *Engine) deliver(sup *console.Supervisor, seq *uint64, gen uint64) {
+func (e *Engine) deliver(s dispatchSession, seq *uint64) {
 	e.deliverMu.Lock()
 	defer e.deliverMu.Unlock()
-	if gen != e.dispGen.Load() {
+	if s.gen != e.dispGen.Load() {
 		return
 	}
-	u := sup.Drain()
+	if hook := e.afterGenCheck.Load(); hook != nil {
+		(*hook)()
+	}
+	u := s.sup.Drain()
 	full := u.Full || e.wantFull.Swap(false)
 	safetyMoved := e.safetyChanged(u)
 	if !full && len(u.Changes) == 0 && len(u.Effective) == 0 && len(u.Events) == 0 && len(u.Scenes) == 0 &&
@@ -65,7 +77,7 @@ func (e *Engine) deliver(sup *console.Supervisor, seq *uint64, gen uint64) {
 		return
 	}
 	*seq++
-	b, err := encodeUpdate(u, *seq, full, e.demo.session.Load())
+	b, err := encodeUpdate(u, *seq, full, s.demo)
 	if err != nil {
 		e.opts.Logger.Error("api: encode state", "err", err)
 		return

@@ -83,6 +83,9 @@ type Engine struct {
 	// is the generation of the newest session's dispatcher.
 	deliverMu sync.Mutex
 	dispGen   atomic.Uint64
+	// afterGenCheck is a test hook run in deliver after the generation
+	// check; nil in production.
+	afterGenCheck atomic.Pointer[func()]
 	// lastSafety is the show mode and unlock list of the last message
 	// (guarded by deliverMu).
 	lastSafety string
@@ -159,7 +162,7 @@ func (e *Engine) Start(configJSON string) (out string, err error) {
 	e.law.Store(&lawBox{law: drv.FaderLaw()})
 	e.sup, e.cfg = sup, cfg
 	e.demo.session.Store(isDemo)
-	e.startDispatcher(sup)
+	e.startDispatcher(sup, isDemo)
 	if err := sup.Start(context.Background()); err != nil {
 		e.stopDisp()
 		e.sup, e.stopDisp = nil, nil

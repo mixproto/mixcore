@@ -31,7 +31,8 @@ type demoSlot struct {
 	// still must not list it.
 	used []netip.AddrPort
 	// session: the current (or last) session targets the demo. Written by
-	// Start under e.mu, read by the dispatcher for the demo flag.
+	// Start and read by StopDemo, both under e.mu. Each dispatcher keeps its
+	// own copy (dispatchSession.demo) for the state messages.
 	session atomic.Bool
 }
 
