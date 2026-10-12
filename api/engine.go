@@ -78,8 +78,7 @@ type Engine struct {
 	mu       sync.Mutex
 	sup      *console.Supervisor
 	cfg      configJSON
-	stopDisp context.CancelFunc
-	dispWG   sync.WaitGroup
+	stopDisp func() // cancels the session's dispatcher and waits for it
 	// lastSafety is the show mode and unlock list of the last message
 	// (dispatcher goroutine only).
 	lastSafety string
@@ -159,7 +158,6 @@ func (e *Engine) Start(configJSON string) (out string, err error) {
 	e.startDispatcher(sup)
 	if err := sup.Start(context.Background()); err != nil {
 		e.stopDisp()
-		e.dispWG.Wait()
 		e.sup, e.stopDisp = nil, nil
 		return "", err
 	}
@@ -183,28 +181,33 @@ func (e *Engine) Stop() (err error) {
 	if e.inOnState() {
 		return codeErr(CodeBusy, nil)
 	}
-	if !e.stopSession(false) {
+	e.mu.Lock()
+	sup, stopDisp := e.detachSessionLocked(false)
+	e.mu.Unlock()
+	if sup == nil {
 		return codeErr(CodeNotStarted, nil)
 	}
+	e.shutdown(sup, stopDisp)
 	return nil
 }
 
-// stopSession stops the session, if there is one (and, with onlyDemo, only
-// when it targets the demo mixer), and reports whether it stopped one.
-func (e *Engine) stopSession(onlyDemo bool) bool {
-	e.mu.Lock()
+// detachSessionLocked takes the session out of the engine (with onlyDemo,
+// only a session to the demo mixer) so that Start may run again; nil when
+// there is none. Callers hold e.mu and then call shutdown without it.
+func (e *Engine) detachSessionLocked(onlyDemo bool) (*console.Supervisor, func()) {
 	sup, stopDisp := e.sup, e.stopDisp
 	if sup == nil || (onlyDemo && !e.demo.session.Load()) {
-		e.mu.Unlock()
-		return false
+		return nil, nil
 	}
 	e.sup, e.stopDisp = nil, nil
-	e.mu.Unlock()
+	return sup, stopDisp
+}
+
+// shutdown stops a detached session and waits for its dispatcher.
+func (e *Engine) shutdown(sup *console.Supervisor, stopDisp func()) {
 	sup.Stop()
 	stopDisp()
-	e.dispWG.Wait()
 	e.slot.Reset()
-	return true
 }
 
 // Pause ends subscriptions and meters (app going to the background). The last

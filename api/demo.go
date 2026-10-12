@@ -109,11 +109,16 @@ func (e *Engine) StopDemo() (err error) {
 	if e.inOnState() {
 		return codeErr(CodeBusy, nil)
 	}
-	e.stopSession(true)
+	e.mu.Lock() // the order of Start: e.mu, then demo.mu
 	e.demo.mu.Lock()
 	m := e.demo.mixer
 	e.demo.mixer = nil
+	sup, stopDisp := e.detachSessionLocked(true)
 	e.demo.mu.Unlock()
+	e.mu.Unlock()
+	if sup != nil {
+		e.shutdown(sup, stopDisp)
+	}
 	if m == nil {
 		return codeErr(CodeNotStarted, nil)
 	}

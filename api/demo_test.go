@@ -429,3 +429,45 @@ func TestDemoSlot_RemembersABoundedSetOfEndpoints(t *testing.T) {
 		t.Fatalf("%d endpoints, oldest %v", len(d.used), d.used[0])
 	}
 }
+
+// StopDemo detaches the demo session and the demo together: a Start that
+// races it either fails (the demo session is still there) or starts a
+// session that is not marked demo (the demo is gone). Never a demo session
+// to a stopped demo.
+func TestDemo_StopDemoIsAtomicWithStart(t *testing.T) {
+	const trials = 50
+	eng := NewEngineWith(Options{DemoListenPacket: memnet.New().Host("127.0.0.1")})
+	defer eng.Close()
+	for trial := range trials {
+		out, err := eng.StartDemo(`{"version":0,"family":"xair"}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m demoMixerJSON
+		_ = decodeStrict(out, &m)
+		if _, err := eng.Start(demoConfig(m)); err != nil {
+			t.Fatal(err)
+		}
+		stopped := make(chan error, 1)
+		go func() { stopped <- eng.StopDemo() }()
+		for {
+			_, err := eng.Start(demoConfig(m))
+			if CodeOf(err) != CodeAlreadyStarted {
+				break
+			}
+			runtime.Gosched()
+		}
+		if err := <-stopped; err != nil {
+			t.Fatal(err)
+		}
+		eng.mu.Lock()
+		eng.demo.mu.Lock()
+		orphan := eng.sup != nil && eng.demo.session.Load() && eng.demo.mixer == nil
+		eng.demo.mu.Unlock()
+		eng.mu.Unlock()
+		if orphan {
+			t.Fatalf("trial %d: a session marked demo outlives StopDemo", trial)
+		}
+		_ = eng.Stop()
+	}
+}

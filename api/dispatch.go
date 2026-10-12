@@ -7,6 +7,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/mixproto/mixcore/console"
 	"github.com/mixproto/mixcore/internal/safe"
@@ -16,10 +17,11 @@ import (
 // Callers hold e.mu.
 func (e *Engine) startDispatcher(sup *console.Supervisor) {
 	ctx, cancel := context.WithCancel(context.Background())
-	e.stopDisp = cancel
+	var wg sync.WaitGroup // this session's dispatcher only: stopping it never waits for the next session's
+	e.stopDisp = func() { cancel(); wg.Wait() }
 	e.wantFull.Store(true)
 	onPanic := func(err error) { e.opts.Logger.Error("api: state listener panicked", "err", err) }
-	safe.Go(&e.dispWG, onPanic, func() { e.dispatch(ctx, sup) })
+	safe.Go(&wg, onPanic, func() { e.dispatch(ctx, sup) })
 }
 
 // dispatch delivers supervisor updates as JSON. A slow listener only delays
