@@ -5,9 +5,8 @@ mixcore is not affiliated with or endorsed by any console maker). **This file is
 lists only the facts that `cmd/mixcapture introspect -family yamaha-rcp` uses to ask a console for its own parameter
 table, read-only. A `driver/yamaharcp` needs a full document from the protocol researcher first.
 
-Facts have IDs `YR-Fnn`. Research date of the sources: 2026-10-11 (the private research note
-`docs/research/protocols/yamaha-roland-tascam-avid.md`, section 1a, of the Mixhand product repository). No hardware was
-available: **no captures**. Tags as in `xair.md`: `[VENDOR-DOC]`, `[PERMISSIVE-CODE <licence>]`, `[COMMUNITY]`,
+Facts have IDs `YR-Fnn`. Sources accessed 2026-10-11; every fact cites YS1-YS3 below. No hardware was available:
+**no captures**. Tags as in `xair.md`: `[VENDOR-DOC]`, `[PERMISSIVE-CODE <licence>]`, `[COMMUNITY]`,
 `[TO-VERIFY]`, `[CAPTURE]`.
 
 ## Sources

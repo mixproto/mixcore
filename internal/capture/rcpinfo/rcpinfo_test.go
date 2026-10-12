@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -171,4 +172,25 @@ func FuzzReplies(f *testing.F) {
 			}
 		}
 	})
+}
+
+// Regression (go-reviewer L8): the public protocol document this package
+// implements from must cite its public sources (YS1-YS3) only, never a path
+// in the private product repository.
+func TestProtocolDocCitesPublicSourcesOnly(t *testing.T) {
+	b, err := os.ReadFile("../../../docs/protocols/yamaha-rcp.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(b)
+	for _, private := range []string{"docs/research/", "dybyskz", "Mixhand", "private research"} {
+		if strings.Contains(doc, private) {
+			t.Errorf("docs/protocols/yamaha-rcp.md mentions %q", private)
+		}
+	}
+	for _, src := range []string{"**YS1**", "**YS2**", "**YS3**"} {
+		if !strings.Contains(doc, src) {
+			t.Errorf("source %s missing", src)
+		}
+	}
 }
