@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/session.schema.json",
-  "title": "mixcore core API v0.2: result of Start",
+  "title": "mixcore core API v0.3: result of Start",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "family", "endpoint", "faderLaw"],

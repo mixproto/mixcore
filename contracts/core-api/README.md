@@ -51,6 +51,8 @@ behave the same and a UI bug cannot bypass them:
 | Monitor ceilings | config `safety.monitorCeiling`: faders stop at the engineer's latest value + headroom, never below it; sends not modelled yet | CR-25, SR-28 |
 | Settings | config `safety.slipGuard` and command `setSlipGuard` per client (device class) | SR-26 |
 | Fixtures | `fixtures/gesture-paths.json`: the AC-PS touch paths as data for the core and every UI | CR-27 |
+| Demo mixer (additive) | `StartDemo`, `StopDemo` (`demo.schema.json`, `demo-mixer.schema.json`); `demo` in the session and every state message; section "Demo mixer" | design 6.3 |
+| Re-entry | `Stop`, `Pause`, `StopDemo` from inside `OnState` return `ERR_BUSY` (Threading) | review M2 |
 
 - **Small models**: an XR12 or XR16 that does not answer for an input strip connects with fewer input strips (XA-F72);
   the snapshot lists the missing ones in `absentInputs`. The UI takes the number of strips from the snapshot, never from
@@ -236,7 +238,7 @@ these codes (details go to the log, never to the user):
 
 Both bindings expose the calls above and nothing else; behaviour is identical because both only translate types.
 
-Both bindings are unchanged by v0.2: the family is a string inside the config JSON, the meter frame carries its own `n`. v0.3 adds one call, `Gesture`, and three error codes to both.
+Both bindings are unchanged by v0.2: the family is a string inside the config JSON, the meter frame carries its own `n`. v0.3 adds `Gesture`, `StartDemo` and `StopDemo`, and three error codes to both.
 
 **gomobile (`mobile/`, `make xcframework`, AAR by the Android build).** One package, one engine per process. Names:
 
