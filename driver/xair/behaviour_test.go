@@ -123,8 +123,10 @@ func burstScene(n int) map[string]osc.Arg {
 	return out
 }
 
-// XA section 7: confidence from the burst and the /-snap/index push, which
-// names the loaded snapshot. The driver never writes a /-snap/ address.
+// XA section 7: only a burst raises a recall. /-snap/index is "recently
+// loaded/saved" (XA-F60), so it is a hint that enriches a burst with
+// loadedScene and raises nothing alone (a save would otherwise look like a
+// load). The driver never writes a /-snap/ address.
 func TestSceneRecall_ConfidenceAndLoadedSnapshot(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -135,8 +137,9 @@ func TestSceneRecall_ConfidenceAndLoadedSnapshot(t *testing.T) {
 		loaded   int
 		noReport bool
 	}{
-		{"burst and index", true, 10, driver.ConfidenceHigh, []string{driver.SignalBurst, driver.SignalSnapshotIndex}, 12, false},
-		{"index alone", true, 2, driver.ConfidenceMedium, []string{driver.SignalSnapshotIndex}, 12, false},
+		{"burst and index", true, 10, driver.ConfidenceLow, []string{driver.SignalBurst, driver.SignalSnapshotIndex}, 12, false},
+		{"index with too few changes", true, 2, "", nil, 0, true},
+		{"index alone, nothing changed", true, 0, "", nil, 0, true},
 		{"burst alone (index not pushed)", false, 10, driver.ConfidenceLow, []string{driver.SignalBurst}, driver.NoScene, false},
 		{"neither", false, 2, "", nil, 0, true},
 	} {
@@ -173,6 +176,35 @@ func TestSceneRecall_ConfidenceAndLoadedSnapshot(t *testing.T) {
 			})
 		})
 	}
+}
+
+// A save from another app moves /-snap/index too (XA-F60): a lone push of
+// it, even a valid one, raises no recall.
+func TestSceneRecall_LoneSnapshotIndexIsOnlyAHint(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t, simxair.Options{})
+		sess := r.connect()
+		events, _ := r.run(sess)
+		for _, n := range []int32{3, 3, 64} {
+			if err := r.sim.InjectPush(addrSnapIndex, osc.Int(n)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if ev, ok := nextOf[driver.SceneRecalled](events, 3*time.Second); ok {
+			t.Fatalf("recall from a lone /-snap/index: %+v", ev)
+		}
+		// A burst long after the hint must not carry that old index.
+		if err := r.sim.StoreSnapshot(9, "", burstScene(10)); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.sim.LoadSnapshot(9); err != nil {
+			t.Fatal(err)
+		}
+		ev, ok := nextOf[driver.SceneRecalled](events, 2*time.Second)
+		if !ok || ev.LoadedScene != driver.NoScene || slices.Contains(ev.Signals, driver.SignalSnapshotIndex) {
+			t.Fatalf("burst after a stale hint: %+v, %v", ev, ok)
+		}
+	})
 }
 
 // A malformed /-snap/index push (out of 1..64) is dropped, never guessed.

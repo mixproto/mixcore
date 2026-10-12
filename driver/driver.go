@@ -226,7 +226,7 @@ const (
 	SignalBurst            = "burst"            // many parameters pushed within a short window
 	SignalUndoTime         = "undoTime"         // x32: the console's undo checkpoint changed
 	SignalHighlightedScene = "highlightedScene" // x32: the highlighted scene changed (a hint, never a signal alone)
-	SignalSnapshotIndex    = "snapshotIndex"    // xair: the console pushed its loaded snapshot number
+	SignalSnapshotIndex    = "snapshotIndex"    // xair: the console pushed its loaded-or-saved snapshot number (a hint)
 
 	NoScene = -1 // HighlightedScene or LoadedScene when the console did not report one
 )
@@ -238,7 +238,7 @@ type SceneRecalled struct {
 	Confidence       string
 	Signals          []string
 	HighlightedScene int // NoScene when unknown; never "the loaded scene"
-	LoadedScene      int // 1-based; NoScene or 0 when unknown. Set only by families whose marker names the loaded scene (xair)
+	LoadedScene      int // 1-based loaded-or-saved scene the console reported with the burst (xair /-snap/index); NoScene or 0 when unknown
 	At               time.Time
 }
 

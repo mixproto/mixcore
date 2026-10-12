@@ -216,7 +216,7 @@
               "confidence",
               "signals"
             ],
-            "description": "v0.1 (design SR-15, CR-03). The console has no scene-recall message (x32: X32-F60; xair: XA section 7), so the core infers it: a burst of at least 8 different parameters pushed within 250 ms, and pushes of the console's scene markers if it sends them (x32: /-undo/time, /-show/prepos/current; xair, v0.2: /-snap/index; whether either console does is unverified). Every held fader has ended (externalChangeOnHeld events in the same message) and the core re-reads the console in the background. Suggested UI text: 'Scene recalled at the mixer' (high or medium), or nothing beyond the per-fader messages (low). The core never loads, saves or deletes a scene or snapshot itself: there is no such command in this contract (xair slot 64 may hold another app's data, XA-F63).",
+            "description": "v0.1 (design SR-15, CR-03). The console has no scene-recall message (x32: X32-F60; xair: XA section 7), so the core infers it: a burst of at least 8 different parameters pushed within 250 ms, and pushes of the console's scene markers if it sends them (x32: /-undo/time, /-show/prepos/current; xair, v0.2: /-snap/index, a hint only; whether either console sends them is unverified). Every held fader has ended (externalChangeOnHeld events in the same message) and the core re-reads the console in the background. Suggested UI text: 'Scene recalled at the mixer' (high or medium), or nothing beyond the per-fader messages (low). The core never loads, saves or deletes a scene or snapshot itself: there is no such command in this contract (xair slot 64 may hold another app's data, XA-F63).",
             "properties": {
               "type": {
                 "const": "sceneRecalledAtConsole"
@@ -227,7 +227,7 @@
                   "medium",
                   "low"
                 ],
-                "description": "high: a burst and the console's marker (x32: the undo checkpoint /-undo/time; xair: /-snap/index); medium: the marker alone; low: a burst alone (another app changing many parameters at once looks the same). The x32 highlighted scene alone never raises the event."
+                "description": "high: a burst and the console's recall marker (x32: the undo checkpoint /-undo/time); medium: that marker alone; low: a burst alone (another app changing many parameters at once looks the same). Hints never raise the event and never raise the confidence: the x32 highlighted scene and the xair snapshot index (/-snap/index is 'recently loaded/saved', XA-F60, so a save moves it too). On xair every recall is low until hardware shows more (xair.md test item 13)."
               },
               "signals": {
                 "type": "array",
@@ -240,7 +240,7 @@
                   ]
                 },
                 "uniqueItems": true,
-                "description": "snapshotIndex is v0.2 (xair: the console pushed /-snap/index)."
+                "description": "snapshotIndex is v0.2 (xair: /-snap/index was pushed within 1 s of the burst; a hint, like highlightedScene)."
               },
               "highlightedScene": {
                 "type": "integer",
@@ -250,7 +250,7 @@
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 64,
-                "description": "v0.2, xair only. Present when the console pushed /-snap/index: the snapshot it reports as recently loaded (XA-F60, 1..64). Unlike highlightedScene this names the loaded snapshot. Show it as 'Snapshot 12 loaded at the mixer'."
+                "description": "v0.2, xair only. Present when the console pushed /-snap/index within 1 s of the burst that raised this event: the snapshot it reports as recently loaded or saved (XA-F60, 1..64). A lone /-snap/index push (for example after a save in another app) raises no event. Show it as a hint: 'Snapshot 12 at the mixer'."
               }
             }
           }

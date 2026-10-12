@@ -33,8 +33,9 @@ family (`docs/protocols/xair.md`); no call, binding signature or error code chan
 Per-family facts the apps need (no field carries them yet):
 - **Send on/off is absent on xair**: the console has no per-send on/off (XA section 3.3). Sends are not in this contract
   yet; when they are added, an xair send has no `on` field and the UI shows no send on/off button.
-- **Snapshots**: xair has 64 (`/-snap/index`, XA-F60). The core reads the loaded one only from the console's own push
-  (`loadedScene`); it never loads, saves, names or deletes a snapshot, and no command here can make it do so, so slot 64
+- **Snapshots**: xair has 64 (`/-snap/index`, XA-F60, "recently loaded/saved"). The core reports that index only from
+  the console's own push and only next to a burst of changed values (`loadedScene`; a lone push, e.g. after a save,
+  raises nothing); it never loads, saves, names or deletes a snapshot, and no command here can make it do so, so slot 64
   (another app's data, XA-F63) is never touched.
 - **Small models**: an XR12 or XR16 that does not answer for an input strip connects with fewer input strips (XA-F72);
   the UI takes the number of strips from the snapshot, never from the model name.

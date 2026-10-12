@@ -25,23 +25,25 @@ type MarkerKind uint8
 
 // Marker kinds.
 const (
-	// MarkerRecall is a signal of its own (x32 /-undo/time, X32-F62; xair
-	// /-snap/index, XA-F60..F62).
+	// MarkerRecall is a signal of its own (x32 /-undo/time, X32-F62).
 	MarkerRecall MarkerKind = iota + 1
 	// MarkerHighlight names the highlighted scene: a hint for a recall the
 	// other signals found, never a signal of its own (x32
 	// /-show/prepos/current, X32-F61).
 	MarkerHighlight
+	// MarkerIndexHint names the recently loaded or saved scene (xair
+	// /-snap/index, XA-F60): a save moves it too, so it is a hint that only
+	// enriches a recall the burst found (LoadedScene), never a signal alone.
+	MarkerIndexHint
 )
 
 // Marker is one scene marker address of a family.
 type Marker struct {
 	Addr   string
 	Kind   MarkerKind
-	Signal string // driver.Signal* reported for a MarkerRecall
-	// Loaded: the marker's int argument is the loaded scene, valid only in
-	// MinScene..MaxScene (xair, XA-F60); anything else is dropped, never guessed.
-	Loaded             bool
+	Signal string // driver.Signal* reported for a MarkerRecall or MarkerIndexHint
+	// MinScene..MaxScene: the valid int argument of a MarkerIndexHint (xair:
+	// 1..64, XA-F60); anything else is dropped, never guessed.
 	MinScene, MaxScene int32
 }
 
@@ -60,7 +62,9 @@ type sceneState struct {
 	marker      string // signal of the recall marker pushed, empty for none
 	scene       int    // highlighted scene pushed, or driver.NoScene
 	sceneAt     time.Time
-	loaded      int // loaded scene pushed, or driver.NoScene
+	loaded      int // loaded-or-saved scene pushed (index hint), or driver.NoScene
+	loadedAt    time.Time
+	loadedSig   string // signal of the index hint
 }
 
 func newSceneState() sceneState {
@@ -90,24 +94,22 @@ func (s *session) onMarker(at time.Time) bool {
 		return false
 	}
 	mk := s.prof.Markers[i]
-	if mk.Kind == MarkerHighlight {
+	switch mk.Kind {
+	case MarkerHighlight:
 		if v, ok := s.msg.IntArg(0); ok {
 			s.scene.scene, s.scene.sceneAt = int(v), at
 		}
 		s.onPush()
-		return true
-	}
-	if mk.Loaded {
-		v, ok := s.msg.IntArg(0)
-		if !ok || v < mk.MinScene || v > mk.MaxScene {
-			s.onPush() // a push all the same: we are served
-			return true
+	case MarkerIndexHint:
+		if v, ok := s.msg.IntArg(0); ok && v >= mk.MinScene && v <= mk.MaxScene {
+			s.scene.loaded, s.scene.loadedAt, s.scene.loadedSig = int(v), at, mk.Signal
 		}
-		s.scene.loaded = int(v)
+		s.onPush() // a push all the same: we are served
+	default:
+		s.scene.marker = mk.Signal
+		s.onPush()
+		s.sceneSignal(at)
 	}
-	s.scene.marker = mk.Signal
-	s.onPush()
-	s.sceneSignal(at)
 	return true
 }
 
@@ -116,6 +118,9 @@ func (s *session) sceneSignal(at time.Time) {
 		s.scene.open, s.scene.first = true, at
 		if at.Sub(s.scene.sceneAt) > sceneMaxWindow {
 			s.scene.scene = driver.NoScene // a highlight from browsing long before
+		}
+		if at.Sub(s.scene.loadedAt) > sceneMaxWindow {
+			s.scene.loaded = driver.NoScene // an index from a save or load long before
 		}
 	}
 	s.scene.last = at
@@ -157,6 +162,9 @@ func sceneSignals(sc *sceneState) []string {
 	}
 	if sc.scene != driver.NoScene {
 		out = append(out, driver.SignalHighlightedScene)
+	}
+	if sc.loaded != driver.NoScene {
+		out = append(out, sc.loadedSig)
 	}
 	return out
 }

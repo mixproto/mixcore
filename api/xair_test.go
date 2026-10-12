@@ -172,7 +172,7 @@ func TestXAir_SceneRecallEvent(t *testing.T) {
 		e.rec.mu.Lock()
 		joined := strings.Join(e.rec.raw, "\n")
 		e.rec.mu.Unlock()
-		want := `{"type":"sceneRecalledAtConsole","confidence":"high","signals":["burst","snapshotIndex"],"loadedScene":7}`
+		want := `{"type":"sceneRecalledAtConsole","confidence":"low","signals":["burst","snapshotIndex"],"loadedScene":7}` // the index only enriches the burst (XA-F60)
 		if !strings.Contains(joined, want) {
 			t.Fatalf("no %s in\n%s", want, joined)
 		}
@@ -226,4 +226,36 @@ func TestClassify_PortAndModel(t *testing.T) {
 			t.Errorf("port %d model %q: %q, want %q", tc.port, tc.model, got, tc.want)
 		}
 	}
+}
+
+// A lone /-snap/index push (another app saved a snapshot, XA-F60) raises no
+// sceneRecalledAtConsole and does not end a held fader.
+func TestXAir_LoneSnapshotIndexEndsNoHold(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		e := newXAirEnv(t, simxair.Options{PushSnapIndex: true})
+		if err := e.sim.StoreSnapshot(4, "Empty", map[string]osc.Arg{}); err != nil {
+			t.Fatal(err)
+		}
+		e.startLive(t)
+		hold := `{"version":0,"type":"holdBegin","param":{"strip":{"kind":"input","index":1},"field":"fader"},"origin":{"kind":"gesture","clientId":"ui"}}`
+		if err := e.eng.Apply(hold); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.sim.LoadSnapshot(4); err != nil { // nothing changes; only /-snap/index is pushed
+			t.Fatal(err)
+		}
+		_ = e.sim.InjectPush("/-snap/index", osc.Int(7)) // as after a save in X AIR Edit
+		time.Sleep(2 * time.Second)
+		synctest.Wait()
+		e.rec.mu.Lock()
+		joined := strings.Join(e.rec.raw, "\n")
+		e.rec.mu.Unlock()
+		if strings.Contains(joined, "sceneRecalledAtConsole") || strings.Contains(joined, "externalChangeOnHeld") {
+			t.Fatalf("a lone index push raised a recall or ended the hold:\n%s", joined)
+		}
+		set := `{"version":0,"type":"set","param":{"strip":{"kind":"input","index":1},"field":"fader"},"value":-5,"origin":{"kind":"gesture","clientId":"ui"}}`
+		if err := e.eng.Apply(set); err != nil {
+			t.Fatalf("the hold must still be active: %v", err)
+		}
+	})
 }

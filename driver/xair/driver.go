@@ -30,10 +30,12 @@
 //     model that does not answer them connects with fewer inputs (XA-F72).
 //   - Meters: one bank, /meters/1, int16 LE in 1/256 dB; frame = 16 inputs
 //     then Main L/R from values 36/37 (XA-F51..F53).
-//   - Scene recall: no dedicated message; a burst of pushes and, if the mixer
-//     pushes it, /-snap/index (which names the loaded snapshot, XA-F60..F62)
-//     raise SceneRecalled. The driver never reads or writes any other
-//     /-snap/ address, so snapshot 64 is never touched (XA-F63).
+//   - Scene recall: no dedicated message; a burst of pushes raises
+//     SceneRecalled (low). /-snap/index names the recently loaded or saved
+//     snapshot (XA-F60..F62): a save moves it too, so it never raises a
+//     recall alone and only adds LoadedScene to a burst within 1 s. The
+//     driver never reads or writes any other /-snap/ address, so snapshot 64
+//     is never touched (XA-F63).
 package xair
 
 import (
@@ -86,8 +88,9 @@ var profile = xosc.Profile{
 	},
 	Meters: meterCodec{},
 	Markers: []xosc.Marker{{
-		Addr: addrSnapIndex, Kind: xosc.MarkerRecall, Signal: driver.SignalSnapshotIndex,
-		Loaded: true, MinScene: 1, MaxScene: snapshots, // XA-F60: names the loaded snapshot, 1..64
+		// XA-F60: "recently loaded/saved", 1..64: a hint, never a recall alone.
+		Addr: addrSnapIndex, Kind: xosc.MarkerIndexHint, Signal: driver.SignalSnapshotIndex,
+		MinScene: 1, MaxScene: snapshots,
 	}},
 	BadEndpoint: ErrBadEndpoint,
 }

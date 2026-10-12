@@ -366,11 +366,14 @@ markers do not exist in any X Air source.
 | XA-F62 | Whether `/-snap/index` is **pushed** to subscribers after a load by another client is not documented. Companion reads it once at connect and also handles an unsolicited `/-snap/index` message. Test item 13. | XS5 `index.js` (`firstPoll`, handler for `/-snap/index`) `[PERMISSIVE-CODE MIT]`; `[TO-VERIFY]` |
 | XA-F63 | Mixing Station stores its bus-protection password, unencrypted, in snapshot 64; official apps ignore it; deleting slot 64 resets it. mixcore must never save into or delete slot 64 as a side effect, and should show slot 64's name as is. | XS16 `[COMMUNITY]` |
 
-mixcore's recall heuristic for X Air (design): signals are (a) a burst, at least 8 different parameters pushed from
-other clients within 250 ms (the X32 rule, which needs no marker), and (b) a push of `/-snap/index`, if test item 13
-shows it is pushed. Confidence `high` for both, `medium` for (b) alone, `low` for (a) alone. Unlike X32, a pushed
-`/-snap/index` names the loaded snapshot (XA-F60), so `SceneRecalled` may carry it as the loaded scene, not only as a
-highlighted one. Because no X Air has a surface (XA-F74), "external change" always means another app, MIDI or a load.
+mixcore's recall heuristic for X Air (design): the only signal is (a) a burst, at least 8 different parameters pushed
+from other clients within 250 ms (the X32 rule, which needs no marker), so every X Air recall has confidence `low`.
+(b) A push of `/-snap/index` (if test item 13 shows it is pushed) is only a hint, like the X32 highlighted scene: the
+index is "recently loaded/saved" (XA-F60), so a save from X AIR Edit moves it as well. It never raises a recall alone
+(a recall ends every held fader, SR-15, and the UI would announce a load that did not happen) and never raises the
+confidence; within 1 s of a burst it is attached as `LoadedScene` ("loaded or saved") with signal `snapshotIndex`.
+Because no X Air has a surface (XA-F74), "external change" always means another app, MIDI or a load. If test item 13
+shows that a save does not move the pushed index, it can become a signal of its own.
 
 ## 8. Wi-Fi, network modes and limits
 | ID | Fact | Source |
@@ -417,7 +420,7 @@ when the mixer reports `192.168.1.1` (XA-F81) and 4 seats are used.
 | Sockets of a session | Same rules; one extra open question (XA-F15). |
 | Client limit detection | Same evidence model, limit 8, plus `/status` if it signals standby. |
 | Parameters (X32-F30..F39) | Same leaf names and polarities; 16 inputs, `/lr`, 4 mute groups, 4 DCAs, 4-bit bitmaps, **no `/lr/grp/mute`** (section 3). |
-| Scene recall (X32-F60..F62) | `/-snap/index` names the loaded snapshot; no `/-show` or `/-undo` markers; no surface (section 7). |
+| Scene recall (X32-F60..F62) | `/-snap/index` names the recently loaded or saved snapshot (a hint); no `/-show` or `/-undo` markers; no surface (section 7). |
 | Fader law (X32-F40..F43) | **Same law** and 1024 steps; sends 161 steps (XA-F40..F42). |
 | Meters (X32-F50..F55) | **int16 1/256 dB**, bank 1 = inputs + main L/R, rate and lifetime undocumented (XA-F50..F57). |
 | Echo and conflict handling | Same rules; echo matching unchanged (section 2 "Echo design"). |
@@ -476,8 +479,8 @@ behaviour above and has a test that pins it, so a hardware result changes one de
 - **Meters.** `/meters ,si "/meters/1" 0` (XA-F57) with every `/xremote` renewal (3 s). A bank 1 blob is accepted
   only if its count fits the blob and reaches Main R (value 37); values 0..15 and 36/37 are converted (v/256 dBFS,
   -32768 is `-inf`) into a frame of 18 levels.
-- **Scene recall.** `/-snap/index` pushed with an int 1..64 is the recall marker and names the loaded snapshot; any
-  other argument is dropped. The driver never reads `/-snap/index` at connect and never sends any other `/-snap/`
+- **Scene recall.** A burst is the only recall signal. `/-snap/index` pushed with an int 1..64 is a hint naming the
+  loaded or saved snapshot, attached to a burst within 1 s; alone it raises nothing; any other argument is dropped. The driver never reads `/-snap/index` at connect and never sends any other `/-snap/`
   address, so snapshot 64 (XA-F63) is never touched.
 - **Discovery.** `/xinfo` to 10024 (XA-F12). The core API classifies replies: port 10024 is xair unless the model is
   an X32 model; port 10023 is x32 unless the model starts with XR, X18 or MR; on other ports the model decides.
