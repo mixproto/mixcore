@@ -73,6 +73,24 @@ func TestSim_AddressTree(t *testing.T) {
 	})
 }
 
+// Addresses lists the modelled tree: every listed address answers a read,
+// and the list is sorted and complete enough to contain known leaves.
+func TestSim_AddressesAnswerReads(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := runSim(t, Options{})
+		c := h.client("10.0.0.2")
+		addrs := h.sim.Addresses()
+		if !slices.IsSorted(addrs) || !slices.Contains(addrs, "/ch/01/mix/fader") || !slices.Contains(addrs, "/-snap/64/name") {
+			t.Fatalf("Addresses() = %d entries, not sorted or missing known leaves", len(addrs))
+		}
+		for _, addr := range addrs {
+			if _, ok := c.read(addr); !ok {
+				t.Fatalf("%s is listed but did not answer", addr)
+			}
+		}
+	})
+}
+
 // XA-F72, test item 12: a small-model variant without channel 16 and bus 6.
 func TestSim_SmallModelOption(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {

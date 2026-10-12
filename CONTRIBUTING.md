@@ -28,4 +28,6 @@ change or have the right to submit it under the project's license (MPL-2.0).
 
 ## Hardware captures
 Captures from consoles we do not own are the most valuable contribution. Open an issue with the console model,
-firmware version and a short description; we will tell you how to record safely.
+firmware version and a short description; we will tell you how to record safely. `cmd/mixcapture`
+(`docs/tools/mixcapture.md`) records and analyzes the traffic between a console and its own app. Capture files can
+contain personal data (channel and device names): never commit them; share the extracted facts instead.

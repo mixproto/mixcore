@@ -29,6 +29,8 @@ It is the core of [Mixhand](https://mixhand.dybyskz.com), and you can use it in 
 | `sim/x32/`, `sim/xair/` | console simulators used as test oracles, written from `docs/protocols/x32.md` and `xair.md` only; shared parts in `sim/internal/oscsim/` |
 | `cmd/mixsim/` | serves the simulator on real UDP ports |
 | `cmd/mixprobe/` | guided hardware session against a real console on a lab network: checks the protocol facts, restores what it changed, writes a report |
+| `cmd/mixcapture/` | maps a new console's protocol from its vendor app's traffic: relay, tcpdump or pcap/pcapng input, decoders (OSC, MIDI/NRPN, text/JSON, binary), live marks, snapshot diffs, initial-sync harvest, value-law fitting, read-only Yamaha RCP introspection; runbook `docs/tools/mixcapture.md` |
+| `internal/capture/` | the packages behind mixcapture: pure-Go pcap/pcapng reader, packet dissector, decoders, analyzer, law fitter, relay, report |
 | `contracts/core-api/` | JSON Schema and binary meter frame spec of the API (v0, unstable) |
 | `docs/protocols/` | every protocol fact we implement, with its source |
 
@@ -45,6 +47,7 @@ go run ./cmd/mixsim -demo   # a simulated X32 on 127.0.0.1:10023
 go run ./cmd/mixsim -family xair -demo   # a simulated XR18 on 127.0.0.1:10024
 go run ./cmd/mixprobe --lab -host 192.168.1.62   # hardware session (amplifiers off; see the package doc)
 go run ./cmd/mixprobe --lab -family xair -host 192.168.1.1   # the X Air checklist of docs/protocols/xair.md section 13
+go run ./cmd/mixcapture relay -console 192.168.1.62 -listen 192.168.1.10 -udp 10024 -out <private dir>   # docs/tools/mixcapture.md
 ```
 
 ## Compatibility

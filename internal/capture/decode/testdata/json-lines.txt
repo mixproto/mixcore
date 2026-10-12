@@ -1,0 +1,4 @@
+{"path":"line/ch1/volume","value":0.5,"id":"Set"}
+{"channels":[{"fader":-10,"mute":false},{"fader":0,"mute":true}],"name":"Main"}
+not json but text line/ch2/mute 1
+{"path":"line/ch1/volume","value":0.75,"id":"Set"}
