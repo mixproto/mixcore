@@ -22,6 +22,7 @@ import (
 
 	"github.com/mixproto/mixcore/internal/memnet"
 	"github.com/mixproto/mixcore/internal/osc"
+	"github.com/mixproto/mixcore/sim/internal/oscsim"
 )
 
 func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
@@ -334,8 +335,9 @@ func TestQuantizeLevel(t *testing.T) {
 		{0.825, 844.0 / 1023}, {0.25, 256.0 / 1023}, {-1, 0}, {2, 1}, {0, 0},
 	}
 	for _, tc := range tests {
-		if got := quantizeLevel(tc.in); got != tc.want {
-			t.Fatalf("quantizeLevel(%v) = %v, want %v", tc.in, got, tc.want)
+		v := oscsim.Level(levelSteps)
+		if !v.Set(osc.Float(tc.in)) || v.Arg().Float != tc.want {
+			t.Fatalf("level %v stored as %v, want %v", tc.in, v.Arg().Float, tc.want)
 		}
 	}
 	if ClassWrite.String() != "write" || Class(0).String() != "invalid" {
