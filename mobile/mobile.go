@@ -62,7 +62,10 @@ const (
 const MeterFrameMaxBytes = api.MeterFrameMaxBytes
 
 // StateListener receives state messages (state.schema.json) in seq order from
-// one goroutine. It must return quickly and must not call Stop or Pause.
+// one goroutine. It must return quickly. Stop, Pause and StopDemo called from
+// inside OnState return ERR_BUSY and change nothing; call them from the app's thread.
+// OnState must never wait synchronously on that thread (DispatchQueue.main.sync,
+// runBlocking on Main): post the message and return.
 type StateListener interface {
 	OnState(stateJSON string)
 }

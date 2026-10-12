@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/demo.schema.json",
+  "title": "mixcore core API v0.3 (additive, demo mixer): StartDemo(requestJSON)",
+  "description": "Starts the built-in demo mixer: the family's console simulator, inside the app process, on a UDP socket bound to 127.0.0.1 with a port the OS picks. It is seeded with a plausible show (named channels, faders, mutes, mute groups, DCAs) and its meters move like music. The result (demo-mixer.schema.json) tells where it listens; the app then calls Start with that family, host and port like for any console, and every message of that session carries demo: true. Nothing runs before StartDemo or after StopDemo. Only one demo mixer runs per engine: StartDemo while one runs is ERR_ALREADY_STARTED.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "family"],
+  "properties": {
+    "version": { "$ref": "common.schema.json#/$defs/version" },
+    "family": { "enum": ["x32", "xair"], "description": "Which console the demo mixer is. x32: 32 inputs, 6 mute groups, 8 DCAs. xair: 16 inputs, 4 mute groups, 4 DCAs (its buses, sends and colours are seeded too, for when the model carries them)." },
+    "deskChanges": { "type": "boolean", "default": false, "description": "true: every 30 s the demo moves one fader by itself, as an engineer at the desk would (origin console), so the external-change UI can be seen. false (default): nothing changes unless the user does it." }
+  },
+  "examples": [
+    { "version": 0, "family": "xair" },
+    { "version": 0, "family": "x32", "deskChanges": true }
+  ]
+}

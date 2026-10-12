@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/demo-mixer.schema.json",
+  "title": "mixcore core API v0.3 (additive, demo mixer): result of StartDemo",
+  "description": "Where the demo mixer listens. Pass family, host and port to Start (config.schema.json) unchanged. host is always the IPv4 loopback address: the demo mixer and the session to it never send to another address. name is what the simulated console reports (snapshot console.name); a UI shows its own localized Demo label instead of it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "family", "host", "port", "name"],
+  "properties": {
+    "version": { "$ref": "common.schema.json#/$defs/version" },
+    "family": { "enum": ["x32", "xair"] },
+    "host": { "const": "127.0.0.1" },
+    "port": { "type": "integer", "minimum": 1, "maximum": 65535, "description": "Chosen by the OS at StartDemo; differs between runs." },
+    "name": { "type": "string" }
+  },
+  "examples": [
+    { "version": 0, "family": "xair", "host": "127.0.0.1", "port": 52113, "name": "Demo" }
+  ]
+}

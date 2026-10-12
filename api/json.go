@@ -391,6 +391,7 @@ type eventJSON struct {
 
 type stateJSON struct {
 	Version int    `json:"version"`
+	Demo    bool   `json:"demo,omitempty"` // a session to the demo mixer, every message
 	Type    string `json:"type"`
 	Seq     uint64 `json:"seq"`
 	Status  string `json:"status"`
@@ -412,9 +413,10 @@ type stateJSON struct {
 	Events        []eventJSON      `json:"events,omitempty"`
 }
 
-// encodeUpdate renders a supervisor update as a state message with sequence seq.
-func encodeUpdate(u console.Update, seq uint64, full bool) ([]byte, error) {
-	out := stateJSON{Version: contractVersion, Seq: seq, Status: u.Status.String(), Reason: u.Reason,
+// encodeUpdate renders a supervisor update as a state message with sequence
+// seq; demo marks a session to the demo mixer.
+func encodeUpdate(u console.Update, seq uint64, full, demo bool) ([]byte, error) {
+	out := stateJSON{Version: contractVersion, Demo: demo, Seq: seq, Status: u.Status.String(), Reason: u.Reason,
 		Events:  append(append(eventsJSON(u.Events), sceneEventsJSON(u.Scenes)...), unlockEventsJSON(u.UnlockEnded)...),
 		Offline: u.Offline, Limited: u.Limited, LimitedReason: u.LimitedReason, ShowMode: u.ShowMode}
 	if u.ShowMode {

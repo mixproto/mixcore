@@ -3,7 +3,7 @@
 The c-shared build of the core API: `mixcore.dll` on Windows (P/Invoke from C#), `libmixcore.dylib` / `libmixcore.so`
 for interop tests on macOS and Linux. `go build -buildmode=c-shared` writes the header next to the library
 (`mixcore.h` / `libmixcore.h`); read names from that header, never from memory. Same calls and safety rules as
-`README.md`; this file only adds the C-level rules. v0.2 (family `xair`) changes no C signature, status code or memory rule; v0.3 adds `MixGesture` and status codes 15 to 17.
+`README.md`; this file only adds the C-level rules. v0.2 (family `xair`) changes no C signature, status code or memory rule; v0.3 adds `MixGesture`, `MixStartDemo`, `MixStopDemo` and status codes 15 to 17.
 
 ## Memory and strings
 - Strings in are UTF-8, NUL-terminated `char*`. They are copied on entry; the caller may free them as soon as the call returns.
@@ -32,7 +32,7 @@ numbers are part of the ABI and never change; new codes get new numbers.
 | 9 | `MIX_ERR_ALREADY_STARTED` | `ERR_ALREADY_STARTED` |
 | 10 | `MIX_ERR_INTERNAL` | `ERR_INTERNAL` (also: a recovered Go panic) |
 | 11 | `MIX_ERR_ROLE` | `ERR_ROLE` (reserved) |
-| 12 | `MIX_ERR_BUSY` | `ERR_BUSY` |
+| 12 | `MIX_ERR_BUSY` | `ERR_BUSY` (also `MixStop`, `MixPause`, `MixStopDemo` from inside the state callback, v0.3) |
 | 13 | `MIX_ERR_NETWORK` | `ERR_NETWORK` (only inside discovery results) |
 | 14 | `MIX_ERR_INVALID_ARGUMENT` | NULL pointer or negative length |
 | 15 | `MIX_ERR_NEEDS_CONFIRM` | `ERR_NEEDS_CONFIRM` (v0.3) |
@@ -56,6 +56,8 @@ numbers are part of the ABI and never change; new codes get new numbers.
 | `int32_t MixDiscover(char* requestJSON)` | result later through the discovery callback |
 | `int32_t MixSetLogSink(MixLogCallback cb, intptr_t context, int32_t minLevel)` | `MIX_LOG_DEBUG` -4, `INFO` 0, `WARN` 4, `ERROR` 8 |
 | `void MixFree(void* p)` | frees what this library returned; NULL is ignored |
+| `int32_t MixStartDemo(char* requestJSON, char** outJSON, int32_t* outLen)` (v0.3) | `demo.schema.json` in, `demo-mixer.schema.json` out on `MIX_OK`; `MixFree` it (`README.md`, Demo mixer) |
+| `int32_t MixStopDemo(void)` (v0.3) | stops a session to the demo, then the demo mixer |
 | `int32_t MixTestPanic(void)` | **only** in a `-tags capitest` build: panics inside the export, returns `MIX_ERR_INTERNAL`. That build also exports two internal test callbacks (`mixTestOnBytes`, `mixTestOnLog`); never ship it |
 
 ```c
@@ -73,7 +75,7 @@ If `capacity` is smaller than the frame, nothing is written and the needed lengt
 ## Threading
 - Every call may come from any thread and returns quickly; none does network I/O on the calling thread.
 - Each callback kind is called from one Go-owned thread at a time (state: the dispatcher; discovery: the probe;
-  log: the log goroutine). They must not block and must not call `MixStop`/`MixPause` from inside the callback.
+  log: the log goroutine). They must not block. `MixStop`, `MixPause` and `MixStopDemo` called from inside the state callback return `MIX_ERR_BUSY` at once and change nothing (v0.3); call them from the app's thread. The callback must never wait synchronously on a thread that may call them (for example C# `Dispatcher.Invoke`): that is a deadlock the core cannot see; post the message and return.
 - A panic anywhere in Go is recovered; it never crosses into the host process.
 
 ## Build
