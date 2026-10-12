@@ -76,7 +76,8 @@ behave the same and a UI bug cannot bypass them:
   modelled and not bounded by the core yet (follow-up; it needs the same Gain rules).
 - **Connect time** (lead decision, 2026-10-12): against the simulator on loopback, status `live` within 2 s at p95 for
   both families, headamp reads included (`api` test `TestConnectTime_*`, which fails above 3 s to leave CI a margin).
-  The 5 s connect timeout stays the hard failure. Reconnect: all input back within 2 s after the link returns (SR-05).
+  The 5 s connect timeout stays the hard failure. Reconnect: all input back within 2 s after the link returns (SR-05),
+  measured by `TestConnectTime_ReconnectLiveWithin2s` behind the `slow` build tag (`make sim-test` runs it).
 
 ## Calls
 
