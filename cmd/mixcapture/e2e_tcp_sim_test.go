@@ -23,21 +23,13 @@ import (
 	"github.com/mixproto/mixcore/internal/capture/rcpinfo"
 )
 
-// rcpConsole is a scripted TCP text console for tests: it answers devinfo
-// and prminfo from a two-entry table (shapes of docs/protocols/yamaha-rcp.md
-// YR-F04, YR-F05), echoes set as OK set plus a NOTIFY to the other clients,
-// and logs every line it receives.
+// rcpConsole serves a fakeRCP on a loopback TCP port.
 type rcpConsole struct {
+	fakeRCP
 	ln    net.Listener
 	mu    sync.Mutex
-	lines []string
 	conns []net.Conn
 	wg    sync.WaitGroup
-}
-
-var rcpTable = []string{
-	`"MIXER:Current/InCh/Fader/Level" 40 1 -32768 1000 -32768 "dB" integer any rw 100`,
-	`"MIXER:Current/InCh/Fader/On" 40 1 0 1 1 "" integer any rw 1`,
 }
 
 func startRCPConsole(t *testing.T) *rcpConsole {
@@ -73,45 +65,6 @@ func (c *rcpConsole) accept() {
 		c.mu.Unlock()
 		c.wg.Go(func() { c.serve(conn) })
 	}
-}
-
-func (c *rcpConsole) serve(conn net.Conn) {
-	sc := bufio.NewScanner(conn)
-	for sc.Scan() {
-		line := sc.Text()
-		c.mu.Lock()
-		c.lines = append(c.lines, line)
-		c.mu.Unlock()
-		if _, err := io.WriteString(conn, c.reply(line)); err != nil {
-			return
-		}
-	}
-}
-
-func (c *rcpConsole) reply(line string) string {
-	verb, rest, _ := strings.Cut(line, " ")
-	switch verb {
-	case "devinfo":
-		return fmt.Sprintf("OK devinfo %s \"TF5\"\n", rest)
-	case "prminfo":
-		i, err := strconv.Atoi(rest)
-		if err != nil || i >= len(rcpTable) {
-			return "ERROR prminfo InvalidArgument\n"
-		}
-		return fmt.Sprintf("OK prminfo %d %s\n", i, rcpTable[i])
-	case "mtrinfo":
-		return "ERROR mtrinfo InvalidArgument\n"
-	case "set", "get":
-		return "OK " + line + "\n"
-	default:
-		return "ERROR " + verb + " UnknownCommand\n"
-	}
-}
-
-func (c *rcpConsole) received() []string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return append([]string(nil), c.lines...)
 }
 
 func TestE2E_IntrospectIsReadOnly(t *testing.T) {

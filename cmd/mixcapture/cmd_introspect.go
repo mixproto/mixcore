@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/netip"
 	"time"
 
@@ -61,7 +60,7 @@ func parseIntrospect(args []string, out io.Writer) (introspectOptions, error) {
 
 // runIntrospect asks the console for its own tables with read-only queries
 // only (rcpinfo refuses anything else) and records the conversation.
-func runIntrospect(ctx context.Context, args []string, _ io.Reader, out io.Writer) error {
+func runIntrospect(ctx context.Context, args []string, _ io.Reader, out io.Writer, nw netOps) error {
 	o, err := parseIntrospect(args, out)
 	if err != nil {
 		return err
@@ -76,11 +75,11 @@ func runIntrospect(ctx context.Context, args []string, _ io.Reader, out io.Write
 	fmt.Fprintf(out, "PRIVACY: %s\nsession: %s\nread-only queries only: devinfo, prminfo, mtrinfo\n", session.PrivacyNote, d.Path())
 	meta := session.Meta{Tool: toolName, Mode: "introspect", Console: o.console.String(), Started: time.Now().UTC(),
 		Capture: session.FileCapture, Settings: map[string]string{"family": familyYamahaRCP}}
-	runErr := introspect(ctx, o, d, meta, out)
+	runErr := introspect(ctx, o, nw, d, meta, out)
 	return errors.Join(runErr, d.WriteMeta(meta), d.Close())
 }
 
-func introspect(ctx context.Context, o introspectOptions, d *session.Dir, meta session.Meta, out io.Writer) error {
+func introspect(ctx context.Context, o introspectOptions, nw netOps, d *session.Dir, meta session.Meta, out io.Writer) error {
 	capFile, err := d.Create(session.FileCapture)
 	if err != nil {
 		return err
@@ -90,8 +89,9 @@ func introspect(ctx context.Context, o introspectOptions, d *session.Dir, meta s
 	if err != nil {
 		return err
 	}
-	dialer := net.Dialer{Timeout: dialTimeout}
-	conn, err := dialer.DialContext(ctx, "tcp", o.console.String())
+	dctx, cancel := context.WithTimeout(ctx, dialTimeout)
+	conn, err := nw.dial(dctx, "tcp", o.console.String())
+	cancel()
 	if err != nil {
 		return fmt.Errorf("introspect: connect %s: %w", o.console, err)
 	}

@@ -374,3 +374,6 @@ func TestRead_MarksFileOutOfOrder(t *testing.T) {
 		t.Fatalf("marks.csv:\n%s", marks)
 	}
 }
+
+// outputWait bounds how long a test waits for a line of command output.
+const outputWait = 10 * time.Second

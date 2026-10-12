@@ -31,7 +31,7 @@ type relayOptions struct {
 	force   bool
 }
 
-func parseRelay(args []string, out io.Writer) (relayOptions, error) {
+func parseRelay(args []string, out io.Writer, nw netOps) (relayOptions, error) {
 	var o relayOptions
 	fs := newFlagSet("relay", out)
 	consoleText := fs.String("console", "", "console IP address (required)")
@@ -49,7 +49,7 @@ func parseRelay(args []string, out io.Writer) (relayOptions, error) {
 	if o.console, err = parseConsoleIP(*consoleText); err != nil {
 		return o, err
 	}
-	if o.listen, err = parseListen(*listenText); err != nil {
+	if o.listen, err = parseListen(*listenText, nw.isLocal); err != nil {
 		return o, err
 	}
 	if o.apps, err = parseIPList(*apps); err != nil {
@@ -67,8 +67,8 @@ func parseRelay(args []string, out io.Writer) (relayOptions, error) {
 	return o, nil
 }
 
-func runRelay(ctx context.Context, args []string, in io.Reader, out io.Writer) error {
-	o, err := parseRelay(args, out)
+func runRelay(ctx context.Context, args []string, in io.Reader, out io.Writer, nw netOps) error {
+	o, err := parseRelay(args, out, nw)
 	if err != nil {
 		return err
 	}
@@ -91,11 +91,11 @@ func runRelay(ctx context.Context, args []string, in io.Reader, out io.Writer) e
 	if err != nil {
 		return errors.Join(err, rec.idx.Close(), rec.dir.Close())
 	}
-	runErr := relaySession(ctx, o, rec, e, in, out)
+	runErr := relaySession(ctx, o, nw, rec, e, in, out)
 	return errors.Join(runErr, rec.finish(e))
 }
 
-func relaySession(ctx context.Context, o relayOptions, rec *recording, e *engine, in io.Reader, out io.Writer) error {
+func relaySession(ctx context.Context, o relayOptions, nw netOps, rec *recording, e *engine, in io.Reader, out io.Writer) error {
 	capFile, err := rec.dir.Create(session.FileCapture)
 	if err != nil {
 		return err
@@ -112,7 +112,7 @@ func relaySession(ctx context.Context, o relayOptions, rec *recording, e *engine
 	defer reportDrops(out, sink)
 	var wg sync.WaitGroup
 	srcDone := make(chan error, len(o.udp)+len(o.tcp))
-	if err := startRelays(ctx, &wg, o, recorder, srcDone, out); err != nil {
+	if err := startRelays(ctx, &wg, o, nw, recorder, srcDone, out); err != nil {
 		cancel()
 		wg.Wait()
 		return err
@@ -132,7 +132,7 @@ func relaySession(ctx context.Context, o relayOptions, rec *recording, e *engine
 }
 
 // startRelays binds every port and starts its relay; a bind error stops all.
-func startRelays(ctx context.Context, wg *sync.WaitGroup, o relayOptions, rec *session.Recorder, srcDone chan<- error,
+func startRelays(ctx context.Context, wg *sync.WaitGroup, o relayOptions, nw netOps, rec *session.Recorder, srcDone chan<- error,
 	out io.Writer) error {
 	report := func(err error) {
 		if err == nil || errors.Is(err, relay.ErrClosed) {
@@ -143,26 +143,24 @@ func startRelays(ctx context.Context, wg *sync.WaitGroup, o relayOptions, rec *s
 		default: // one error is enough to stop the session
 		}
 	}
-	var lc net.ListenConfig
 	for _, pm := range o.udp {
-		pc, err := lc.ListenPacket(ctx, "udp", netip.AddrPortFrom(o.listen, pm.listen).String())
+		pc, err := nw.listenPacket(ctx, "udp", netip.AddrPortFrom(o.listen, pm.listen).String())
 		if err != nil {
 			return fmt.Errorf("relay: listen udp %d: %w", pm.listen, err)
 		}
 		u := &relay.UDP{Listen: pc, Console: netip.AddrPortFrom(o.console, pm.console), Rec: rec, Apps: o.apps,
-			Upstream: func(ctx context.Context) (net.PacketConn, error) { return lc.ListenPacket(ctx, "udp", ":0") }}
+			Upstream: func(ctx context.Context) (net.PacketConn, error) { return nw.listenPacket(ctx, "udp", ":0") }}
 		fmt.Fprintf(out, "relay udp %s -> %s\n", pc.LocalAddr(), u.Console)
 		safe.Go(wg, report, func() { defer func() { _ = pc.Close() }(); report(u.Serve(ctx)) })
 	}
 	for _, pm := range o.tcp {
-		ln, err := lc.Listen(ctx, "tcp", netip.AddrPortFrom(o.listen, pm.listen).String())
+		ln, err := nw.listen(ctx, "tcp", netip.AddrPortFrom(o.listen, pm.listen).String())
 		if err != nil {
 			return fmt.Errorf("relay: listen tcp %d: %w", pm.listen, err)
 		}
 		console := netip.AddrPortFrom(o.console, pm.console)
-		var d net.Dialer
 		t := &relay.TCP{Listener: ln, Console: console, Rec: rec, Apps: o.apps,
-			Dial: func(ctx context.Context) (net.Conn, error) { return d.DialContext(ctx, "tcp", console.String()) }}
+			Dial: func(ctx context.Context) (net.Conn, error) { return nw.dial(ctx, "tcp", console.String()) }}
 		fmt.Fprintf(out, "relay tcp %s -> %s\n", ln.Addr(), console)
 		safe.Go(wg, report, func() { defer func() { _ = ln.Close() }(); report(t.Serve(ctx)) })
 	}
@@ -172,7 +170,7 @@ func startRelays(ctx context.Context, wg *sync.WaitGroup, o relayOptions, rec *s
 // parseListen accepts one address this machine has (loopback included),
 // never the unspecified 0.0.0.0 or ::, so the relay is reachable only on the
 // network the operator chose.
-func parseListen(text string) (netip.Addr, error) {
+func parseListen(text string, isLocal func(netip.Addr) bool) (netip.Addr, error) {
 	ip, err := netip.ParseAddr(strings.TrimSpace(text))
 	hint := fmt.Sprintf("-listen must be one of this machine's addresses (have %s)", strings.Join(localIPv4(), ", "))
 	switch {
@@ -180,23 +178,10 @@ func parseListen(text string) (netip.Addr, error) {
 		return netip.Addr{}, fmt.Errorf("%w: %s", errUsage, hint)
 	case ip.IsUnspecified():
 		return netip.Addr{}, fmt.Errorf("%w: -listen %s would expose the console on every network; %s", errUsage, ip, hint)
-	case !isLocalAddr(ip.Unmap()):
+	case !isLocal(ip.Unmap()):
 		return netip.Addr{}, fmt.Errorf("%w: -listen %s is not an address of this machine; %s", errUsage, ip, hint)
 	}
 	return ip.Unmap(), nil
-}
-
-func isLocalAddr(ip netip.Addr) bool {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return false
-	}
-	for _, a := range addrs {
-		if p, err := netip.ParsePrefix(a.String()); err == nil && p.Addr().Unmap() == ip {
-			return true
-		}
-	}
-	return false
 }
 
 func parseIPList(text string) ([]netip.Addr, error) {

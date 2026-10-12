@@ -65,13 +65,23 @@ func main() {
 
 // runMain is main without os.Exit, for tests.
 func runMain(ctx context.Context, args []string, in io.Reader, out io.Writer) error {
+	return runWith(ctx, args, in, out, systemNet())
+}
+
+// runWith runs a command with the given network (an in-memory one in unit tests).
+func runWith(ctx context.Context, args []string, in io.Reader, out io.Writer, nw netOps) error {
 	if len(args) == 0 {
 		fmt.Fprint(out, usage)
 		return fmt.Errorf("%w: no command", errUsage)
 	}
 	cmds := map[string]func(context.Context, []string, io.Reader, io.Writer) error{
-		"relay": runRelay, "live": runLive, "read": runRead, "report": runReport, "law": runLaw,
-		"introspect": runIntrospect,
+		"relay": func(ctx context.Context, a []string, in io.Reader, out io.Writer) error {
+			return runRelay(ctx, a, in, out, nw)
+		},
+		"live": runLive, "read": runRead, "report": runReport, "law": runLaw,
+		"introspect": func(ctx context.Context, a []string, in io.Reader, out io.Writer) error {
+			return runIntrospect(ctx, a, in, out, nw)
+		},
 	}
 	cmd, ok := cmds[args[0]]
 	if !ok {

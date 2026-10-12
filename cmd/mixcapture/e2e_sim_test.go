@@ -31,7 +31,6 @@ const (
 	e2eQuiet     = 700 * time.Millisecond
 	readBatch    = 32
 	renewEvery   = 2 * time.Second // /xremote lives 10 s (XA-F20)
-	outputWait   = 10 * time.Second
 	faderAddr    = "/ch/01/mix/fader"
 	meterAddress = "/meters/1"
 )
