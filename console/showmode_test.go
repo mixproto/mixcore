@@ -49,7 +49,9 @@ func TestShowMode_LocksGainRaisesOnly(t *testing.T) {
 			}
 		}
 		_, _ = sup.HoldWindow(gain3, gesture, true) // a drag up stops at the start: locked
-		if r, _ := sup.Write(set(gain3, lvl(t, 35), gesture)); r.State != StateLocked || r.Written {
+		// Locked at the value in flight (31.5); it may be sent again while the
+		// console still reports 32.5 (re-review MEDIUM B), never anything higher.
+		if r, _ := sup.Write(set(gain3, lvl(t, 35), gesture)); r.State != StateLocked || dbIn(t, r) != 31.5 || lastWrite(drv) != 31.5 {
 			t.Fatalf("drag up in show mode: %v %s", dbIn(t, r), r.State)
 		}
 	})

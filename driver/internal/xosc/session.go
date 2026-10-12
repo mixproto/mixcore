@@ -96,7 +96,12 @@ type session struct {
 	msg      osc.Message
 	sent     map[int][]sentWrite
 	known    []model.Value // newest value seen per parameter (initial read, then every change)
-	rr       rereadPass
+	// unconfirmed: Gain parameters we wrote that the console has not
+	// reported since; their next re-read reply is reported even when it
+	// equals known, so the console layer's write in flight always ends
+	// (re-review MEDIUM B; Gain echo is unverified, X32-F79, XA-F116).
+	unconfirmed map[int]bool
+	rr          rereadPass
 }
 
 var _ driver.Session = (*session)(nil)
@@ -106,7 +111,7 @@ func newSession(d *Driver, c *conn, opts driver.Options) *session {
 		name: string(d.prof.Family), prof: &d.prof,
 		timing: d.timing, params: &d.params, c: c, log: logger(opts), audit: opts.WriteAudit,
 		pending: map[int]pendingWrite{}, done: make(chan struct{}), cmdReady: make(chan struct{}, 1), meterReady: make(chan struct{}, 1),
-		rereadReady: make(chan struct{}, 1), tx: make([]byte, 0, rxBufSize), sent: map[int][]sentWrite{},
+		rereadReady: make(chan struct{}, 1), tx: make([]byte, 0, rxBufSize), sent: map[int][]sentWrite{}, unconfirmed: map[int]bool{},
 		rr: rereadPass{asked: map[int]bool{}}, scene: newSceneState(), present: newHeadampSet(d.params.layout.maxHeadamp()),
 	}
 }
@@ -304,6 +309,9 @@ func (s *session) flushPending() {
 		s.rememberSent(idx, sentWrite{arg: w.arg, origin: w.origin, at: now, changes: s.changesKnown(idx, w),
 			evidence: w.param.feature == featureCore})
 		s.markTouched(idx)
+		if w.param.conv == convGain {
+			s.unconfirmed[idx] = true
+		}
 		if s.audit != nil {
 			s.audit(driver.WriteRecord{Param: w.param.ref, Address: w.param.addr, Origin: w.origin, At: now})
 		}
@@ -377,7 +385,8 @@ func (s *session) decodeChange(p inPacket) (driver.ParamChanged, bool) {
 	}
 	s.markTouched(idx)
 	s.remember(idx, v)
-	s.onPush() // a push (or our echo) on the /xremote socket: we are served
+	delete(s.unconfirmed, idx) // the console reported it
+	s.onPush()                 // a push (or our echo) on the /xremote socket: we are served
 	origin := s.matchEcho(idx, arg, p.at)
 	if origin.Kind == driver.OriginConsole {
 		s.onConsolePush(idx, p.at) // X32-F60: a recall is a burst of pushes

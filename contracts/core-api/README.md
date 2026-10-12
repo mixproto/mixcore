@@ -152,7 +152,10 @@ behave the same and a UI bug cannot bypass them:
 8. **Gain bound (CR-23, SR-31).** No Gain write moves more than 6 dB from the console's current value, whatever sent it
    (gesture, stepper, undo, macro, another client through the same core): `ERR_GAIN_BOUND`. Only `typed` (after
    `confirmed` for a raise over 6 dB) may move further; scene recall happens at the console and is never refused.
-   A Gain value outside the console's range is `ERR_INVALID_VALUE`, never clamped.
+   A Gain value outside the console's range is `ERR_INVALID_VALUE`, never clamped. The bound (and show mode's raise
+   check) also holds against the last Gain value sent, until the console reports that parameter (echo, push or re-read
+   reply); there is no timer, because Gain echo is unverified (X32-F79, XA-F116). A set of the value in flight while the
+   console still reports another is sent again, never skipped. Stale, a reconnect or a failed send end it.
 9. **Typed raises (CR-26, SR-30).** A `typed` set that raises a fader or Gain by more than 6 dB from the console value
    returns `ERR_NEEDS_CONFIRM` unless `confirmed`; the UI shows `Raise ... from {from} to {to}?` and resends with
    `confirmed: true`. Lowering never asks.

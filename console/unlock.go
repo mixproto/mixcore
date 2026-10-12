@@ -20,6 +20,7 @@ const (
 	unlockIdle = 20 * time.Second // an unlock ends after 20 s without a command on it
 	undoGrace  = 10 * time.Second // an undo of an unlock entry stays allowed this long after the relock
 	maxUndoTo  = 32               // values before entries remembered per unlock (the first ones are kept)
+	undoMatch  = 0.25             // dB: half of the 0.5 dB Gain step
 )
 
 // Unlock end reasons (state event gainUnlockEnded).
@@ -88,7 +89,7 @@ func (u *unlocks) allowsRaise(h int, undo bool, v float64) bool {
 
 // near matches a Gain value within half a step of the coarsest law (0.5 dB).
 func near(v float64) func(float64) bool {
-	return func(x float64) bool { return math.Abs(x-v) <= pendingMatchDB }
+	return func(x float64) bool { return math.Abs(x-v) <= undoMatch }
 }
 
 func (u *unlocks) end(h int, reason string) {

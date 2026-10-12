@@ -6,46 +6,31 @@ package console
 
 import (
 	"math"
-	"time"
 
 	"github.com/mixproto/mixcore/model"
 )
 
-// A Gain write is in flight from the moment it is accepted until its echo
-// arrives or the echo window passes. The state value changes only on the
-// echo, so the 6 dB bound and the show-mode raise check must hold against
-// both values (review HIGH 1).
-const (
-	pendingWindow  = 2 * time.Second // the drivers' default echo window (xosc DefaultTiming.EchoWindow)
-	pendingMatchDB = 0.25            // half of the 0.5 dB Gain step: the echo of our write
-)
+// A Gain write is in flight from the moment it is sent until the console
+// reports that parameter (its echo, a push or a re-read reply). The state
+// value changes only on a report, so the 6 dB bound and the show-mode raise
+// check hold against both values (review HIGH 1). There is no timer: Gain
+// echo is unverified on both families (X32-F79, XA-F116), and a timer let
+// an unechoed console move +12 dB in two writes (re-review MEDIUM B). The
+// drivers report a re-read reply of a parameter with an unconfirmed write
+// even when it equals the last value seen, so a lost write still ends.
 
-type pendingValue struct {
-	db float64
-	at time.Time
-}
-
-// pendingOf returns the value of the last accepted Gain write still in flight.
+// pendingOf returns the value of the last Gain write still in flight.
 func (s *safety) pendingOf(p model.ParamRef) (float64, bool) {
-	v, ok := s.pending[p]
-	if !ok {
-		return 0, false
-	}
-	if time.Since(v.at) > pendingWindow {
-		delete(s.pending, p)
-		return 0, false
-	}
-	return v.db, true
+	db, ok := s.pending[p]
+	return db, ok
 }
 
-func (s *safety) notePending(p model.ParamRef, db float64) {
-	s.pending[p] = pendingValue{db: db, at: time.Now()}
-}
+func (s *safety) notePending(p model.ParamRef, db float64) { s.pending[p] = db }
 
 // forgetPending drops the value in flight when its send failed (only if no
 // later write replaced it meanwhile).
 func (s *safety) forgetPending(p model.ParamRef, db float64) {
-	if v, ok := s.pending[p]; ok && v.db == db {
+	if v, ok := s.pending[p]; ok && v == db {
 		delete(s.pending, p)
 	}
 }
@@ -54,13 +39,9 @@ func (s *safety) forgetPending(p model.ParamRef, db float64) {
 // that is gone (stale) or was replaced by a fresh read (adopt).
 func (s *safety) dropAllPending() { clear(s.pending) }
 
-// clearPending forgets the write in flight once its echo arrived.
-func (s *safety) clearPending(c Change) {
-	v, ok := s.pending[c.Param]
-	if ok && math.Abs(dbOf(c.Value)-v.db) <= pendingMatchDB {
-		delete(s.pending, c.Param)
-	}
-}
+// clearPending ends the write in flight on any console report of that
+// parameter: from then on the reported value is the reference.
+func (s *safety) clearPending(c Change) { delete(s.pending, c.Param) }
 
 // gainBounds is the range a Gain write may move to: within 6 dB of the
 // console value and of the value in flight.

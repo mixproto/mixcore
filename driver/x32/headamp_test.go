@@ -203,3 +203,40 @@ func TestHeadamp_NoHaIndexAnswerMeansNoChannelMapping(t *testing.T) {
 		}
 	})
 }
+
+// Re-review MEDIUM B: the console layer keeps a Gain write in flight until
+// the console reports that parameter. A write lost on the way leaves the
+// console unchanged, so the re-read reply equals the last value seen; it
+// is still reported (console origin), or the write would stay in flight.
+func TestHeadamp_RereadReportsGainWithAnUnconfirmedWrite(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t, simx32.Options{})
+		sess := r.connect()
+		events, _ := r.run(sess)
+		r.net.SetDropFrom(clientIP, true) // the write is lost
+		if err := sess.Apply(driver.Command{Param: headamp(1, model.FieldGain), Value: level(t, 6), Origin: gesture}); err != nil {
+			t.Fatal(err)
+		}
+		synctest.Wait()
+		r.net.SetDropFrom(clientIP, false)
+		time.Sleep(DefaultTiming.EchoWindow + time.Second) // past the echo window: the pass reads it
+		if err := sess.(driver.Rereader).Reread(); err != nil {
+			t.Fatal(err)
+		}
+		for {
+			ev, ok := nextOf[driver.ParamChanged](events, passTime)
+			if !ok {
+				t.Fatal("the re-read never reported headamp 1 Gain")
+			}
+			if ev.Param == headamp(1, model.FieldGain) {
+				if !ev.Value.Equal(level(t, 0)) || ev.Origin.Kind != driver.OriginConsole {
+					t.Fatalf("report %+v, want the console's 0 dB", ev)
+				}
+				break
+			}
+		}
+		if w := r.sim.WriteCount(); w != 0 {
+			t.Fatalf("%d writes reached the console", w)
+		}
+	})
+}

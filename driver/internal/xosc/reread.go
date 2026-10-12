@@ -148,18 +148,24 @@ func (s *session) markTouched(idx int) {
 // rereadReply handles a packet from the write socket, which can only be the
 // reply to a re-read. It reports a change only for an outstanding, untouched
 // read whose value differs from the newest one seen: the push of that change
-// was lost, so it is a console change.
+// was lost, so it is a console change. A Gain we wrote that the console has
+// not reported since is reported even unchanged: our write did not land.
 func (s *session) rereadReply(idx int, v model.Value, at time.Time) (driver.ParamChanged, bool) {
 	touched, ok := s.rr.asked[idx]
 	if !ok || touched {
 		return driver.ParamChanged{}, false
 	}
 	delete(s.rr.asked, idx)
-	if idx < len(s.known) && s.known[idx].Equal(v) {
+	wrote := s.unconfirmed[idx]
+	delete(s.unconfirmed, idx)
+	unchanged := idx < len(s.known) && s.known[idx].Equal(v)
+	if unchanged && !wrote {
 		return driver.ParamChanged{}, false
 	}
 	s.remember(idx, v)
-	s.lim.passFound = true // the push of this change never reached us
+	if !unchanged {
+		s.lim.passFound = true // the push of this change never reached us
+	}
 	return driver.ParamChanged{Param: s.params.all[idx].ref, Value: v, Origin: driver.Origin{Kind: driver.OriginConsole}, At: at}, true
 }
 

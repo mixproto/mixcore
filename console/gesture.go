@@ -90,8 +90,8 @@ func (s *Supervisor) prepareLocked(w *Write) (driver.Session, Result, error) {
 	w.Value = lv
 	written := v != cur
 	if w.Param.Field == model.FieldGain {
-		if pend, hasPend := s.safe.pendingOf(w.Param); hasPend {
-			written = v != pend // the last value sent is the one in flight
+		if pend, hasPend := s.safe.pendingOf(w.Param); hasPend && v != pend {
+			written = true // back to the console value while another is in flight: a real write
 		}
 		if written {
 			s.safe.notePending(w.Param, v)
