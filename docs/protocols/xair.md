@@ -1,0 +1,522 @@
+# X Air / M Air network control protocol (as mixcore will implement it)
+
+Scope: Behringer X Air family (XR12, XR16, XR18, X18) and Midas M Air family (MR12, MR18) digital mixers. Compatibility
+statement only; mixcore is not affiliated with or endorsed by any console maker. This file lists the protocol facts that
+`driver/xair` and `sim/xair` will implement. As for X32, the driver and the simulator are both written from this file,
+never from each other, and when a real mixer disagrees with this file the mixer wins: record a `[CAPTURE]` fact here
+first, then change the simulator, then the driver.
+
+Baseline: `docs/protocols/x32.md` (fact IDs `X32-Fnn`). Both families speak the same OSC dialect over UDP, so this file
+does not repeat what is identical; every section says what is **the same** as X32 and what **differs**, with sources.
+Facts of this file have IDs `XA-Fnn`.
+
+Research date: 2026-10-12. No X Air or M Air hardware was available: there are **no captures**, and every behaviour
+claim below is from documents or code. Section "To verify with mixprobe or hardware" lists the exact tests.
+
+## Tags
+Tags used here, with the equivalent tag of `x32.md` and of the research protocol in brackets:
+- `[VENDOR-DOC]` (`[OFFICIAL]`): a document published by the manufacturer (protocol note, quick start guide, release
+  note quoted verbatim, store listing text), or a formal specification (OSC 1.0).
+- `[PERMISSIVE-CODE <licence>]` (`[CODE]`): behaviour read in MIT or Apache-2.0 source code. The licence is named at
+  each use. Code is evidence of what working clients do, not of what the firmware guarantees.
+- `[COMMUNITY]` (`[COMMUNITY]`): forum, wiki, third-party app documentation, the unofficial Maillot PDF.
+- `[TO-VERIFY]` (`[UNVERIFIED]`): plausible but not confirmed by two independent sources, or sources contradict.
+  Every `[TO-VERIFY]` item is in the checklist at the end and becomes a simulator option.
+- `[CAPTURE]`: our own packet capture of hardware we use. **None yet.**
+
+Legal note (invariant 8): nothing here is copied from GPL code or decompiled software. GPL and unlicensed X Air projects
+were found (listed under "Pointers not used") and were not read for facts. Tables below are written from the vendor
+document and from MIT/Apache code, in our own words.
+
+## Sources (accessed 2026-10-12)
+- **XS1** Music Tribe, "X AIR Mixer Series Remote Control Protocol (firmware 1.11 or higher)", 4 pages, footer
+  "X AIR Mixer OSC Document (fw 1.11)". Vendor URL:
+  https://cdn.mediavalet.com/aunsw/musictribe/hmivS7F05kKSJlWDYPGLpA/agTKkSIWS0y1bJl97YZEjg/Original/X%20AIR%20Remote%20Control%20Protocol.pdf
+  (HTTP 500 on access). Read in full via the ManualShelf mirror:
+  https://www.manualshelf.com/manual/behringer/x18/air-series-osc-documentation-english.html and `/page-2.html`,
+  `/page-3.html`, `/page-4.html` of the same path. Undated. `[VENDOR-DOC]`. The "Parameters.txt" file it refers to
+  was not found.
+- **XS2** Behringer, "Quick Start Guide X AIR X18/XR18" (MUSIC Group era, English section and specification table).
+  Vendor URL https://cdn.mediavalet.com/aunsw/musictribe/11wtbydV-0aH8UtYnUGsCw/62P1eKWIl0yezqUNT06Ivw/Original/QSG_BE_0605-AAA_X18_WW.pdf
+  (HTTP 500 on access); read from the mirror http://warehousesound.com/r/behringerX18-XR18manual.pdf. `[VENDOR-DOC]`.
+- **XS3** Behringer, "Quick Start Guide X AIR XR16/XR12", V 5.0. Vendor URL
+  https://cdn.mediavalet.com/aunsw/musictribe/HXp-EakOUkGWPdgZ96aqFQ/jY6paPtgA0KYzOaYfNpY4w/Original/QSG_BE_0605-AAB_XR16-XR12_WW.pdf
+  (HTTP 500 on access); read from the mirror
+  https://shop.scavino.it/files/scavino_Files/DocFiles/000/016/536/Manuale-Behringer-XR12.pdf. `[VENDOR-DOC]`.
+- **XS4** P.-G. Maillot, "Unofficial X32/M32 OSC Remote Protocol" v4.06-09 (= `x32.md` S1). Printed p.11 (X Air
+  `/info` replies) and p.12 footnote 7 (node form). Note: the copy lives on branch `master`:
+  https://github.com/bitfocus/companion-module-behringer-x32/blob/master/docs/X32-OSC.pdf. `[COMMUNITY]`.
+- **XS5** bitfocus/companion-module-behringer-xair, MIT, commit `b172eb0` (2026-09-07):
+  https://github.com/bitfocus/companion-module-behringer-xair (`index.js`, `constants.js`, `defStrip.js`,
+  `buildStripDefs.js`, `buildMeterDefs.js`, `actions.js`). `[PERMISSIVE-CODE MIT]`.
+- **XS6** onyx-and-iris/xair-api-python, MIT, commit `16f3c5f` (2026-04-21):
+  https://github.com/onyx-and-iris/xair-api-python (`xair_api/kinds.py`, `shared.py`). The README says the author only
+  has an MR18 to test with. `[PERMISSIVE-CODE MIT]`.
+- **XS7** stblassitude/xair-api-go, MIT, commit `b112e15` (2026-09-09): https://github.com/stblassitude/xair-api-go
+  (`WIRE_PROTOCOL.md`, derived from XS6 plus public references). `[PERMISSIVE-CODE MIT]`.
+- **XS8** notameadow/xair-osc, MIT, commit `5237a05` (2026-05-04): https://github.com/notameadow/xair-osc
+  (`README.md`, `xair_osc/meters.py`, `protocol.py`). Early alpha; meter notes say "verified live against XR18
+  firmware 1.17.1". `[PERMISSIVE-CODE MIT]`.
+- **XS9** peterdikant/xair-remote, MIT, commit `b49c9bc` (2025-05-26): https://github.com/peterdikant/xair-remote
+  (`lib/xair.py`). `[PERMISSIVE-CODE MIT]`.
+- **XS10** matiasbarrios/magical-mixing-console, Apache-2.0, commit `8661d1c` (2026-06-25):
+  https://github.com/matiasbarrios/magical-mixing-console (`docs/reference/CONNECTIVITY.md`,
+  `src/mixers/drivers/xair/model.js`, `search.js`, `shared.js`, `device/index.js`, `device/bus/*.js`).
+  `[PERMISSIVE-CODE Apache-2.0]`.
+- **XS11** wrodie/behringer-mixer, MIT, commit `32352e7` (2026-05-21): https://github.com/wrodie/behringer-mixer
+  (`behringer_mixer/mixers/mixer_type_xr12.py`, `_xr16.py`, `_xr18.py`, `_xair.py`). `[PERMISSIVE-CODE MIT]`.
+- **XS12** Behringer World wiki, "X-Air / M-Air OSC Commands", last modified 2024-02-29, derived from the "Sysex OSC
+  Generator" X-Air list; read via https://web.archive.org/web/20240329161700/https://behringer.world/wiki/doku.php?id=x-air_osc.
+  `[COMMUNITY]`.
+- **XS13** behringer.world thread t=1206 "New Firmware 1.20 and apparent vew V2 models", first post 2023-06-30 quoting
+  the vendor release note; read via web.archive.org. `[COMMUNITY]` (quote of a vendor note, not the note itself).
+- **XS14** behringer.world thread t=1858 "X air V1 hardware", posts 2024-10-20 to 2024-10-22; read via
+  web.archive.org. `[COMMUNITY]`.
+- **XS15** X AIR firmware V1.18 release note: only search-engine snippets of third-party copies were readable
+  (https://www.scribd.com/document/563453480/ReleaseNote-Behringer-X-AIR-Firmware-V1-18, a Studocu copy, and a Behringer
+  Facebook post). `[COMMUNITY]` `[TO-VERIFY]`.
+- **XS16** Mixing Station documentation, X Air: https://mixingstation.app/ms-docs/mixers/behringer/xair/. `[COMMUNITY]`.
+- **XS17** Wi-Fi field reports, search-engine snippets only: https://behringer.world/viewtopic.php?t=1737&start=10,
+  https://behringer.world/viewtopic.php?t=1580,
+  https://www.thegearpage.net/board/index.php?threads/behringer-xr18-dropouts-even-with-5ghz-ext-router.2169584/.
+  `[COMMUNITY]` `[TO-VERIFY]`.
+- **XS18** Apple iTunes Search/Lookup API, 2026-10-12: MX-Q (id 1471505954, seller Empower Tribe Innovations DE GmbH,
+  v2.2 of 2026-03-18) listing text; a lookup of the X AIR iPad app id 896725230 returned 0 results in the US, DE and GB
+  stores. `[VENDOR-DOC]` for the listing text; the lookup result is an observation.
+- **XS19** OISecWiki "Behringer XR18", last edited 2026-04-15: https://wiki.oisec.net/wiki/Behringer_XR18. `[COMMUNITY]`.
+- **S3 of x32.md** OSC 1.0 specification. `[VENDOR-DOC]` (formal specification).
+
+Pointers not used (licence does not allow reuse, or not readable): pmaillot/X32-Behringer `XAir_Command.c` (no
+licence file), Rippert/XAir-Behringer and Rippert/XAir-MIDI-OSC-BASH-utilities (GPL-3.0),
+Metalab/behringer_xr18_hass (GPL-3.0), redtide/wiki-x-air (no licence), Maillot's X Air meter table on
+behringer.world t=1545 (HTTP 403, no archive copy).
+
+## 1. Models, firmware, scope
+
+### Models
+| ID | Fact | Source |
+|---|---|---|
+| XA-F70 | All six models run one protocol on UDP 10024. The model string is the third argument of `/xinfo` (XA-F10). Strings seen in sources: `XR18`, `XR16`, `XR12` (XS4 p.11), `MR18` (XS6 `kinds.py`), `X18` (XS5 `constants.js` `MIXER_MODEL`), and `X18`, `MR12`, `XR18V2`, `X18V2`, `MR18V2`, `XR16V2`, `XR12V2`, `MR12V2` (XS10 `model.js`). Which exact strings V2 and "W" units report is `[TO-VERIFY]`; the driver must accept any string that starts with `XR`, `X18`, `MR` and read the channel count from the console (XA-F72), not from the string. | XS4 `[COMMUNITY]`; XS5, XS6 `[PERMISSIVE-CODE MIT]`; XS10 `[PERMISSIVE-CODE Apache-2.0]` |
+| XA-F71 | **The DSP is the same on every model.** The vendor specification tables give "Number of processing channels" as "16 input channels, 1 stereo USB return channel, 4 stereo FX return channels, 6 aux buses, main LR" for XR16 and XR12 (XS3), and "18 input channels, 4 FX return channels, 6 aux buses, main LR" for X18/XR18 (XS2), where 17-18 is the stereo aux input. The protocol document lists one meter layout and one snapshot scope for the whole family (16 channels, aux 17-18, 4 FX returns, 6 buses, 4 FX sends, 4 DCAs; XS1 p.3-4). | XS1, XS2, XS3 `[VENDOR-DOC]` |
+| XA-F72 | **Contradiction:** XS6 `kinds.py` and XS11 `mixer_type_xr12.py`/`_xr16.py` model XR12 as 12 channels and 2 buses and XR16 as 16 channels and 4 buses. XS6's author says he can only test on an MR18. These counts match the physical outputs, not the DSP. mixcore follows the vendor tables (XA-F71) and confirms at connect: a strip that does not answer its reads is absent for the session (same mechanism as X32-F06). Test item 12. | XS6, XS11 `[PERMISSIVE-CODE MIT]` vs XS2, XS3 `[VENDOR-DOC]`; `[TO-VERIFY]` |
+| XA-F73 | Physical inputs differ (matters only for gain/phantom, which v1 does not control): XR18/X18/MR18 have 16 mic preamps; XR16 has 8 mic preamps and 8 line inputs; XR12 has 4 mic preamps and 8 line inputs. The stereo return is "USB return" on XR12/XR16 and "Aux In 17-18" on the 18-channel models. Headamp numbering in XS5: `/headamp/01..16` mic (only 01..08 on XR16, 01..04 on XR12), `17..24` TRS line on XR12/XR16, `17` the aux/RCA input on the 18-channel models. | XS2, XS3 `[VENDOR-DOC]`; XS5 `constants.js` `HA_CONFIG`, `defStrip.js` (`rtn/aux` "USB(x12/x16) or Aux In(x18)") `[PERMISSIVE-CODE MIT]` |
+| XA-F74 | No model has a fader surface: X18 is a tablet-dock mixer, the others are rack or stage-box units. **Every parameter change comes from a network client, MIDI, a snapshot load or power-on**, never from an engineer at a desk. | XS2, XS3 (hook-up drawings: control by tablet, PC, phone) `[VENDOR-DOC]` |
+
+### Firmware and hardware revisions
+| ID | Fact | Source |
+|---|---|---|
+| XA-F75 | The vendor protocol document covers "firmware 1.11 or higher". The `/info` example in XS4 shows firmware `1.12`. XS8 verified meters on XR18 firmware 1.17.1. | XS1 p.1 `[VENDOR-DOC]`; XS4 p.11 `[COMMUNITY]`; XS8 `[PERMISSIVE-CODE MIT]` |
+| XA-F76 | Firmware 1.18 (October 2021 per the snippets) lists a fix for "a memory issue with long up-times of remote connection" and "better handling of incorrect OSC meter requests". Older firmware may degrade during a long session with remote clients and may misbehave on malformed `/meters` requests. Only snippets of copies were readable. | XS15 `[COMMUNITY]` `[TO-VERIFY]` |
+| XA-F77 | Firmware 1.20 (2023-06-29) "Added support for V2 mixers with alternative MCU, FPGA, USB, WIFI module: XR18V2, MR18V2, X18V2" and "for mixers with alternative WIFI module: XR12W, XR16W, MR12W". From 1.20 on, each release ships separate files for hardware V1 and V2; the vendor editor shows the hardware version and refuses the wrong file. | XS13 (verbatim quote of the release note) `[COMMUNITY]` |
+| XA-F78 | As of October 2024, 1.22 was current for XR18 V1, XR18 V2, X18 V2 and XR12. A third-party download site lists 1.25 and 1.26; not confirmed on a vendor page. XS19 says the OSC protocol stayed the same across V1 and V2. | XS14, XS19 `[COMMUNITY]`; 1.25/1.26 `[TO-VERIFY]` |
+
+Covered by this file: firmware 1.11 and later, hardware V1 and V2, all six models. The driver never refuses a firmware
+version; it logs the version and relies on feature probing (absent features stay absent). Whether to warn users on
+firmware older than 1.18 (XA-F76) is a product question (proposed default: show a one-time hint, never block).
+
+### Out of scope
+WING, X32/M32 (`x32.md`), DL stage boxes, MIDI control (the X Air MIDI CC map in XS2/XS3), USB audio, firmware update,
+every network or preference write (`/-prefs/*`, `/-action/*`: mixcore never writes them), FX parameters, RTA, automix,
+solo/monitor, routing writes. Processing parameters (gain, EQ, dynamics) are documented in section 3.4 for later phases;
+v1 of the driver has the same scope as `driver/x32` (names, faders, mutes, mute groups, DCAs, input and main meters).
+
+## 2. Transport, discovery, session
+
+### Transport and encoding
+Same as X32: OSC 1.0 messages over UDP, big-endian, 4-byte aligned, types `i`, `f`, `s`, `b`; read = address with no
+argument (X32-F04); write = address with one argument (X32-F05); replies go to the requester's IP **and port** (X32-F01,
+X32-F28). Differs: the port.
+
+| ID | Fact | Source |
+|---|---|---|
+| XA-F01 | The mixer listens on UDP **10024** (X32: 10023) and sends replies "back to the requester's IP/port". | XS1 p.1 `[VENDOR-DOC]`; XS4 p.11 `[COMMUNITY]`; XS5 `index.js` (`remotePort: 10024`) `[PERMISSIVE-CODE MIT]` |
+| XA-F02 | Type rules: big-endian, 4-byte aligned/padded; floats in 0.0-1.0; ints signed 32-bit; booleans as OSC int; strings NUL-terminated. Set and get may carry string, int, float or blob. | XS1 p.2 `[VENDOR-DOC]` |
+| XA-F03 | A set "Sets the value of a console parameter, if it exists and value is in range." No acknowledgement message is defined besides the echo of XA-F22. Reaction to unknown addresses and out-of-range values is not documented `[TO-VERIFY]`; mixcore never sends either. | XS1 p.1 `[VENDOR-DOC]` |
+| XA-F04 | A read of a node with several values in one multi-argument message (`/ch/01/config ,siii ...`) works on X Air and not on X32 (Maillot footnote). mixcore does not use node forms on either family. | XS4 p.12 fn. 7 `[COMMUNITY]` |
+| XA-F05 | Over Wi-Fi, send bursts must be paced as for X32 (X32-F07). XS6 waits 20 ms per query and says wired links can use less. mixcore keeps the X32 window of 16 reads in flight. | XS6 README `[PERMISSIVE-CODE MIT]`; window is our design choice |
+
+### Identity and discovery
+Same as X32: `/xinfo` with no argument answers `,ssss` ip, name, model, firmware; discovery is a broadcast `/xinfo`;
+no mDNS. Differs: port 10024, model strings, the name format, `/info` server fields.
+
+| ID | Fact | Source |
+|---|---|---|
+| XA-F10 | `/xinfo` is answered with `/xinfo ,ssss <ip_address> <device_name> <device_model> <device_version>`. `/info` is answered with `<server_version> <device_name> <device_model> <device_version>`; "First four are defined, and required. Further args are implementation dependent". Example (XS4): `/info ,ssss V0.04 XR18-1D-DA-B4 XR18 1.12` (X32 sends `V2.05 osc-server X32 2.12`: on X Air the second field is the device name, not `osc-server`). | XS1 p.1-2 `[VENDOR-DOC]`; XS4 p.11 `[COMMUNITY]` |
+| XA-F11 | Default device name = model plus the last bytes of the MAC address, e.g. `XR18-17-BE-C0`; the same string is the default SSID in access point mode. The name is user-settable (`/-prefs/name`, XS12). | XS2 (network section) `[VENDOR-DOC]`; XS12 `[COMMUNITY]` |
+| XA-F12 | Discovery as X32-F12, on port 10024: send `/xinfo` to the limited and the directed broadcast address of every interface from one unconnected socket. Companion sends to each interface's directed broadcast every 30 s (`probe()` runs every 5 s and broadcasts on every 6th run); XS10 every 2 s per interface. | XS5 `index.js` `probe`, `getBroadcastAddresses` `[PERMISSIVE-CODE MIT]`; XS10 `search.js` `[PERMISSIVE-CODE Apache-2.0]` |
+| XA-F13 | A broadcasting socket can receive its own `/xinfo` request (no arguments); XS10 drops `/xinfo` messages without exactly 4 arguments for this reason. `driver/x32` already ignores them (its `parseXinfo` needs 4 strings). | XS10 `search.js` (comment "avoids processing our own broadcast messages") `[PERMISSIVE-CODE Apache-2.0]` |
+| XA-F14 | A probe that also targets port 10023 finds X32 consoles with the same packet; the reply's source port and the model string tell the family. Sending `/xinfo` to an X Air on 10023 gets no reply `[TO-VERIFY]` (nothing listens there in any source). | derived from XA-F01 and X32-F01 |
+| XA-F15 | XS10 reuses the discovery socket for the session because "the desk often associates OSC traffic with the same local IP and ephemeral port that answered discovery. Opening a new socket after search can silently fail until rediscovery." No second source; it conflicts with every other client (XS5, XS6, XS9 open a fresh socket). Test item 16. | XS10 `CONNECTIVITY.md` `[PERMISSIVE-CODE Apache-2.0]` `[TO-VERIFY]` |
+| XA-F16 | `/status` is answered with `<status> <ip address> <server name> ...`; status is "active" or "standby" "depending on whether server is currently able to fulfil subscriptions". XS10 sends `/status` with every keep-alive and treats the reply as its liveness signal. Whether "standby" is reported when all `/xremote` slots are taken is `[TO-VERIFY]` (test item 2); if so it is a direct client-limit signal that X32 lacks. | XS1 p.2 `[VENDOR-DOC]`; XS10 `device/index.js` `[PERMISSIVE-CODE Apache-2.0]` |
+
+### Subscriptions, echo and liveness
+Same as X32: `/xremote` with no arguments subscribes the sending IP:port to all parameter changes for 10 s and must be
+renewed; pushes look like read replies; the protocol has no heartbeat. Differs: 8 clients instead of 4, the echo rule,
+the `/xremotenfb` variant.
+
+| ID | Fact | Source |
+|---|---|---|
+| XA-F20 | `/xremote` "Triggers server to send all parameter changes to maximum eight active clients. Timeout is 10 seconds." Renewal intervals in working clients: 9.5 s (XS5), 8 s (XS7), 5 s (XS9), 2 s (XS10). mixcore keeps its X32 choice of 3 s (X32-F27). | XS1 p.1 `[VENDOR-DOC]`; XS5 `index.js` `pulse`, XS7, XS9 `[PERMISSIVE-CODE MIT]`; XS10 `[PERMISSIVE-CODE Apache-2.0]` |
+| XA-F21 | **Client limit: 8** `/xremote` clients (X32: 4). XS9's code comment says "Max 4", without a source; it probably mixes this up with the access point limit (XA-F80). What happens to the ninth client is not documented: as for X32-F21 the simulator default ignores the newcomer until a slot expires, and the opposite policy is an option. | XS1 p.1 `[VENDOR-DOC]`; XS9 `lib/xair.py` comment `[PERMISSIVE-CODE MIT]`; ninth-client behaviour `[TO-VERIFY]` |
+| XA-F22 | **Echo differs from X32.** The vendor's server-message table says the mixer "Echoes the value of a parameter in response to a get, set or fulfilment of single parameter subscription". X32 documents a reply only to a get. | XS1 p.2 `[VENDOR-DOC]` |
+| XA-F23 | A second subscription command `/xremotenfb` exists on X Air and is used by XS9 (every 5 s) and XS10 (every 2 s). XS9's comment: `/xremote` broadcasts all parameter changes to all active clients; `/xremotenfb` = "No Feed Back. Parameter changes are only sent to the active clients which didn't initiate the change". So with plain `/xremote` the X Air **does push a change back to the client that made it** (X32 does not, X32-F23). The vendor document does not mention `/xremotenfb`. | XS9 `lib/xair.py` `[PERMISSIVE-CODE MIT]`; XS10 `device/index.js` `[PERMISSIVE-CODE Apache-2.0]`; vendor silence: XS1; `[TO-VERIFY]` (test item 1) |
+| XA-F24 | Indirect support for XA-F23: Companion X Air keeps one socket for subscription and writes, never updates its own state when it sends, and builds its mute toggle from the last value the mixer sent (`setToggle(self.xStat[strip].isOn, ...)`), so its buttons only show a change if the mixer echoes it. | XS5 `index.js` `sendOSC`, `buildStripDefs.js` `[PERMISSIVE-CODE MIT]` |
+| XA-F25 | Liveness: as X32-F25, a quiet mixer sends nothing. `/xinfo` and `/status` both get immediate replies (XA-F10, XA-F16); mixcore keeps the X32 rules (any packet proves the downlink; `/xinfo` every 1 s and after 400 ms of silence; lost after 1.5 s without any packet or 3 s without an `/xinfo` reply). | XS1 `[VENDOR-DOC]`; intervals are our design (X32-F25) |
+| XA-F26 | After a power cycle the mixer reloads its autosaved state ("Saves automatically its state (every 2 min)", `/-stat/autosave`), so up to about 2 min of changes can be lost; with `/-prefs/ponmute` ON it "mutes buses/main after power-on". Subscriptions do not survive a reboot `[TO-VERIFY]`. mixcore re-subscribes and re-reads after every reconnect anyway. | XS12 `[COMMUNITY]`; `[TO-VERIFY]` (test item 15) |
+| XA-F27 | X32's `/subscribe`, `/formatsubscribe`, `/batchsubscribe`, `/renew` are not in the X Air vendor document. XS10's simulator accepts `/batchsubscribe` and `/renew`, and XS10 sends `/unsubscribe ,s /meters/N` when it stops meters; whether real firmware implements them is `[TO-VERIFY]`. mixcore does not use them. | XS1 (absent) `[VENDOR-DOC]`; XS10 `shared.js`, `virtual-devices/helpers/deskRun.js` `[PERMISSIVE-CODE Apache-2.0]` |
+
+#### Echo design for `driver/xair` (resolves XA-F22..F24 without hardware)
+Keep the X32 two-socket session unchanged: the subscription socket sends `/xremote`, reads and meter requests and
+never writes; the command socket sends writes and background re-reads and never sends `/xremote`. This is correct
+under each of the three readings of the sources:
+- H1 (X32-like: no push to the sender): our writes come from the command socket, which is "another client" for the
+  subscription socket, so their echoes arrive on the subscription socket, as on X32.
+- H2 (XA-F23: `/xremote` pushes to every subscriber including the one that made the change): same as H1, because the
+  command socket is not a subscriber.
+- H3 (XA-F22 read literally: a set is answered to its sender): the command socket also receives an echo of each write.
+  `driver/x32` treats every command-socket packet as a re-read reply and accepts only replies to an outstanding,
+  untouched read (`driver/x32/reread.go:111-116`); every write marks its parameter touched
+  (`driver/x32/session.go:293`), so such an echo is dropped and can never be taken for a desk change.
+Use plain `/xremote` (vendor-documented), not `/xremotenfb` (undocumented; its "initiator" might be judged by IP only,
+which would hide the echoes of our command socket). `EchoesOwnWrites` stays true. Test item 1 decides which hypothesis
+holds; only the simulator default changes with the answer.
+
+## 3. Address map for the unified model
+
+Same as X32: `/ch/NN` two-digit inputs, `mix/fader`, `mix/on` (1 = on, 0 = muted), `config/name`, `grp/mute` and
+`grp/dca` bitmaps (bit n-1 = group n), `/config/mute/N` (1 = engaged), `/dca/N/on` (0 = DCA muted), `/dca/N/fader`.
+Differs: counts, unpadded indices on buses, FX and DCAs, `/lr` instead of `/main/st`, aux and FX returns under `/rtn`,
+FX send masters `/fxsend/N`, no per-send `on`, no matrices, no main mono.
+
+Polarity facts carried over from X32 and confirmed for X Air: `mix/on` 1 = not muted (XS6 `shared.py` `on` = value 1;
+XS5 `isOn = !!v`) `[PERMISSIVE-CODE MIT]`; `/config/mute/N` 1 = group engaged (XS9 `mixerstate.py` toggles the value 1/0
+and passes it to the group LED; XS6 README `config.mute_group[0].on = True`) `[PERMISSIVE-CODE MIT]`.
+
+### 3.1 Strips
+| Unified strip | X Air address root | Index form | X32 equivalent | Source |
+|---|---|---|---|---|
+| input 1..16 | `/ch/01` .. `/ch/16` | 2 digits | `/ch/01..32` | XS1 p.2 (`/ch/01/mix/fader` example) `[VENDOR-DOC]`; XS5 `defStrip.js` `[PERMISSIVE-CODE MIT]` |
+| auxIn 1 (stereo, 17-18) | `/rtn/aux` | none (one strip) | `/auxin/01..08` | XS5 `defStrip.js`; XS12 `[COMMUNITY]` |
+| fxReturn 1..4 (stereo) | `/rtn/1` .. `/rtn/4` | 1 digit | `/fxrtn/01..08` | XS5 `defStrip.js` (`digits: 1`) `[PERMISSIVE-CODE MIT]`; XS7 section 8 `[PERMISSIVE-CODE MIT]` |
+| bus 1..6 | `/bus/1` .. `/bus/6` | 1 digit | `/bus/01..16` | XS5 `defStrip.js`; XS7 section 8 ("no padding") `[PERMISSIVE-CODE MIT]` |
+| bus 7..10 (FX send masters) | `/fxsend/1` .. `/fxsend/4` | 1 digit | none (X32 uses buses) | XS5 `defStrip.js`; XS12 ("FX1 to FX4 are mixbuses 7 to 10") `[COMMUNITY]` |
+| main | `/lr` | none | `/main/st` | XS5 (`/lr/mix/fader`, `/lr/mix/on`); XS11 `mixer_type_xair.py` `[PERMISSIVE-CODE MIT]` |
+| dca 1..4 | `/dca/1` .. `/dca/4` | 1 digit | `/dca/1..8` | XS1 p.4 (`/meters/8` "4 dcas") `[VENDOR-DOC]`; XS5 `[PERMISSIVE-CODE MIT]` |
+| muteGroup 1..4 | `/config/mute/1` .. `/config/mute/4` | 1 digit | `/config/mute/1..6` | XS5 `defStrip.js` (max 4); XS7 ("always exactly 4") `[PERMISSIVE-CODE MIT]` |
+| matrix | none | | `/mtx/01..06` | XS7 section 8 `[PERMISSIVE-CODE MIT]` |
+
+Modelling FX send masters as buses 7..10 is our proposal: sends address them as send slots 07..10 (section 3.3), so a
+"bus" in the unified model stays "a destination of sends". They have a master fader, mute and name but no pan, EQ or
+dynamics (XS5 `defStrip.js` `fxsend`: `hasPan: false`, `proc: []`).
+
+### 3.2 Parameters per strip
+`<s>` is a strip root from 3.1. "v1" marks what the first driver needs (parity with `driver/x32`).
+
+| Field | Address | Type, range | Strips | Source |
+|---|---|---|---|---|
+| name (v1) | `<s>/config/name` | `s`; max length `[TO-VERIFY]` (X32: 12). Keep the X32 rule (<= 12 printable ASCII) until test item 14. | ch, rtn/aux, rtn/N, bus, fxsend, lr, dca | XS12 `[COMMUNITY]`; XS5 (`name` handled for every strip) `[PERMISSIVE-CODE MIT]` |
+| colour | `<s>/config/color` | `i` 0..15: OFF, RD, GN, YE, BL, MG, CY, WH, then the same 8 inverted | same | XS12 `[COMMUNITY]`; XS5 `COLOR_VALUES` `[PERMISSIVE-CODE MIT]` |
+| fader (v1) | `<s>/mix/fader`; DCA: `/dca/N/fader` | `f` 0..1, level law XA-F40 | ch, rtn/aux, rtn/N, bus, fxsend, lr, dca | XS5 `buildStripDefs.js` (DCA uses `/fader`, others `/mix/fader`) `[PERMISSIVE-CODE MIT]` |
+| mute (v1) | `<s>/mix/on`; DCA: `/dca/N/on` | `i` 1 = on, 0 = muted | same | XS5; XS6 `[PERMISSIVE-CODE MIT]`; XS12 `[COMMUNITY]` |
+| mute group engaged (v1) | `/config/mute/N` | `i` 1 = engaged | muteGroup | XS5, XS9 `[PERMISSIVE-CODE MIT]` |
+| pan / balance | `<s>/mix/pan` | `f` 0..1 = -100..+100, 101 steps | ch, rtn/aux, rtn/N, bus, lr | XS5 `buildStripDefs.js` (`fSteps: 101`) `[PERMISSIVE-CODE MIT]` |
+| main assign | `<s>/mix/lr` | `i` 1 = routed to main (X32: `mix/st`) | ch, rtn/aux, rtn/N, bus | XS5 `defStrip.js` (`lr: mix/lr`) `[PERMISSIVE-CODE MIT]`; XS12 `[COMMUNITY]` |
+| mute group membership (v1) | `<s>/grp/mute` | `i` bitmap 0..15 | ch, rtn/aux, rtn/N, bus, fxsend; **not** `/lr` | XS10 `device/bus/mg.js` (`mgHas` excludes main) `[PERMISSIVE-CODE Apache-2.0]`; XS12 (ch, bus, fxsend) `[COMMUNITY]`; `/lr/grp/mute` absent `[TO-VERIFY]` (test item 9) |
+| DCA membership (v1) | `<s>/grp/dca` | `i` bitmap 0..15 | ch, rtn/aux, rtn/N, bus, fxsend; not `/lr` | XS10 `device/bus/dca.js` `[PERMISSIVE-CODE Apache-2.0]`; XS12 `[COMMUNITY]` |
+| channel link | `/config/chlink/1-2` .. `/15-16` | `i` 0/1 | input pairs | XS12 `[COMMUNITY]`; XS7 `[PERMISSIVE-CODE MIT]` |
+| bus link | `/config/buslink/1-2`, `/3-4`, `/5-6` | `i` 0/1 | bus pairs | XS12 `[COMMUNITY]`; XS7 `[PERMISSIVE-CODE MIT]` |
+| what a link couples | `/config/linkcfg/preamp`, `/eq`, `/dyn`, `/fdrmute` ("Fader, Mute, Sends") | `i` 0/1 | global | XS12 `[COMMUNITY]` |
+| mute preferences | `/-prefs/dcamute`, `/-prefs/hardmute` | `i` OFF/ON; semantics assumed as X32-F39 | global | XS12 `[COMMUNITY]`; semantics `[TO-VERIFY]` |
+
+### 3.3 Sends (monitor mixes)
+From an input `/ch/NN`, the aux return `/rtn/aux` or an FX return `/rtn/N`, to send slot `MM`:
+`MM` = `01`..`06` for buses 1..6 and `07`..`10` for FX sends 1..4 (always two digits, also after a 1-digit root).
+
+| Field | Address | Type, range | Source |
+|---|---|---|---|
+| level | `<from>/mix/MM/level` | `f` 0..1, level law XA-F40, **161 steps** (k/160) | XS5 `buildStripDefs.js` (`/mix/` + 2-digit bus + `/level`, `fSteps: 161`) `[PERMISSIVE-CODE MIT]`; XS10 `bus/to/level.js` `[PERMISSIVE-CODE Apache-2.0]` |
+| pan | `<from>/mix/MM/pan` | `f` 0..1 = -100..+100 | XS10 `bus/to/pan.js` `[PERMISSIVE-CODE Apache-2.0]`; XS12 `[COMMUNITY]` |
+| tap | `<from>/mix/MM/tap` | `i` 0..5 = IN, PREEQ, POSTEQ, PRE, POST, GRP (X32: `type` on odd sends only, other labels) | XS12 `[COMMUNITY]`; XS10 `bus/to/tap.js` (same 6 values) `[PERMISSIVE-CODE Apache-2.0]` |
+| subgroup on | `<from>/mix/MM/grpon` | `i` 0/1; the send's on/off when tap = GRP | XS12 ("sends group Off/On") `[COMMUNITY]`; XS10 `bus/to/on.js` (`grpon` used only with tap "Same level") `[PERMISSIVE-CODE Apache-2.0]` |
+| send on/off | **none**: no `<from>/mix/MM/on` in any source (X32 has `/ch/NN/mix/MM/on`) | | XS12 `[COMMUNITY]`, XS10, XS5 (absent in all three); `[TO-VERIFY]` (test item 10) |
+
+Model consequence: on X Air `Send.on` is an absent capability (never faked); `Send.tap` maps IN/PREEQ/POSTEQ/PRE to
+`pre` and POST/GRP to `post` for the model's two-valued tap, with the console word kept for display. Whether tap and
+pan exist per send or only per odd send of a linked pair (as on X32) is `[TO-VERIFY]` (test item 10). Sends from FX
+returns to FX sends 07..10 are `[TO-VERIFY]`.
+
+### 3.4 Processing (later phases; not in driver v1)
+| Field | Address | Encoding | Source |
+|---|---|---|---|
+| headamp gain | `/headamp/NN/gain` (2 digits, 01..24) | mic inputs: dB = -12 + 72 f, 145 steps of 0.5 dB; line inputs: dB = -12 + 32 f, 65 steps of 0.5 dB | XS5 `constants.js` `LIMITS` `h145`, `h65`, `HA_CONFIG` `[PERMISSIVE-CODE MIT]`; XS10 `input/gain.js` `[PERMISSIVE-CODE Apache-2.0]`. XS12 lists only -12..+20 for `/headamp/01/gain` (contradiction, trust the code) |
+| phantom | `/headamp/NN/phantom` | `i` 0/1, mic inputs only, per headamp (as X32) | XS5 `HA_CONFIG` (`ph: true` on 1..16) `[PERMISSIVE-CODE MIT]` |
+| input source | `/ch/NN/config/insrc` (`i`), `/ch/NN/preamp/rtnsw` (0 = preamp, 1 = USB), `/ch/NN/config/rtnsrc` (USB 1..18) | range of `insrc` contradictory in XS12 ("0-15", 17 labels) | XS12 `[COMMUNITY]`; XS10 README ("`rtnsw` decides whether `insrc` or `rtnsrc` is active") `[PERMISSIVE-CODE Apache-2.0]`; `[TO-VERIFY]` |
+| USB trim | `<s>/preamp/rtntrim` | dB = -18 + 36 f, 145 steps | XS5 `LIMITS` `r145` `[PERMISSIVE-CODE MIT]` |
+| polarity | `<s>/preamp/invert` | `i` 0/1 | XS5, XS6 `[PERMISSIVE-CODE MIT]` |
+| low cut | `/ch/NN/preamp/hpon` (`i`), `/ch/NN/preamp/hpf` (`f`) | log: Hz = 20 x 20^f (20..400 Hz) | XS7; XS10 `bus/lowCut.js` `[PERMISSIVE-CODE]` (MIT, Apache-2.0). XS12 says 20..200 (contradiction) `[TO-VERIFY]` |
+| EQ | `<s>/eq/on`; bands `<s>/eq/B/type`, `/f`, `/g`, `/q`; 4 bands on ch, rtn/aux, rtn/N; 6 bands on bus and lr; `<s>/eq/mode` PEQ/GEQ/TEQ on bus and lr | type 0..5 LCut, LShv, PEQ, VEQ, HShv, HCut; Hz = 20 x 1000^f; dB = -15 + 30 f; Q = 10 x 0.03^f (f = 0 is Q 10, f = 1 is Q 0.3) | XS7 section 8; XS10 `bus/equalizer.js` `[PERMISSIVE-CODE]` (MIT, Apache-2.0); XS12 `[COMMUNITY]` |
+| graphic EQ | `<s>/geq/<band>` on bus and lr, 31 bands, dB = -15 + 30 f | | XS7 `[PERMISSIVE-CODE MIT]` |
+| gate, dynamics | `<s>/gate/...`, `<s>/dyn/...` (thr, ratio index 0..11 = 1.1 .. 100, attack, hold, release, knee, mgain, mix) | ranges in XS7 section 6 | XS7 `[PERMISSIVE-CODE MIT]`; XS12 `[COMMUNITY]` |
+
+Quirk for later phases: XS10 never writes 1.0 to gain, gate, pan and FX parameters but 0.999999, with the comment
+"Strange bug when setting 1 in some binary values" (`shared.js:39`) `[PERMISSIVE-CODE Apache-2.0]` `[TO-VERIFY]`
+(test item 7). Faders are not in that list.
+
+### 3.5 Examples
+| What | Message | Bytes (hex) |
+|---|---|---|
+| Ch 1 fader to 0 dB (wire 0.75) | `/ch/01/mix/fader ,f 0.75` | `2f63682f30312f6d69782f6661646572000000002c6600003f400000` |
+| Mute main LR | `/lr/mix/on ,i 0` | `2f6c722f6d69782f6f6e00002c69000000000000` |
+| Read ch 1 name | `/ch/01/config/name` (no argument) | |
+| Engage mute group 2 | `/config/mute/2 ,i 1` | |
+| Bus 3 send from ch 5 to -10 dB | `/ch/05/mix/03/level ,f 0.5` | |
+| Read current snapshot | `/-snap/index` (no argument) | |
+
+These byte strings were computed with OSC 1.0 rules (XA-F02); the layout is the one of the X32 example in X32-F43.
+
+## 4. Value encodings
+
+### Fader law (level type)
+| ID | Fact | Source |
+|---|---|---|
+| XA-F40 | **Same law as X32-F40**: four straight segments, dB = 40f - 30 (0.5..1), 80f - 50 (0.25..0.5), 160f - 70 (0.0625..0.25), 480f - 90 (0..0.0625); 0.0 is -inf; 1.0 is +10 dB. Used for faders, send levels and solo level. | XS5 `index.js` `faderToDB`; XS6 `util.py` `db_from`/`db_to`; XS7 section 6 `[PERMISSIVE-CODE MIT]` |
+| XA-F41 | Faders have **1024 steps** (k/1023) as on X32 (X32-F41); send levels have **161 steps** (k/160). | XS5 `constants.js` (`fLevels[1024]`), `buildStripDefs.js` (`fSteps: 1024` for faders, `161` for sends) `[PERMISSIVE-CODE MIT]`; quantization on X Air `[TO-VERIFY]` (test items 7, 8) |
+| XA-F42 | 0.0 = -inf and the lowest non-zero step (k = 1, -89.53 dB) as X32-F42 `[TO-VERIFY]`. | derived from XA-F40, XA-F41 |
+
+Reference points (computed from XA-F40 and XA-F41; the driver's table test must reproduce them):
+
+| dB | exact f | fader step k (of 1023) | f sent = k/1023 | dB shown after rounding | send step (of 160) |
+|---|---|---|---|---|---|
+| +10 | 1.0 | 1023 | 1.000000 | +10.00 | 160 |
+| +5 | 0.875 | 895 | 0.874878 | +5.00 | 140 |
+| 0 | 0.75 | 767 | 0.749756 | -0.01 | 120 |
+| -5 | 0.625 | 639 | 0.624633 | -5.01 | 100 |
+| -10 | 0.5 | 512 | 0.500489 | -9.98 | 80 |
+| -20 | 0.375 | 384 | 0.375367 | -19.97 | 60 |
+| -30 | 0.25 | 256 | 0.250244 | -29.98 | 40 |
+| -40 | 0.1875 | 192 | 0.187683 | -39.97 | 30 |
+| -50 | 0.125 | 128 | 0.125122 | -49.98 | 20 |
+| -60 | 0.0625 | 64 | 0.062561 | -59.99 | 10 |
+| -70 | 0.041667 | 43 | 0.042033 | -69.82 | 7 (-69.00) |
+| -80 | 0.020833 | 21 | 0.020528 | -80.15 | 3 (-81.00) |
+| -inf | 0.0 | 0 | 0.0 | -inf | 0 |
+
+### Other laws
+| Parameter | Formula (f = wire float) | Steps | Reference points | Source |
+|---|---|---|---|---|
+| pan | -100 + 200 f | 101 (step 2) | f 0 = L100, 0.5 = C, 1 = R100 | XS5 `[PERMISSIVE-CODE MIT]` |
+| mic gain | -12 + 72 f dB | 145 (0.5 dB) | 0 dB at f = 24/144 | XS5 `[PERMISSIVE-CODE MIT]` |
+| line gain | -12 + 32 f dB | 65 (0.5 dB) | 0 dB at f = 24/64 | XS5 `[PERMISSIVE-CODE MIT]` |
+| USB trim | -18 + 36 f dB | 145 (0.25 dB) | 0 dB at f = 0.5 | XS5 `[PERMISSIVE-CODE MIT]` |
+| EQ frequency | 20 x 1000^f Hz | `[TO-VERIFY]` | f 0.25 = 112.5 Hz, 0.5 = 632.5 Hz, 0.75 = 3556.6 Hz | XS7, XS10 `[PERMISSIVE-CODE]` |
+| EQ gain | -15 + 30 f dB | `[TO-VERIFY]` | f 0.5 = 0 dB | XS7, XS10 |
+| EQ Q | 10 x 0.03^f | `[TO-VERIFY]` | f 0 = 10, 0.5 = 1.73, 1 = 0.3 | XS7, XS10 |
+| low cut | 20 x 20^f Hz | `[TO-VERIFY]` | f 0.5 = 89.4 Hz, 1 = 400 Hz | XS7, XS10 |
+| switches | `i` 0/1 | | `mix/on` 1 = on; `/config/mute/N` 1 = engaged | section 3 |
+| bitmaps | `i` 0..15 | | bit n-1 = group n (X32-F36) | XS10 `bus/mg.js` (bit position = group id) `[PERMISSIVE-CODE Apache-2.0]` |
+
+## 5. Echo, push and client limits (summary)
+| Question | X32 (baseline) | X Air / M Air |
+|---|---|---|
+| Changes pushed to subscribers | yes, `/xremote`, 10 s | yes, `/xremote`, 10 s (XA-F20) |
+| Push back to the client that made the change | no (X32-F23) | yes with `/xremote`, no with `/xremotenfb` (XA-F23) `[TO-VERIFY]` |
+| Reply to a set | none | echo "in response to a ... set" (XA-F22) `[TO-VERIFY]` |
+| Push clients | 4 (X32-F21) | 8 (XA-F21) |
+| N+1st client | reads and writes, no pushes, no signal | not documented; `/status` "standby" may signal it (XA-F16) `[TO-VERIFY]` |
+| Extra device limit | none in the console | 4 Wi-Fi clients in access point mode (XA-F80) |
+| Client identity | source IP and port (X32-F28) | replies to "requester's IP/port" (XA-F01); whether a port that never sent `/xremote` takes a slot `[TO-VERIFY]` |
+
+Client-limit detection: reuse the X32 design (unechoed writes, unpushed changes found by re-reads) with limit 8, and add
+`/status` as a third signal only if test item 2 shows "standby" for a ninth client.
+
+## 6. Meters
+Same as X32: `/meters ,s <bank>` plus optional ints starts a stream to the sender; replies are OSC messages addressed
+to the bank with one blob; the blob holds a little-endian int32 count then the values. Differs: values are **int16 in
+1/256 dB** (X32: float32 linear), one bank carries both inputs and main L/R, banks have other contents, rate and
+lifetime are not in the vendor document.
+
+| ID | Fact | Source |
+|---|---|---|
+| XA-F50 | Request: `/meters ,s "<id>"` or `/meters ,si "<id>" <chnmeterid>` (the int is optional and selects the channel for `/meters/0`). The vendor example `/meters ,si "/meters/0" 8` returns the meters of channel 9, so `chnmeterid` is 0-based. Bytes from the vendor document: `2f 6d 65 74 65 72 73 00 2c 73 69 00 2f 6d 65 74 65 72 73 2f 30 00 00 00 00 00 00 08`. | XS1 p.1-2 `[VENDOR-DOC]` |
+| XA-F51 | Reply: "regular updates ... as a single binary blob, to OSC address <id>"; blob = one int32 size value then N signed int16 values, "resolution 1/256 dB". Working clients read the count as **little-endian** and the number of values (Companion checks `buf[0] == 40` for bank 1) and the values as little-endian int16. | XS1 p.1-3 `[VENDOR-DOC]`; XS5 `index.js` `parseMeters1`, XS7, XS8 `[PERMISSIVE-CODE MIT]`; XS10 `shared.js` (`readIntLE(i, 2) / 256`) `[PERMISSIVE-CODE Apache-2.0]` |
+| XA-F52 | Conversion: dBFS = int16 / 256. 0 = 0 dBFS; -32768 (`0x8000`) = -128 dB, which XS7 treats as silence. mixcore maps -32768 to -inf and every other value to v/256. Whether values above 0 occur is `[TO-VERIFY]`. Reading the blob as float32 is a known bug that gives values like -1e29 (XS7, XS8). | XS1 `[VENDOR-DOC]`; XS7 `meters.go` (`MeterSilenceDB = -128.0`), XS8 README `[PERMISSIVE-CODE MIT]` |
+| XA-F53 | Bank `/meters/1` "ALL CHANNELS": 40 values = "16 mono + 5x2 fx/aux + 6 bus + 4 fx send (all pre) + 2 st (post) + 2 monitor". Index order used by two independent clients: 0..15 input channels 1..16; 16, 17 aux L, R; 18..25 FX returns 1..4 L, R; 26..31 buses 1..6; 32..35 FX sends 1..4; **36, 37 main L, R**; 38, 39 monitor L, R. Input values are pre-fader; main L/R are post-fader. | XS1 p.3 `[VENDOR-DOC]`; XS5 `buildMeterDefs.js` `[PERMISSIVE-CODE MIT]`; XS7 section 1a `[PERMISSIVE-CODE MIT]` |
+| XA-F54 | Contradiction: XS8 says the first 16 values of bank 1 are "post-EQ" input meters (XR18 1.17.1) and that `/meters/2` has 40 values. The vendor document says "all pre" and 36 values for bank 2. "Pre" and "post-EQ" can both be true (pre-fader, post-EQ). Test item 6. | XS8 `[PERMISSIVE-CODE MIT]` vs XS1 `[VENDOR-DOC]`; `[TO-VERIFY]` |
+| XA-F55 | Other banks: `/meters/0 <ch>` 8 values (pre-fader L/R, gate GR, comp GR, post-fader L/R, gate key, comp key); `/meters/2` 36 (16 mic, 2 aux, 18 USB: physical inputs, best for gain setting); `/meters/3` 56 (4 x (2 in, 10 FX, 2 out)); `/meters/4` 100 RTA bins; `/meters/5` 44 (6 aux, LR, 16 P16, 18 USB, phones); `/meters/6` 39 (16 gate, 16 ch dyn, 6 bus dyn, LR dyn); `/meters/7` 16 automix gains; `/meters/8` 4 DCAs; `/meters/9` 4 (2 record, 2 play). | XS1 p.3-4 `[VENDOR-DOC]` |
+| XA-F56 | Rate and lifetime are **not in the vendor document**. Working clients: XS10 sends `/meters ,siii "/meters/N" <arg> 0 <tf>` with tf 1 commented "50ms * METERS_TIME_FACTOR" and renews every 9 s; XS8 renews every 5 s and says subscriptions "expire at ~10 s" (XR18 1.17.1); XS5 sends `/meters ,si "/meters/1" 0` every 9.5 s, each time after `/-local/updrate ,i 1` whose meaning nobody documents. mixcore assumes 50 ms and 10 s like X32-F50 and renews with `/xremote` every 3 s. | XS10 `shared.js` `[PERMISSIVE-CODE Apache-2.0]`; XS8 `[PERMISSIVE-CODE MIT]`; XS5 `index.js` `pulse` `[PERMISSIVE-CODE MIT]`; `[TO-VERIFY]` (test item 5) |
+| XA-F57 | Request form for mixcore: `/meters ,si "/meters/1" 0` (vendor-documented shape, and the exact form Companion has sent for years). mixcore does **not** send `/-local/updrate`: it is a write to an undocumented address. Firmware before 1.18 may mishandle malformed meter requests (XA-F76), so the driver never sends any other shape. | XS1, XS5; design choice |
+
+Meter frame for the core API (contract change needed first, `contracts/core-api/meter-frame.md`): for family `xair`,
+level `i` = input `i+1` for `i` = 0..15, level 16 = Main L, level 17 = Main R, `n` = 18, all from bank 1 (one bank, where
+X32 needs banks 1 and 2). Input levels are pre-fader by vendor definition.
+
+ОЦЕНКА of meter traffic: one bank 1 packet = 12 (address) + 4 (`,b` tag) + 4 (blob size) + 4 (count) + 80 (40 x int16)
+= 104 bytes; at 20 packets/s that is 2080 B/s, about 2 KB/s per client before UDP/IP headers (+28 B per packet, about
+2.6 KB/s). Range 1-3 KB/s if the real rate is 10-30 packets/s.
+
+## 7. Scenes (snapshots)
+Same as X32: no dedicated "recall happened" event is documented; a recall reaches subscribers as parameter pushes.
+Differs: X Air has 64 snapshots and an explicit "recently loaded/saved" index; X32's `/-show/...` and `/-undo/time`
+markers do not exist in any X Air source.
+
+| ID | Fact | Source |
+|---|---|---|
+| XA-F60 | Snapshot node (vendor spelling `/snap/`): `name` (31 chars, "snapshot name for save, recently loaded snapshot name"), `index` [1,64] "recently loaded/saved snapshot number", `load` [1,64] "triggers snapshot load", `save`, `delete`; per slot `01..64/name` (31 chars) and `01..64/scope` (59-char string of `+`/`-` flags: ch1..16, aux 17-18, fxreturn 1..4, busmaster 1..6, fxsendmaster 1..4, main lr, dca 1..4, fx 1..4, source, input, config, eq, dyn, bussend 1..6, fxsend 1..4, fader-pan, mute, routing, console configuration). Writing a slot's `name` or `scope` changes it at once, without a save. | XS1 p.4 `[VENDOR-DOC]` |
+| XA-F61 | Every client uses the dashed path `/-snap/...` (`/-snap/index`, `/-snap/load ,i N`, `/-snap/NN/name`); the vendor document prints `/snap/`. mixcore reads `/-snap/index` and treats `/snap/` as `[TO-VERIFY]`. | XS5 `index.js`, `actions.js`; XS11 `mixer_type_xair.py` `[PERMISSIVE-CODE MIT]`; XS10 `scene/load.js` `[PERMISSIVE-CODE Apache-2.0]`; XS12 `[COMMUNITY]` |
+| XA-F62 | Whether `/-snap/index` is **pushed** to subscribers after a load by another client is not documented. Companion reads it once at connect and also handles an unsolicited `/-snap/index` message. Test item 13. | XS5 `index.js` (`firstPoll`, handler for `/-snap/index`) `[PERMISSIVE-CODE MIT]`; `[TO-VERIFY]` |
+| XA-F63 | Mixing Station stores its bus-protection password, unencrypted, in snapshot 64; official apps ignore it; deleting slot 64 resets it. mixcore must never save into or delete slot 64 as a side effect, and should show slot 64's name as is. | XS16 `[COMMUNITY]` |
+
+mixcore's recall heuristic for X Air (design): signals are (a) a burst, at least 8 different parameters pushed from
+other clients within 250 ms (the X32 rule, which needs no marker), and (b) a push of `/-snap/index`, if test item 13
+shows it is pushed. Confidence `high` for both, `medium` for (b) alone, `low` for (a) alone. Unlike X32, a pushed
+`/-snap/index` names the loaded snapshot (XA-F60), so `SceneRecalled` may carry it as the loaded scene, not only as a
+highlighted one. Because no X Air has a surface (XA-F74), "external change" always means another app, MIDI or a load.
+
+## 8. Wi-Fi, network modes and limits
+| ID | Fact | Source |
+|---|---|---|
+| XA-F80 | Three connection modes chosen with the REMOTE switch: Ethernet LAN, Wi-Fi client, access point. **Access point mode: DHCP server only, "a maximum of 4 clients", Wi-Fi channels 1-11, security WEP 40-bit (5 ASCII characters) or WEP 104-bit (13), default no security.** Specification table: "Access Point, number of clients: Max. 4" for XR18/X18 and XR16/XR12. | XS2, XS3 `[VENDOR-DOC]` |
+| XA-F81 | In access point mode the mixer is always `192.168.1.1` and leases `192.168.1.101` to `192.168.1.132`. | XS2 `[VENDOR-DOC]` |
+| XA-F82 | Radio: IEEE 802.11 b/g, 2.4 GHz only (2412-2462 MHz). Wi-Fi client mode supports WEP, WPA and WPA2, DHCP client or static IP. | XS2 specification and network section `[VENDOR-DOC]` |
+| XA-F83 | Ethernet mode: DHCP client by default, optional DHCP server or static IP; with no DHCP server the mixer takes a link-local address in 169.254.1.0 to 169.254.254.255. "There are no security options for LAN connections". | XS2 `[VENDOR-DOC]` |
+| XA-F84 | RESET held 2 s restores default network settings; held 10 s resets all console functions to factory defaults. A wrong static IP or Wi-Fi password makes the mixer unreachable in that mode. | XS2, XS3 `[VENDOR-DOC]` |
+| XA-F85 | Whether the Ethernet port still answers OSC while the switch is on access point or Wi-Fi client is not stated `[TO-VERIFY]` (test item 4). | XS2 (silent) |
+| XA-F86 | Field reports describe the built-in 2.4 GHz access point as prone to dropouts and recommend an external router wired to the mixer. | XS17 `[COMMUNITY]` `[TO-VERIFY]` |
+
+Product consequence (for the lead, not a protocol fact): in access point mode the whole band shares 4 Wi-Fi
+associations, so 4 devices in total can reach the mixer (for example the engineer's tablet plus 3 musician phones), long
+before the 8-client OSC limit. Musician monitor seats need an external router; the onboarding screen should say so
+when the mixer reports `192.168.1.1` (XA-F81) and 4 seats are used.
+
+## 9. What the vendor apps do
+| ID | Fact | Source |
+|---|---|---|
+| XA-F90 | Vendor apps: "X AIR EDIT for Windows, Mac or Linux", "X AIR for iPad", "X AIR for Android" (XS2, XS3), M AIR EDIT for Midas (XS13); MX-Q (Empower Tribe Innovations DE GmbH) is the vendor-side personal monitor app "for Midas M32, M-AIR, Behringer X32, and X-AIR audio mixers", with sends and pan "for all input channel sends to all aux-buses" and 4 app-local "MCA" groups. | XS2, XS3 `[VENDOR-DOC]`; XS13 `[COMMUNITY]`; XS18 MX-Q listing `[VENDOR-DOC]` |
+| XA-F91 | On connect, X AIR Edit asks to "synchronize from mixer to PC"; it warns when the mixer firmware is not supported but lets the user continue. The Android app shows "Mix Access = All" in its connection info, which suggests a per-device restriction to one mix; whether the mixer enforces it or only the app is `[TO-VERIFY]` (likely app-only: nothing in XS1 limits a client). | XS2, XS3 `[VENDOR-DOC]` |
+| XA-F92 | M AIR EDIT 1.8 and newer X AIR Edit show the hardware version (V1/V2) on connect. Mixing Station warned "update too new" after firmware 1.20 appeared. | XS13 `[COMMUNITY]` |
+| XA-F93 | A lookup of the X AIR iPad app (id 896725230) in the App Store API returned no result in the US, DE and GB stores on 2026-10-12; the store page still shows in search engines. Whether the iPad app is withdrawn is `[TO-VERIFY]` (market-analyst). | XS18 |
+| XA-F94 | No public capture of X AIR Edit traffic was found. What it sends on connect (sync order, which subscriptions, meter banks, renewal interval) is unknown; test item 17 is the capture procedure. | searched GitHub, forums, XS1-XS19 |
+
+## 10. Known quirks and failure modes
+| ID | Quirk | Impact on the driver | Source |
+|---|---|---|---|
+| XA-F95 | Firmware before 1.18: memory issue with long remote sessions; malformed meter requests handled badly. | Never send unusual `/meters` shapes; log firmware; product hint for < 1.18. | XS15 `[COMMUNITY]` `[TO-VERIFY]` |
+| XA-F96 | V1/V2 hardware need different firmware files since 1.20; the OSC protocol is reported unchanged. | Accept `V2` model suffixes; no protocol branch. | XS13, XS19 `[COMMUNITY]` |
+| XA-F97 | Power cycle rolls back to the last autosave (about 2 min) and may mute buses and main (`/-prefs/ponmute`). | After a reconnect that followed long silence, full re-read; never "restore" our last values (invariant 1). | XS12 `[COMMUNITY]` |
+| XA-F98 | Access point: 4 devices, WEP only, 2.4 GHz, dropouts reported. | Stale/lost handling as X32; onboarding hint (section 8). | XS2 `[VENDOR-DOC]`; XS17 `[COMMUNITY]` |
+| XA-F99 | Discovery socket reuse reportedly needed (XA-F15). | `driver/x32` probes from its own socket and opens new session sockets; test item 16 decides whether xair must reuse it. | XS10 `[PERMISSIVE-CODE Apache-2.0]` `[TO-VERIFY]` |
+| XA-F100 | Snapshot 64 may hold Mixing Station's password (XA-F63). | Never touch slot 64 implicitly. | XS16 `[COMMUNITY]` |
+| XA-F101 | Some clients avoid writing exactly 1.0 to non-fader parameters (section 3.4). | Irrelevant for v1; test item 7 before processing work. | XS10 `[PERMISSIVE-CODE Apache-2.0]` `[TO-VERIFY]` |
+
+## 11. Same or different, section by section of `x32.md`
+| `x32.md` section | X Air |
+|---|---|
+| Transport and encoding (X32-F01..F07) | Same OSC rules and pacing; port **10024**; vendor-documented type rules (XA-F01..F05). |
+| Identity and discovery (X32-F10..F12) | Same `/xinfo` shape and broadcast; port 10024; device name is the network name, model strings XR/X/MR with possible V2 suffixes (XA-F10..F16). |
+| Subscriptions, echo, liveness (X32-F20..F29) | `/xremote` 10 s same; **8 clients**; **echo to the sender** with `/xremote`, `/xremotenfb` variant; `/status` active/standby (XA-F16, XA-F20..F27). Two-socket design kept. |
+| Sockets of a session | Same rules; one extra open question (XA-F15). |
+| Client limit detection | Same evidence model, limit 8, plus `/status` if it signals standby. |
+| Parameters (X32-F30..F39) | Same leaf names and polarities; 16 inputs, `/lr`, 4 mute groups, 4 DCAs, 4-bit bitmaps, **no `/lr/grp/mute`** (section 3). |
+| Scene recall (X32-F60..F62) | `/-snap/index` names the loaded snapshot; no `/-show` or `/-undo` markers; no surface (section 7). |
+| Fader law (X32-F40..F43) | **Same law** and 1024 steps; sends 161 steps (XA-F40..F42). |
+| Meters (X32-F50..F55) | **int16 1/256 dB**, bank 1 = inputs + main L/R, rate and lifetime undocumented (XA-F50..F57). |
+| Echo and conflict handling | Same rules; echo matching unchanged (section 2 "Echo design"). |
+| Background re-read | Same; valid under all echo hypotheses (H1-H3). |
+
+## 12. What `driver/xair` can reuse from `driver/x32`
+Read on `d26cf25`. "Reuse" means the code is family-agnostic today; "parametrize" means it works after a constant or a
+table becomes a per-family value; "replace" means X Air needs different code. A shared package (for example a family
+profile with port, parameter table, meter decoder, scene markers and push-client limit) is one way to avoid copying;
+the core-engineer decides.
+
+| Area | Where in `driver/x32` | Verdict for X Air |
+|---|---|---|
+| OSC codec | `internal/osc/codec.go:25`, `:45` (`Append`, `AppendString`) | Reuse as is. |
+| Two sockets, readers, stranger filter | `conn.go:53-74` (`openConn`), `:106-138` (`readLoop`), `:143-150` (`fromConsole`) | Reuse as is; the meter hook at `conn.go:128` must call the X Air decoder. |
+| Long-lived link across reconnects | `link.go:36-129` | Reuse as is (X32-F28 holds by XA-F01). |
+| Timing and defaults | `driver.go:60-83` | Reuse; 3 s renewal is safe for the 10 s TTL (XA-F20). |
+| Liveness | `liveness.go:28-51` | Reuse; `/xinfo` behaves the same (XA-F10, XA-F25). |
+| Connect, identify, windowed read, absent features | `connect.go:36-51`, `:86-115` (`identify`, `parseXinfo`), `:129-149` (`readAll`), `:151-161` (`absentFeatures`), `:177-193` (`retryReads`) | Reuse; `capabilities()` at `connect.go:54-66` must take counts and `MaxPushClients` 8 from the family profile. |
+| Parameter table | `address.go:15-35` (constants), `:76-100` (`newParamTable`) | Replace the table: 16 inputs, `/lr` for `/main/st` (`address.go:88-89`), 4 mute groups, 4 DCAs, masks 15. **Drop `/main/st/grp/mute` (`address.go:90`)**: X Air has no `/lr/grp/mute` (section 3.2), and because that address belongs to `featureMuteGroups`, an unanswered read would switch mute groups off for the whole session (`connect.go:183-187`, `:151-161`). |
+| Conversions | `convert.go:32-99` (fader law), `:103-115` (switch polarity), `:117-122` (mask), `:125-135` (name) | Reuse the fader law and switch polarity unchanged (XA-F40, section 3); mask max 15; name rule as is until test item 14. |
+| Writes, echo matching | `session.go:107-136` (`Apply`), `:276-298` (`flushPending`), `:372-389` (`matchEcho`), `:391-401` (`sameWire`) | Reuse; `sameWire` tolerance 0.5/1023 (`session.go:398`) is right for faders, too tight for 161-step send levels when sends arrive (use 0.5/160 there). |
+| Event loop | `session.go:189-235` (`Run`), `:333-370` (`decodeChange`) | Reuse; the scene-marker hook at `session.go:342` changes (below). |
+| Background re-read | `reread.go:41-130` | Reuse as is; its safety argument holds under H1-H3 (section 2). |
+| Client-limit detection | `limit.go:13-94`, `address.go:21` | Reuse the logic with limit 8; optional `/status` signal later. |
+| Scene heuristic | `scene.go:14-22` (`/-undo/time`, `/-show/prepos/current`), `:44-79` | Reuse the burst detector (`onConsolePush`); replace the markers with `/-snap/index` (XA-F60..F62). |
+| Meters | `meters.go:23-41`, `:69-97` (`handle`), `:123-158` (decoders) | Reuse the sink, prefix check and frame publishing; replace decoding: one bank `/meters/1`, int16 LE / 256 (XA-F51..F53), Main L/R at values 36, 37; no bank 2. Request shape changes (XA-F57) at `session.go:269-274`. |
+| Discovery | `discovery.go:28` and `:69` hard-code `DefaultPort` 10023; `Probe` `:76-98`, `collectReplies` `:125-154` | Parametrize the port of `LimitedBroadcast` and `directedBroadcast`; `Probe` and `collectReplies` are reusable (targets carry their port; own broadcast is ignored, XA-F13). |
+| Outside the driver | `api/discovery.go:92`, `:122`, `:164-166`, `:184-191`; `api/engine.go:85`, `:157-158`; `api/json.go:31`, `:102`; `contracts/core-api/discover.schema.json:11`, `config.schema.json:10`, `discovery.schema.json:21` (family enum `["x32"]`) | Contract first: add family `xair` (default port 10024) to the three schemas and to `meter-frame.md`, then route discovery and engine by family. |
+| Simulator | `sim/x32/sim.go:40-70` (options incl. `EchoToSender` at `:51-54`, `SlotForAnySender`), `params.go:47-68` (tree), `handle.go:188-204` (`pushLocked`), `:239` (`appendMeterBlob`) | `sim/xair`: copy the structure, new tree (section 3), port 10024, limit 8, `EchoToSender` default **true** with H1 as an option (XA-F23), `ReplyToSet` option (H3), int16 meter blobs for bank 1 (40 values), `/status`, `/-snap/index`, `/-snap/load`. |
+| Hardware probe | `cmd/mixprobe/main.go:38`, `:88`, `:169` (X32 only) | Add a `--family xair` mode for the automatable items of section 13. |
+
+## Echo and conflict handling in mixcore (required by our safety rules)
+Identical to `x32.md` "Echo and conflict handling": writes leave from the command socket and come back as pushes on the
+subscription socket (section 2, H1-H3); the last 32 writes per parameter are matched for 2 s; an external change ends a
+held gesture; going stale cancels every hold; nothing writes in response to a push. `EchoesOwnWrites` = true.
+
+## Background re-read
+Identical to `x32.md` "Background re-read" (every 15 s while live, paced 16 reads per second, from the command socket,
+read-only). ОЦЕНКА of pass length for the v1 table: 16 inputs x 5 parameters (name, fader, mute, mute-group bitmap, DCA
+bitmap) + main 2 (fader, mute) + 4 mute groups + 4 DCAs (mute) = 90 reads; at 16 reads per 1 s step a pass takes
+ceil(90 / 16) = 6 s (X32's 32-input table: 32 x 5 + 3 + 6 + 8 = 177 reads, 12 s).
+
+## 13. To verify with mixprobe or hardware
+Setup: an X Air or M Air on a wired switch with a laptop; amplifiers off; record `/xinfo` (model, firmware) and the
+hardware version shown by X AIR Edit. Captures go to `research/captures/xair/<item>/` (pcap plus log), taken only on
+hardware we legally use. "mixprobe" marks items a `--family xair` mode can automate; "manual" needs a person.
+
+1. **Echo (XA-F22, XA-F23)**, mixprobe. Socket A sends `/xremote` every 3 s; socket B never does. (a) B writes
+   `/ch/01/mix/fader` one step lower; log what A and B receive within 500 ms. (b) A writes the same parameter; log A.
+   (c) Repeat (a) and (b) with `/xremotenfb` on A. (d) B writes a value equal to the current one. Pass: table of which
+   socket got which echo; decides H1/H2/H3 and the simulator defaults.
+2. **Client limit and N+1 (XA-F21, XA-F16)**, mixprobe. Open 9 sockets, each renewing `/xremote` every 3 s. Change a
+   fader from socket 10 (no `/xremote`). Count which sockets get the push. On socket 9 also send a read, `/status`, and
+   a meter request. Pass: number of served clients, which one loses, `/status` text on a served and an unserved socket.
+3. **Slot of a write-only port (X32-F28 analogue)**, mixprobe. With 7 subscribers, add our two-socket session; then
+   add one more subscriber. Pass: whether our command socket costs a slot.
+4. **Access point mode (XA-F80, XA-F85)**, manual. Switch to AP; associate 5 devices; note whether the 5th is refused or
+   drops another. With the laptop on the Ethernet port, send `/xinfo` in each REMOTE switch position. Pass: device
+   limit behaviour; whether Ethernet answers in AP and Wi-Fi client positions.
+5. **Meter request, rate, lifetime (XA-F50, XA-F56, XA-F57)**, mixprobe. Send `/meters ,si "/meters/1" 0` once; log
+   inter-packet intervals and the time of the last packet without renewal. Repeat with `,s "/meters/1"` and with
+   `,siii "/meters/1" 0 0 2`. Observe only (never send) `/-local/updrate`. Pass: interval (expect 50 ms), lifetime
+   (expect about 10 s), accepted forms, effect of the trailing int.
+6. **Meter values and taps (XA-F51..F54)**, manual. No signal: expect -32768 for ch 1. 1 kHz tone at -18 dBFS into ch 1:
+   expect -4608 (`0xEE00`). Pull the ch 1 fader to -inf: the bank 1 value must not change (pre-fader). Add +6 dB EQ:
+   note whether it changes (post-EQ). Pan ch 1 hard left with main up: Main L is value 36, Main R value 37. Pass:
+   values, tap, positions.
+7. **Fader quantization and 1.0 (XA-F41, XA-F42, XA-F101)**, mixprobe. Write 0.8250244 to `/ch/01/mix/fader`, read back
+   (expect step 844, 0.8250244); write 0.0 and 0.0009775 (step 1), read back. Write 1.0 to `/ch/01/mix/pan` (amps off),
+   read back. Pass: stored values.
+8. **Send steps (XA-F41)**, mixprobe. Write 0.7531 to `/ch/01/mix/01/level`, read back (expect 0.75 if 161 steps).
+9. **Group membership addresses (section 3.2)**, mixprobe. Read `/lr/grp/mute`, `/lr/grp/dca`, `/rtn/aux/grp/mute`,
+   `/rtn/1/grp/dca`, `/fxsend/1/grp/mute`. Pass: which answer.
+10. **Sends (section 3.3)**, mixprobe. Read `/ch/01/mix/01/on` (expect no reply), `/ch/01/mix/02/tap`,
+    `/ch/01/mix/02/pan` with bus 1-2 linked and unlinked, `/rtn/1/mix/07/level`. Set tap to GRP and toggle `grpon`
+    from X AIR Edit; log. Pass: address set and link behaviour.
+11. **Model and firmware strings (XA-F70, XA-F78)**, mixprobe. Record `/xinfo` and `/info` on every model available
+    (especially V2 and "W" units). Pass: exact strings.
+12. **DSP counts on small models (XA-F71, XA-F72)**, mixprobe. On an XR12 and an XR16 read `/ch/16/mix/fader`,
+    `/bus/6/mix/fader`, `/fxsend/4/mix/fader`, `/rtn/4/mix/fader`. Pass: all answer (vendor tables) or not (XS6/XS11).
+13. **Snapshot load (XA-F60..F62)**, mixprobe plus manual. Save snapshots 1 and 2 differing in 3 faders and 1 name
+    (lab slots, never 64). Load 2 from X AIR Edit; log all pushes for 3 s. Read `/snap/index` and `/-snap/index`.
+    Pass: whether `/-snap/index` is pushed, burst size and duration, whether `/snap/` answers.
+14. **Name length (section 3.2)**, mixprobe. Write a 13-character and a 32-character name to `/ch/16/config/name`
+    (restore after), read back. Pass: stored length.
+15. **Reboot (XA-F26, XA-F97)**, manual. With a subscriber running, power-cycle; log the last and first packets; compare a
+    full read before and after; check `/-prefs/ponmute`. Pass: subscription lost, rollback window, power-on mutes.
+16. **Socket reuse after discovery (XA-F15)**, mixprobe. Probe with socket P, close P, connect with new sockets; repeat
+    20 times, also within 1 s and after 15 s. Pass: every connect gets an `/xinfo` reply within 300 ms, or not.
+17. **X AIR Edit traffic (XA-F94)**, manual. Mirror the mixer's switch port; start X AIR Edit, connect, sync mixer to PC,
+    open the meters view, idle 60 s, load a snapshot, quit. Pass: pcap with the connect order, subscription and meter
+    commands and their renewal intervals.
+18. **Unknown address, wrong type, out-of-range (XA-F03)**, mixprobe. Read `/ch/17/mix/fader`; write `,i 1` to
+    `/ch/01/mix/fader`; write 1.5 to `/ch/01/mix/pan` (amps off, restore after). Pass: replies or silence, stored values.
+19. **Mute semantics (section 3.2)**, manual, as `x32.md` item 13 with `/-prefs/dcamute` and `/-prefs/hardmute`.
+20. **Liveness on a quiet mixer (XA-F25)**, mixprobe. Idle 10 min with the session running. Pass: no stale event.
+
+## Open questions for the lead (with recommended defaults)
+- Warn on firmware older than 1.18 (XA-F76)? Default: one-time non-blocking hint.
+- Access point onboarding hint at 4 devices (section 8)? Default: yes, in the connect flow.
+- FX send masters as buses 7..10 in the unified model (section 3.1)? Default: yes, with a role flag for display.
