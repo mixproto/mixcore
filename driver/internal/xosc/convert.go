@@ -100,10 +100,11 @@ func (faderLaw) DBFromPosition(pos float64) float64 {
 	return positionToDB(min(pos, 1))
 }
 
-// switchToWire converts a model mute to an int switch: mix/on and dca/on are
-// the inverse of mute (X32-F33, X32-F37), a mute group is engaged = 1 (X32-F35).
-func switchToWire(c conv, muted bool) int32 {
-	if muted == (c == convEngaged) {
+// switchToWire converts a model bool to an int switch: mix/on and dca/on are
+// the inverse of mute (X32-F33, X32-F37); a mute group is engaged = 1
+// (X32-F35) and phantom is on = 1 (X32-F73, XA-F113).
+func switchToWire(c conv, on bool) int32 {
+	if on == wireOneIsTrue(c) {
 		return 1
 	}
 	return 0
@@ -113,7 +114,22 @@ func switchFromWire(c conv, v int32) (bool, error) {
 	if v != 0 && v != 1 {
 		return false, fmt.Errorf("switch %d: %w", v, errBadWire)
 	}
-	return (v == 1) == (c == convEngaged), nil
+	return (v == 1) == wireOneIsTrue(c), nil
+}
+
+func wireOneIsTrue(c conv) bool { return c == convEngaged || c == convFlag }
+
+// haIndexFromWire converts /-ha/NN/index (X32-F74): -1 is no headamp
+// (model 0), otherwise the headamp's wire number.
+func haIndexFromWire(p param, v int32) (model.Value, error) {
+	if v == -1 {
+		return model.Index(0)
+	}
+	n := int(v) - p.haOffset
+	if n < 1 || n > p.haMax {
+		return model.Value{}, fmt.Errorf("%s headamp %d: %w", p.addr, v, errBadWire)
+	}
+	return model.Index(n)
 }
 
 func maskFromWire(p param, v int32) (model.Value, error) {
@@ -148,7 +164,7 @@ func toWire(p param, v model.Value) (osc.Arg, error) {
 		db, _ := v.DB()
 		f, err := dbToFader(db)
 		return osc.Float(f), err
-	case convOnSwitch, convEngaged:
+	case convOnSwitch, convEngaged, convFlag:
 		m, _ := v.Bool()
 		return osc.Int(switchToWire(p.conv, m)), nil
 	case convName:
@@ -159,7 +175,7 @@ func toWire(p param, v model.Value) (osc.Arg, error) {
 		db, _ := v.DB()
 		f, err := gainToWire(p, db)
 		return osc.Float(f), err
-	default: // membership is read-only (Apply refuses it before)
+	default: // membership and /-ha are read-only (Apply refuses them before)
 		return osc.Arg{}, fmt.Errorf("%s is read-only: %w", p.addr, model.ErrInvalidValue)
 	}
 }
@@ -176,11 +192,13 @@ func fromWire(p param, a osc.Arg) (model.Value, error) {
 			return model.Value{}, err
 		}
 		return model.Level(db)
-	case convOnSwitch, convEngaged:
+	case convOnSwitch, convEngaged, convFlag:
 		m, err := switchFromWire(p.conv, a.Int)
 		return model.Bool(m), err
 	case convMask:
 		return maskFromWire(p, a.Int)
+	case convHaIndex:
+		return haIndexFromWire(p, a.Int)
 	case convGain:
 		db, err := gainFromWire(p, a.Float)
 		if err != nil {

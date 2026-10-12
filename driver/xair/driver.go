@@ -48,6 +48,7 @@ import (
 
 	"github.com/mixproto/mixcore/driver"
 	"github.com/mixproto/mixcore/driver/internal/xosc"
+	"github.com/mixproto/mixcore/model"
 )
 
 // Family is the family name of this driver.
@@ -82,6 +83,17 @@ func New(cfg Config) *Driver {
 	return &Driver{Driver: xosc.New(profile, cfg.Timing)}
 }
 
+// headamps (xair.md 3.6): mic 01..16, fewer on XR16/XR12 (probed), writable
+// on the mic law (XA-F111, lead decision); aux 17 on the 18-channel models
+// only, read-only because the line law is unconfirmed (XA-F112, item 22).
+// XR16/XR12 line inputs are absent: their numbering is unverified (XA-F110).
+var headamps = []xosc.HeadampGroup{
+	{Bank: model.BankLocal, First: 1, Count: micHeadamps, Role: xosc.HeadampUnit, Writable: true, Phantom: true,
+		Law: xosc.HeadampLaw{MinDB: gainMinDB, StepDB: gainStepDB, Steps: micGainSteps}},
+	{Bank: model.BankAux, First: auxHeadamp, Count: 1, Role: xosc.HeadampExtra,
+		Law: xosc.HeadampLaw{MinDB: gainMinDB, StepDB: gainStepDB, Steps: auxGainSteps}},
+}
+
 // profile is the X Air family for the shared engine.
 var profile = xosc.Profile{
 	Family:         Family,
@@ -90,7 +102,7 @@ var profile = xosc.Profile{
 	Layout: xosc.Layout{
 		Inputs: inputChannels, RequiredInputs: requiredInputs, MainRoot: "/lr", MainMuteGroups: false,
 		MuteGroups: muteGroupCount, DCAs: dcaCount,
-		Headamps: micHeadamps, HeadampMinDB: micGainMinDB, HeadampMaxDB: micGainMaxDB, HeadampStepDB: micGainStepDB,
+		Headamps: headamps, HeadampAddr: headampFormat,
 	},
 	Meters: meterCodec{},
 	Markers: []xosc.Marker{{

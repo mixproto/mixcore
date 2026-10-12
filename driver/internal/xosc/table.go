@@ -6,7 +6,6 @@ package xosc
 
 import (
 	"fmt"
-	"math"
 
 	"github.com/mixproto/mixcore/internal/osc"
 	"github.com/mixproto/mixcore/model"
@@ -36,22 +35,77 @@ type Layout struct {
 	MainMuteGroups bool
 	MuteGroups     int // /config/mute/1..N (X32-F35, XA section 3.1)
 	DCAs           int // /dca/1..N/on (X32-F37, XA section 3.1)
-	// Headamps are /headamp/01../headamp/NN/gain with the linear law
-	// dB = HeadampMinDB + (HeadampMaxDB - HeadampMinDB) * f in steps of
-	// HeadampStepDB (xair: XA section 3.4 and 4). Each is an optional unit
-	// like inputs above RequiredInputs. 0: no Gain (x32, open question 44).
-	Headamps      int
-	HeadampMinDB  float64
-	HeadampMaxDB  float64
-	HeadampStepDB float64
+	// Headamps are the headamp groups in index order (xair.md 3.6, x32.md
+	// X32-F70..F74); none: no Gain. Addresses are HeadampAddr formatted with
+	// the wire number = model index + HeadampWireOffset, then /gain or
+	// /phantom.
+	Headamps          []HeadampGroup
+	HeadampAddr       string
+	HeadampWireOffset int
+	// HeadampIndexes: inputs 1..N carry /-ha/NN/index (NN = input - 1), the
+	// headamp feeding the channel (x32 X32-F74); 0: not modelled (xair).
+	HeadampIndexes int
 }
 
-// headampSteps is the number of wire steps of the Gain law (xair mic: 144).
-func (l Layout) headampSteps() int {
-	if l.HeadampStepDB <= 0 {
-		return 0
+// HeadampLaw is a linear Gain law: dB = MinDB + StepDB k, f = k / Steps,
+// k = 0..Steps (X32-F71, X32-F72, XA-F111, XA-F112).
+type HeadampLaw struct {
+	MinDB, StepDB float64
+	Steps         int
+}
+
+// MaxDB is the top of the law.
+func (l HeadampLaw) MaxDB() float64 { return l.MinDB + float64(l.Steps)*l.StepDB }
+
+// HeadampRole says when the headamps of a group are read.
+type HeadampRole uint8
+
+const (
+	// HeadampUnit: optional units probed on the first connect of a link;
+	// the ones below the first that does not answer exist (XA-F73).
+	HeadampUnit HeadampRole = iota + 1
+	// HeadampExtra: read only when every unit answered (xair aux 17 exists
+	// on the 18-channel models only, XA-F110).
+	HeadampExtra
+	// HeadampPatched: read only while an input's /-ha index points at it
+	// (x32 AES50, lead decision 2026-10-12).
+	HeadampPatched
+)
+
+// HeadampGroup is a run of headamps with one law, label bank and role.
+type HeadampGroup struct {
+	Bank         model.HeadampBank
+	First, Count int // model indexes First..First+Count-1; console numbers 1..Count
+	Law          HeadampLaw
+	Writable     bool // false: shown, never written (law or ownership unconfirmed)
+	Phantom      bool // /phantom is read (X32-F73, XA-F113); never written
+	Role         HeadampRole
+}
+
+func (g HeadampGroup) has(index int) bool { return index >= g.First && index < g.First+g.Count }
+
+func (g HeadampGroup) info(index int) model.HeadampInfo {
+	return model.HeadampInfo{Index: index, Bank: g.Bank, Number: index - g.First + 1, MinDB: g.Law.MinDB,
+		MaxDB: g.Law.MaxDB(), StepDB: g.Law.StepDB, Writable: g.Writable, HasPhantom: g.Phantom}
+}
+
+// maxHeadamp is the largest headamp index of the layout (0: none).
+func (l Layout) maxHeadamp() int {
+	n := 0
+	for _, g := range l.Headamps {
+		n = max(n, g.First+g.Count-1)
 	}
-	return int(math.Round((l.HeadampMaxDB - l.HeadampMinDB) / l.HeadampStepDB))
+	return n
+}
+
+// headampGroup returns the group of a headamp index.
+func (l Layout) headampGroup(index int) (HeadampGroup, bool) {
+	for _, g := range l.Headamps {
+		if g.has(index) {
+			return g, true
+		}
+	}
+	return HeadampGroup{}, false
 }
 
 // conv is how a parameter's wire value maps to the model.
@@ -63,7 +117,9 @@ const (
 	convEngaged                  // int, 1 = engaged: model mute = wire 1 (X32-F35)
 	convName                     // string (X32-F31)
 	convMask                     // int bitmap 0..maxMask (X32-F36, X32-F38)
-	convGain                     // float 0..1, linear Gain law of the layout (XA section 4)
+	convGain                     // float 0..1, the headamp's linear Gain law (X32-F71, XA-F111)
+	convFlag                     // int, 1 = on: model true = wire 1 (phantom, X32-F73)
+	convHaIndex                  // int, headamp wire number or -1 (X32-F74)
 )
 
 // feature groups parameters that only exist together; if the console does
@@ -74,6 +130,8 @@ const (
 	featureCore feature = iota // names, faders, mutes: required for a connection
 	featureMuteGroups
 	featureDCAs
+	featureHeadampIndex // /-ha/NN/index: unverified (x32.md item 19), absent if unanswered
+	featurePhantom      // /headamp/NN/phantom: read-only, absent if unanswered
 )
 
 // param is one console parameter the driver reads and maybe writes.
@@ -87,11 +145,29 @@ type param struct {
 	readOnly bool
 	// strip is the input index of an optional strip (XA-F72), 0 otherwise.
 	strip int
-	// headamp is the index of a headamp (an optional unit), 0 otherwise.
+	// headamp is the model index of a headamp parameter, 0 otherwise;
+	// role is its group's role.
 	headamp int
+	role    HeadampRole
 	// gainMin, gainStep and gainSteps describe convGain.
 	gainMin, gainStep float64
 	gainSteps         int
+	// haOffset and haMax describe convHaIndex: model index = wire - haOffset,
+	// 1..haMax.
+	haOffset, haMax int
+}
+
+// halfStep is how far apart two wire floats may be and still be the same
+// console value: half a step of this parameter's law (X32-F41, X32-F72).
+func (p param) halfStep() float32 {
+	switch p.conv {
+	case convLevel:
+		return 0.5 / faderSteps
+	case convGain:
+		return 0.5 / float32(p.gainSteps)
+	default:
+		return 0
+	}
 }
 
 // paramTable maps between model parameters and console addresses.
@@ -132,12 +208,30 @@ func newParamTable(l Layout) paramTable {
 		t.add(param{ref: pref(model.StripRef{Kind: model.StripDCA, Index: d}, model.FieldMute),
 			addr: fmt.Sprintf("/dca/%d/on", d), typ: osc.TypeInt, conv: convOnSwitch, feature: featureDCAs})
 	}
-	for h := 1; h <= l.Headamps; h++ { // two digits (XA section 3.4)
-		t.add(param{ref: pref(model.StripRef{Kind: model.StripHeadamp, Index: h}, model.FieldGain),
-			addr: fmt.Sprintf("/headamp/%02d/gain", h), typ: osc.TypeFloat, conv: convGain, headamp: h,
-			gainMin: l.HeadampMinDB, gainStep: l.HeadampStepDB, gainSteps: l.headampSteps()})
-	}
+	t.addHeadamps(l)
 	return t
+}
+
+// addHeadamps adds gain (and phantom) of every headamp, then the /-ha
+// index of the inputs that carry one.
+func (t *paramTable) addHeadamps(l Layout) {
+	for _, g := range l.Headamps {
+		for h := g.First; h < g.First+g.Count; h++ {
+			strip := model.StripRef{Kind: model.StripHeadamp, Index: h}
+			root := fmt.Sprintf(l.HeadampAddr, h+l.HeadampWireOffset)
+			t.add(param{ref: pref(strip, model.FieldGain), addr: root + "/gain", typ: osc.TypeFloat, conv: convGain,
+				headamp: h, role: g.Role, readOnly: !g.Writable, gainMin: g.Law.MinDB, gainStep: g.Law.StepDB, gainSteps: g.Law.Steps})
+			if g.Phantom {
+				t.add(param{ref: pref(strip, model.FieldPhantom), addr: root + "/phantom", typ: osc.TypeInt, conv: convFlag,
+					headamp: h, role: g.Role, readOnly: true, feature: featurePhantom})
+			}
+		}
+	}
+	for i := 1; i <= l.HeadampIndexes; i++ { // X32-F74: 0-based, two digits
+		t.add(param{ref: pref(model.StripRef{Kind: model.StripInput, Index: i}, model.FieldHeadamp),
+			addr: fmt.Sprintf("/-ha/%02d/index", i-1), typ: osc.TypeInt, conv: convHaIndex, readOnly: true,
+			feature: featureHeadampIndex, haOffset: l.HeadampWireOffset, haMax: l.maxHeadamp()})
+	}
 }
 
 func pref(strip model.StripRef, f model.Field) model.ParamRef {

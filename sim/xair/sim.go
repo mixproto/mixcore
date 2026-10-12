@@ -74,8 +74,10 @@ type Options struct {
 	Buses         int
 	// NameMaxLen: [TO-VERIFY] longest stored strip name (test item 14).
 	NameMaxLen int
-	// MicHeadamps: /headamp/01..NN/gain answer (XA-F73: 16 on 18-channel
-	// models, 8 on XR16, 4 on XR12). Default 16.
+	// MicHeadamps: /headamp/01..NN/gain and /phantom answer (XA-F73: 16 on
+	// 18-channel models, 8 on XR16, 4 on XR12). Default 16. With 16 the
+	// aux /headamp/17/gain answers too (line law, XA-F110, XA-F112); line
+	// inputs of XR16/XR12 are not simulated (numbering unverified).
 	MicHeadamps int
 	// UnknownAddresses are parameters this mixer does not know: reads get no
 	// reply and writes are not applied (XA-F03). A test option.

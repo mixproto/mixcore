@@ -96,8 +96,8 @@ func TestMain_HasNoMuteGroupMembership(t *testing.T) {
 				t.Errorf("%v -> %s, want %s", addr, got, want)
 			}
 		}
-		if n := len(r.drv.Addresses()); n != 16*5+2+4+4+16 {
-			t.Fatalf("%d addresses; 90 reads of the v1 table (xair.md section 12) plus 16 headamp gains", n)
+		if n := len(r.drv.Addresses()); n != 16*5+2+4+4+16*2+1 {
+			t.Fatalf("%d addresses; 90 reads of the v1 table (xair.md section 12) plus 16 mic gains and phantoms and the aux gain", n)
 		}
 	})
 }
@@ -260,11 +260,16 @@ func TestMeters_Bank1PublishedInDBFS(t *testing.T) {
 	})
 }
 
-// wantHeadamps describes mic headamps 1..n (xair.md XA-F111).
+// wantHeadamps describes mic headamps 1..n (XA-F111, XA-F113) and, with
+// all 16, the read-only aux 17 on the line law (XA-F110, XA-F112).
 func wantHeadamps(n int) []model.HeadampInfo {
 	out := make([]model.HeadampInfo, n)
 	for i := range out {
-		out[i] = model.HeadampInfo{Index: i + 1, Bank: model.BankLocal, Number: i + 1, MinDB: -12, MaxDB: 60, StepDB: 0.5, Writable: true}
+		out[i] = model.HeadampInfo{Index: i + 1, Bank: model.BankLocal, Number: i + 1, MinDB: -12, MaxDB: 60, StepDB: 0.5,
+			Writable: true, HasPhantom: true}
+	}
+	if n == 16 {
+		out = append(out, model.HeadampInfo{Index: 17, Bank: model.BankAux, Number: 1, MinDB: -12, MaxDB: 20, StepDB: 0.5})
 	}
 	return out
 }

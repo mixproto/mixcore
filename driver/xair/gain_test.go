@@ -30,17 +30,21 @@ func TestGain_RoundTripAtBothRangeEnds(t *testing.T) {
 		r := newRig(t, simxair.Options{})
 		sess := r.connect()
 		events, _ := r.run(sess)
-		for i, db := range []float64{-12, -11.5, 0, 32.5, 59.5, 60} {
+		// The lead's AC-PS-20 points, with the float32 of x32.md's reference
+		// table (the mic law is the X32 law, XA-F111).
+		for i, pt := range []struct {
+			db  float64
+			hex uint32
+		}{{-12, 0x00000000}, {0, 0x3e2aaaab}, {0.5, 0x3e31c71c}, {24, 0x3f000000}, {59.5, 0x3f7e38e4}, {60, 0x3f800000}} {
 			h := i + 1
-			if err := sess.Apply(driver.Command{Param: headamp(h), Value: level(t, db), Origin: gesture}); err != nil {
+			if err := sess.Apply(driver.Command{Param: headamp(h), Value: level(t, pt.db), Origin: gesture}); err != nil {
 				t.Fatal(err)
 			}
 			ev, ok := nextOf[driver.ParamChanged](events, time.Second)
 			got, _ := ev.Value.DB()
 			wire, _ := r.sim.Value(headampAddr(h))
-			want := float32((db + 12) / 0.5 / 144)
-			if !ok || ev.Param != headamp(h) || got != db || wire.Float != want {
-				t.Errorf("%v dB: wire %v (want %v), echo %v", db, wire.Float, want, got)
+			if !ok || ev.Param != headamp(h) || got != pt.db || math.Float32bits(wire.Float) != pt.hex || ev.Origin != gesture {
+				t.Errorf("%v dB: wire %08x (want %08x), echo %v %v", pt.db, math.Float32bits(wire.Float), pt.hex, got, ev.Origin)
 			}
 		}
 		r.assertWritesAudited()
@@ -108,15 +112,22 @@ func TestGain_SmallModelsHaveFewerHeadamps(t *testing.T) {
 	}
 }
 
-// The snapshot carries the mixer's Gain values.
+// The snapshot carries the mixer's Gain and phantom values: 16 mic
+// headamps with phantom, and aux 17 on its own line law (XA-F112) without.
 func TestGain_ReadAtConnect(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		r := newRig(t, simxair.Options{})
-		if err := r.sim.SurfaceSet("/headamp/03/gain", osc.Float(89.0/144)); err != nil { // +32.5 dB
-			t.Fatal(err)
+		for addr, v := range map[string]osc.Arg{
+			"/headamp/03/gain": osc.Float(89.0 / 144), "/headamp/03/phantom": osc.Int(1), // +32.5 dB, 48 V on
+			"/headamp/17/gain": osc.Float(63.0 / 64), // +19.5 dB on the line law
+		} {
+			if err := r.sim.SurfaceSet(addr, v); err != nil {
+				t.Fatal(err)
+			}
 		}
 		hs := r.connect().Snapshot().Headamps()
-		if len(hs) != 16 || hs[2].GainDB != 32.5 || hs[0].GainDB != 0 {
+		want3 := model.Headamp{Index: 3, GainDB: 32.5, Phantom: true, HasPhantom: true}
+		if len(hs) != 17 || hs[2] != want3 || hs[0].GainDB != 0 || hs[16] != (model.Headamp{Index: 17, GainDB: 19.5}) {
 			t.Fatalf("headamps %+v", hs)
 		}
 	})
