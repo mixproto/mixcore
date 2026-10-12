@@ -56,8 +56,8 @@ numbers are part of the ABI and never change; new codes get new numbers.
 | `int32_t MixDiscover(char* requestJSON)` | result later through the discovery callback |
 | `int32_t MixSetLogSink(MixLogCallback cb, intptr_t context, int32_t minLevel)` | `MIX_LOG_DEBUG` -4, `INFO` 0, `WARN` 4, `ERROR` 8 |
 | `void MixFree(void* p)` | frees what this library returned; NULL is ignored |
-| `int32_t MixStartDemo(char* requestJSON, char** outJSON, int32_t* outLen)` (demo) | `demo.schema.json` in, `demo-mixer.schema.json` out on `MIX_OK`; `MixFree` it (`README.md`, Demo mixer) |
-| `int32_t MixStopDemo(void)` (demo) | stops a session to the demo, then the demo mixer |
+| `int32_t MixStartDemo(char* requestJSON, char** outJSON, int32_t* outLen)` (v0.3) | `demo.schema.json` in, `demo-mixer.schema.json` out on `MIX_OK`; `MixFree` it (`README.md`, Demo mixer) |
+| `int32_t MixStopDemo(void)` (v0.3) | stops a session to the demo, then the demo mixer |
 | `int32_t MixTestPanic(void)` | **only** in a `-tags capitest` build: panics inside the export, returns `MIX_ERR_INTERNAL`. That build also exports two internal test callbacks (`mixTestOnBytes`, `mixTestOnLog`); never ship it |
 
 ```c

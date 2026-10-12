@@ -108,8 +108,8 @@ behave the same and a UI bug cannot bypass them:
 | `MeterPosition(dbfs)` (v0.1) | dBFS (`-inf` allowed) | position 0..1 on the meter scale | **never blocks**: pure |
 | `MeterRelease(shownDB, inputDB, elapsedMs)` (v0.1) | shown and new level in dBFS, ms since the last tick | level to show | **never blocks**: pure (`meter-frame.md`) |
 | `FaderStep(db, deltaDB)` (v0.1) | level (`-inf` allowed), step in dB (+1, -1, +0.1, +5, ...) | next level | **never blocks**: pure. Up from `-inf` gives -60 dB; down from -60 dB or below gives `-inf`; otherwise the level rounded to 0.1 dB plus the step, rounded to 0.1 dB, at most the top of the family's fader law (x32 and xair: +10 dB). A step of 0 or NaN returns the level unchanged |
-| `StartDemo(requestJSON)` (demo) | `demo.schema.json` | `demo-mixer.schema.json`, or an error code | **no**: binds one loopback UDP socket and starts the simulator on goroutines; `ERR_ALREADY_STARTED` while a demo runs, `ERR_NETWORK` if the loopback socket cannot be opened |
-| `StopDemo()` (demo) | | | bounded: stops the session first when it is the demo's, then the simulator; frees the port and joins every demo goroutine. `ERR_NOT_STARTED` when no demo runs |
+| `StartDemo(requestJSON)` (v0.3) | `demo.schema.json` | `demo-mixer.schema.json`, or an error code | **no**: binds one loopback UDP socket and starts the simulator on goroutines; `ERR_ALREADY_STARTED` while a demo runs, `ERR_NETWORK` if the loopback socket cannot be opened |
+| `StopDemo()` (v0.3) | | | bounded: stops the session first when it is the demo's, then the simulator; frees the port and joins every demo goroutine. `ERR_NOT_STARTED` when no demo runs |
 
 `FaderPosition`/`FaderDB` use 64-bit floats, which carry `-inf` natively (Swift `-Double.infinity`, Kotlin
 `Double.NEGATIVE_INFINITY`, C# `double.NegativeInfinity`). NaN input gives position 0 / `-inf`.
@@ -261,7 +261,7 @@ gets an `Exception` whose `message` is the code. Callback objects are retained b
 
 **c-shared (`capi/`, `make capi-check`)**: the C ABI, numeric status codes and memory rules are in `capi.md`.
 
-## Demo mixer (additive; the contract version stays 0)
+## Demo mixer (v0.3, additive; the `version` field stays 0)
 
 The welcome screen's `Try the demo mixer` (design `mix-v1.md` 6.1, 6.3) runs the real mixing UI with no console. The core
 starts the family's **console simulator** (`sim/x32`, `sim/xair`, the same test oracles the drivers are tested against)

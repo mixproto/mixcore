@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/demo.schema.json",
-  "title": "mixcore core API (demo mixer): StartDemo(requestJSON)",
+  "title": "mixcore core API v0.3 (additive, demo mixer): StartDemo(requestJSON)",
   "description": "Starts the built-in demo mixer: the family's console simulator, inside the app process, on a UDP socket bound to 127.0.0.1 with a port the OS picks. It is seeded with a plausible show (named channels, faders, mutes, mute groups, DCAs) and its meters move like music. The result (demo-mixer.schema.json) tells where it listens; the app then calls Start with that family, host and port like for any console, and every message of that session carries demo: true. Nothing runs before StartDemo or after StopDemo. Only one demo mixer runs per engine: StartDemo while one runs is ERR_ALREADY_STARTED.",
   "type": "object",
   "additionalProperties": false,
