@@ -174,9 +174,10 @@ under each of the three readings of the sources:
 - H2 (XA-F23: `/xremote` pushes to every subscriber including the one that made the change): same as H1, because the
   command socket is not a subscriber.
 - H3 (XA-F22 read literally: a set is answered to its sender): the command socket also receives an echo of each write.
-  `driver/x32` treats every command-socket packet as a re-read reply and accepts only replies to an outstanding,
-  untouched read (`driver/x32/reread.go:111-116`); every write marks its parameter touched
-  (`driver/x32/session.go:293`), so such an echo is dropped and can never be taken for a desk change.
+  The shared engine (`driver/internal/xosc`, used by `driver/x32` and `driver/xair`) treats every command-socket
+  packet as a re-read reply and accepts only replies to an outstanding, untouched read
+  (`driver/internal/xosc/reread.go:111-116`); every write marks its parameter touched
+  (`driver/internal/xosc/session.go:302`), so such an echo is dropped and can never be taken for a desk change.
 Use plain `/xremote` (vendor-documented), not `/xremotenfb` (undocumented; its "initiator" might be judged by IP only,
 which would hide the echoes of our command socket). `EchoesOwnWrites` stays true. Test item 1 decides which hypothesis
 holds; only the simulator default changes with the answer.
@@ -427,7 +428,8 @@ when the mixer reports `192.168.1.1` (XA-F81) and 4 seats are used.
 | Background re-read | Same; valid under all echo hypotheses (H1-H3). |
 
 ## 12. What `driver/xair` can reuse from `driver/x32`
-Read on `d26cf25`. "Reuse" means the code is family-agnostic today; "parametrize" means it works after a constant or a
+Read on `d26cf25`; the file references below are to that commit. Since branch `feat/core-xair` the reused code lives
+in `driver/internal/xosc` (see "As implemented"). "Reuse" means the code is family-agnostic today; "parametrize" means it works after a constant or a
 table becomes a per-family value; "replace" means X Air needs different code. A shared package (for example a family
 profile with port, parameter table, meter decoder, scene markers and push-client limit) is one way to avoid copying;
 the core-engineer decides.
