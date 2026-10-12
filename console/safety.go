@@ -64,12 +64,13 @@ type safety struct {
 	windows  map[holdKey]*window
 	showMode bool
 	unlocks  unlocks
-	engineer map[model.ParamRef]float64 // latest value not from a monitor client (SR-28)
+	engineer map[model.ParamRef]float64      // latest value not from a monitor client (SR-28)
+	pending  map[model.ParamRef]pendingValue // Gain writes in flight (pending.go)
 }
 
 func newSafety(cfg SafetyConfig) safety {
 	return safety{cfg: cfg, clients: map[string]ClientSafety{}, windows: map[holdKey]*window{}, showMode: cfg.ShowMode,
-		unlocks: newUnlocks(), engineer: map[model.ParamRef]float64{}}
+		unlocks: newUnlocks(), engineer: map[model.ParamRef]float64{}, pending: map[model.ParamRef]pendingValue{}}
 }
 
 func (s *safety) client(id string) ClientSafety {
@@ -116,6 +117,9 @@ func (s *safety) isMonitorOrigin(o driver.Origin) bool {
 // noteChange keeps the engineer's latest value (SR-28): every level value
 // except the writes of a monitor client.
 func (s *safety) noteChange(c Change) {
+	if c.Param.Field == model.FieldGain {
+		s.clearPending(c)
+	}
 	if c.Param.Field == model.FieldFader && !s.isMonitorOrigin(c.Origin) {
 		s.engineer[c.Param] = dbOf(c.Value)
 	}
@@ -197,17 +201,22 @@ func (s *Supervisor) clampLocked(w Write, cur float64) (float64, GestureState, *
 func (s *Supervisor) gainRulesLocked(w Write, cur, v float64, st GestureState, win *window) (float64, GestureState, *Window, error) {
 	h := w.Param.Strip.Index
 	s.safe.unlocks.touch(h)
-	if s.safe.showMode && v > cur && !s.safe.unlocks.allowsRaise(h, w.Undo) {
+	pend, hasPend := s.safe.pendingOf(w.Param)
+	floor := cur // a raise above the console value or above the value in flight is a raise
+	if hasPend {
+		floor = math.Min(cur, pend)
+	}
+	if s.safe.showMode && v > floor && !s.safe.unlocks.allowsRaise(h, w.Undo) {
 		if win == nil {
 			return 0, 0, nil, fmt.Errorf("%w: raising %s", ErrShowMode, w.Param)
 		}
-		v, st = cur, StateLocked
+		v, st = floor, StateLocked
 	}
-	if !w.Typed && math.Abs(v-cur) > gainBoundDB {
+	if lo, hi := gainBounds(cur, pend, hasPend); !w.Typed && (v < lo || v > hi) {
 		if win == nil {
-			return 0, 0, nil, fmt.Errorf("%w: %s %.1f to %.1f dB", ErrGainBound, w.Param, cur, v)
+			return 0, 0, nil, fmt.Errorf("%w: %s %.1f to %.1f dB (console %.1f, in flight %.1f)", ErrGainBound, w.Param, cur, v, cur, pend)
 		}
-		v, st = cur+math.Copysign(gainBoundDB, v-cur), StateAtCap
+		v, st = math.Min(math.Max(v, lo), math.Max(lo, hi)), StateAtCap
 	}
 	s.safe.unlocks.noteEntry(h) // any accepted Gain write during an unlock is an entry (undo grace)
 	return v, st, windowOf(win), nil

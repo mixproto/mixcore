@@ -181,7 +181,9 @@ func TestGain_GestureCaps(t *testing.T) {
 		for _, tc := range []struct {
 			cand, want float64
 			st         GestureState
-		}{{33.5, 33.5, StateFree}, {60, 35.5, StateAtCap}, {0, 26.5, StateAtCap}} {
+		}{{33.5, 33.5, StateFree}, {60, 35.5, StateAtCap}, {0, 29.5, StateAtCap}, {0, 26.5, StateAtCap}} {
+			// From +35.5 a pull to 0 first stops 6 dB lower (the per-write bound,
+			// review HIGH 1), then at the -6 dB cap of the gesture.
 			if r, _ := sup.Write(set(gain3, lvl(t, tc.cand), gesture)); dbIn(t, r) != tc.want || r.State != tc.st {
 				t.Fatalf("candidate %v: %v %s", tc.cand, dbIn(t, r), r.State)
 			}
@@ -249,6 +251,46 @@ func TestTyped_BigRaiseNeedsConfirm(t *testing.T) {
 				t.Fatalf("%v -> %v: %v", tc.from, tc.to, err)
 			}
 			sup.Stop()
+		}
+	})
+}
+
+// Review HIGH 1: the Gain bound holds against the value still in flight,
+// not only the echoed one. Gain 32.5: a macro writes 26.5, then 38.5 before
+// any echo; the second would move the console +12 dB in one write.
+func TestGain_BoundAgainstThePendingValue(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, drv := startSafe(t, SafetyConfig{}, safetyState(-6))
+		if _, err := sup.Write(set(gain3, lvl(t, 26.5), macro)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := sup.Write(set(gain3, lvl(t, 38.5), macro)); !errors.Is(err, ErrGainBound) {
+			t.Fatalf("38.5 after a pending 26.5: %v", err)
+		}
+		if lastWrite(drv) != 26.5 {
+			t.Fatalf("last write %v", lastWrite(drv))
+		}
+		_, _ = sup.HoldWindow(gain3, gesture, true) // inside a window the pending value clamps too
+		if r, _ := sup.Write(set(gain3, lvl(t, 35.5), gesture)); dbIn(t, r) > 32.5 {
+			t.Fatalf("drag up with 26.5 pending applied %v, more than 6 dB above it", dbIn(t, r))
+		}
+		time.Sleep(3 * time.Second) // no echo: the pending value expires
+		if _, err := sup.Write(set(gain3, lvl(t, 38.5), macro)); err != nil {
+			t.Fatalf("after the echo window only the console value counts: %v", err)
+		}
+	})
+}
+
+// Review HIGH 1, show mode: a pending lowering followed by a raise back to
+// the console value is a raise of the console.
+func TestShowMode_RaiseAfterPendingLowering(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, _ := startSafe(t, SafetyConfig{ShowMode: true}, safetyState(-6))
+		if _, err := sup.Write(set(gain3, lvl(t, 31.5), gesture)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := sup.Write(set(gain3, lvl(t, 32.5), gesture)); !errors.Is(err, ErrShowMode) {
+			t.Fatalf("raise back to 32.5 over a pending 31.5: %v", err)
 		}
 	})
 }

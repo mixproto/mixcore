@@ -77,7 +77,16 @@ func (s *Supervisor) prepareLocked(w *Write) (driver.Session, Result, error) {
 		return nil, Result{}, err
 	}
 	w.Value = lv
-	return s.sess, Result{Value: lv, State: st, Written: v != cur, Window: win}, nil
+	written := v != cur
+	if w.Param.Field == model.FieldGain {
+		if pend, hasPend := s.safe.pendingOf(w.Param); hasPend {
+			written = v != pend // the last value sent is the one in flight
+		}
+		if written {
+			s.safe.notePending(w.Param, v)
+		}
+	}
+	return s.sess, Result{Value: lv, State: st, Written: written, Window: win}, nil
 }
 
 // Hold starts (held = true) or ends (false) a person's gesture on a level
