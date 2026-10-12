@@ -7,6 +7,7 @@ package console
 import (
 	"math"
 	"slices"
+	"time"
 
 	"github.com/mixproto/mixcore/model"
 )
@@ -23,32 +24,62 @@ import (
 //     with unconfirmed writes) clears the set;
 //   - stale, adopt, Stop and Pause clear every set; a failed send removes
 //     its own value;
-//   - a full set (maxInFlight) refuses the next value with ErrGainBound.
+//   - a full set (maxInFlight) refuses the next value with ErrGainBound;
+//   - a value already in flight is sent again at most once per resendEvery
+//     (review pass 3, LOW 5), so a drag held past the cap of a console that
+//     does not echo sends the cap value once, not every frame.
 
-// maxInFlight caps the values in flight per headamp.
-const maxInFlight = 8
+const (
+	// maxInFlight caps the values in flight per headamp.
+	maxInFlight = 8
+	// resendEvery is the drivers' echo window (xosc DefaultTiming.EchoWindow).
+	resendEvery = 2 * time.Second
+)
+
+// inFlight is one value sent and not yet matched by a report.
+type inFlight struct {
+	db     float64
+	sentAt time.Time
+}
 
 // inFlightOf returns the values in flight for p (nil: none).
-func (s *safety) inFlightOf(p model.ParamRef) []float64 { return s.pending[p] }
-
-// noteSent records a value about to be sent. It reports false when the
-// set is full and the value is not in it already.
-func (s *safety) noteSent(p model.ParamRef, db float64) bool {
+func (s *safety) inFlightOf(p model.ParamRef) []float64 {
 	set := s.pending[p]
-	if slices.Contains(set, db) {
-		return true
+	if len(set) == 0 {
+		return nil
+	}
+	out := make([]float64, len(set))
+	for i, v := range set {
+		out[i] = v.db
+	}
+	return out
+}
+
+// noteSent records a value about to be sent. send is false for a value
+// sent less than resendEvery ago; ok is false when the set is full and the
+// value is not in it.
+func (s *safety) noteSent(p model.ParamRef, db float64, now time.Time) (send, ok bool) {
+	set := s.pending[p]
+	if i := slices.IndexFunc(set, func(v inFlight) bool { return v.db == db }); i >= 0 {
+		if now.Sub(set[i].sentAt) < resendEvery {
+			return false, true
+		}
+		set = slices.Clone(set)
+		set[i].sentAt = now
+		s.pending[p] = set
+		return true, true
 	}
 	if len(set) >= maxInFlight {
-		return false
+		return false, false
 	}
-	s.pending[p] = append(slices.Clip(set), db)
-	return true
+	s.pending[p] = append(slices.Clip(set), inFlight{db: db, sentAt: now})
+	return true, true
 }
 
 // forgetSent removes one value whose send failed.
 func (s *safety) forgetSent(p model.ParamRef, db float64) {
 	set := s.pending[p]
-	if i := slices.Index(set, db); i >= 0 {
+	if i := slices.IndexFunc(set, func(v inFlight) bool { return v.db == db }); i >= 0 {
 		s.pending[p] = slices.Delete(slices.Clone(set), i, i+1)
 	}
 	if len(s.pending[p]) == 0 {
@@ -70,7 +101,7 @@ func (s *safety) noteReport(c Change, tol float64) {
 	}
 	db, best := dbOf(c.Value), -1
 	for i, v := range set {
-		if d := math.Abs(v - db); d <= tol && (best < 0 || d < math.Abs(set[best]-db)) {
+		if d := math.Abs(v.db - db); d <= tol && (best < 0 || d < math.Abs(set[best].db-db)) {
 			best = i
 		}
 	}

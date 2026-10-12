@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/mixproto/mixcore/driver"
 	"github.com/mixproto/mixcore/model"
@@ -93,8 +94,12 @@ func (s *Supervisor) prepareLocked(w *Write) (driver.Session, Result, error) {
 	if w.Param.Field == model.FieldGain {
 		others := slices.ContainsFunc(s.safe.inFlightOf(w.Param), func(x float64) bool { return x != v })
 		written = written || others // back to the console value while others are in flight: a real write
-		if written && !s.safe.noteSent(w.Param, v) {
-			return nil, Result{}, fmt.Errorf("%w: %s: %d values in flight", ErrGainBound, w.Param, maxInFlight)
+		if written {
+			send, ok := s.safe.noteSent(w.Param, v, time.Now())
+			if !ok {
+				return nil, Result{}, fmt.Errorf("%w: %s: %d values in flight", ErrGainBound, w.Param, maxInFlight)
+			}
+			written = send // sent again at most once per echo window (LOW 5)
 		}
 	}
 	return s.sess, Result{Value: lv, State: st, Written: written, Window: win}, nil

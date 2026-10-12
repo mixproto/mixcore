@@ -9,6 +9,7 @@ import (
 	"math"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/mixproto/mixcore/driver"
 )
@@ -139,5 +140,32 @@ func TestInFlight_PauseClearsTheSet(t *testing.T) {
 func inFlightCount(sup *Supervisor) int {
 	sup.mu.Lock()
 	defer sup.mu.Unlock()
-	return len(sup.safe.pending[gain3])
+	return len(sup.safe.inFlightOf(gain3))
+}
+
+// Review pass 3, LOW 5: an in-flight value is sent again at most once per
+// echo window. A drag held past the cap of a console that does not echo
+// sends the cap value once, not every frame.
+func TestInFlight_DragPastTheCapWithoutEchoSendsTheCapOnce(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, drv := startSafe(t, SafetyConfig{}, safetyState(-6))
+		_, _ = sup.HoldWindow(gain3, gesture, true)
+		for i := range 125 { // 1 s of 8 ms frames, the finger far past +35.5
+			_, _ = sup.Write(set(gain3, lvl(t, math.Min(33+float64(i), 50)), gesture))
+			time.Sleep(8 * time.Millisecond)
+		}
+		caps := 0
+		for _, db := range gainWrites(drv) {
+			if db == 35.5 {
+				caps++
+			}
+		}
+		if caps != 1 {
+			t.Fatalf("the cap value was sent %d times in 1 s (writes %v)", caps, gainWrites(drv))
+		}
+		time.Sleep(2 * time.Second) // one echo window later, still no report
+		if r, _ := sup.Write(set(gain3, lvl(t, 50), gesture)); !r.Written {
+			t.Fatal("after an echo window the value is sent again")
+		}
+	})
 }

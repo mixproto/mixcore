@@ -346,8 +346,12 @@ func TestGain_ConsoleReportEndsTheInFlightValue(t *testing.T) {
 			synctest.Wait()
 		}
 		_, _ = sup.Write(set(gain3, lvl(t, 38.5), gesture))
+		if r, err := sup.Write(set(gain3, lvl(t, 38.5), gesture)); err != nil || r.Written {
+			t.Fatalf("38.5 again at once: written %v, %v; at most once per echo window (LOW 5)", r.Written, err)
+		}
+		time.Sleep(resendEvery)
 		if r, err := sup.Write(set(gain3, lvl(t, 38.5), gesture)); err != nil || !r.Written {
-			t.Fatalf("38.5 again before any report: written %v, %v", r.Written, err)
+			t.Fatalf("38.5 again an echo window later, before any report: written %v, %v", r.Written, err)
 		}
 		push(38.5, gesture) // the echo
 		if _, err := sup.Write(set(gain3, lvl(t, 44.5), gesture)); err != nil {
