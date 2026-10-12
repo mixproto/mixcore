@@ -366,3 +366,31 @@ func TestInFlight_FullSetInsideAHoldIsACap(t *testing.T) {
 		}
 	})
 }
+
+// Follow-up 2: on a console that does not echo Gain, the authoritative
+// re-read of our own write differs from state (it never got the echo). It
+// updates the state but never ends the hold of the person dragging (a hold
+// that began after the re-read's skip set was taken is not skipped). A
+// re-read with another value (the desk) still ends it.
+func TestHold_OwnWriteReadBackKeepsTheHold(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, drv := startSafe(t, SafetyConfig{}, safetyState(-6))
+		_, _ = sup.HoldWindow(gain3, gesture, true)
+		if _, err := sup.Write(set(gain3, lvl(t, 33.5), gesture)); err != nil {
+			t.Fatal(err)
+		}
+		drv.session(0).push <- driver.ParamChanged{Param: gain3, Value: lvl(t, 33.5), Origin: desk, Authoritative: true, OwnWrite: true}
+		synctest.Wait()
+		if v, _ := sup.Drain().State.Value(gain3); !v.Equal(lvl(t, 33.5)) {
+			t.Fatalf("state %v, want the read-back 33.5", v)
+		}
+		if _, err := sup.Write(set(gain3, lvl(t, 34), gesture)); err != nil {
+			t.Fatalf("the hold must go on after our own write read back: %v", err)
+		}
+		drv.session(0).push <- driver.ParamChanged{Param: gain3, Value: lvl(t, 30), Origin: desk, Authoritative: true}
+		synctest.Wait()
+		if _, err := sup.Write(set(gain3, lvl(t, 31), gesture)); !errors.Is(err, ErrGestureEnded) {
+			t.Fatalf("after the desk's value: %v", err)
+		}
+	})
+}

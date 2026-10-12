@@ -70,6 +70,9 @@ type Change struct {
 	// Authoritative: the driver's re-read of a parameter with unconfirmed
 	// writes (driver.ParamChanged); it ends every Gain value in flight.
 	Authoritative bool
+	// OwnWrite: that re-read found the last value we sent; it never ends a
+	// hold (follow-up 2).
+	OwnWrite bool
 }
 
 // Update is what Drain returns: the current state plus what changed since
@@ -444,7 +447,7 @@ func (s *Supervisor) handleEvent(ev driver.Event) {
 	defer s.mu.Unlock()
 	switch e := ev.(type) {
 	case driver.ParamChanged:
-		s.applyChangeLocked(Change{Param: e.Param, Value: e.Value, Origin: e.Origin, Authoritative: e.Authoritative})
+		s.applyChangeLocked(Change{Param: e.Param, Value: e.Value, Origin: e.Origin, Authoritative: e.Authoritative, OwnWrite: e.OwnWrite})
 	case driver.StateReplaced:
 		s.state = e.State
 		s.eff.reset(s.state)
@@ -485,7 +488,9 @@ func (s *Supervisor) applyChangeLocked(c Change) {
 		return
 	}
 	s.state = next
-	if !had || !prev.Equal(c.Value) { // a report of the value we already had moved nothing (review pass 3, LOW 4)
+	// A report of the value we already had moved nothing (review pass 3, LOW 4);
+	// our own write read back is not someone else's change (follow-up 2).
+	if (!had || !prev.Equal(c.Value)) && !c.OwnWrite {
 		s.holds.external(c)
 	}
 	s.safe.noteChange(c)

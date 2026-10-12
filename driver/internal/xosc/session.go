@@ -102,7 +102,9 @@ type session struct {
 	// MEDIUM B; Gain echo is unverified, X32-F79, XA-F116). A push never
 	// clears it: one did, and a desk move then kept the set forever (review
 	// pass 4, HIGH 1).
-	unconfirmed map[int]bool
+	// It keeps the last value sent, so a reply that is our own write read
+	// back is not limit evidence (follow-up 1).
+	unconfirmed map[int]osc.Arg
 	rr          rereadPass
 }
 
@@ -113,7 +115,7 @@ func newSession(d *Driver, c *conn, opts driver.Options) *session {
 		name: string(d.prof.Family), prof: &d.prof,
 		timing: d.timing, params: &d.params, c: c, log: logger(opts), audit: opts.WriteAudit,
 		pending: map[int]pendingWrite{}, done: make(chan struct{}), cmdReady: make(chan struct{}, 1), meterReady: make(chan struct{}, 1),
-		rereadReady: make(chan struct{}, 1), tx: make([]byte, 0, rxBufSize), sent: map[int][]sentWrite{}, unconfirmed: map[int]bool{},
+		rereadReady: make(chan struct{}, 1), tx: make([]byte, 0, rxBufSize), sent: map[int][]sentWrite{}, unconfirmed: map[int]osc.Arg{},
 		rr: rereadPass{asked: map[int]bool{}}, scene: newSceneState(), present: newHeadampSet(d.params.layout.maxHeadamp()),
 	}
 }
@@ -308,11 +310,13 @@ func (s *session) flushPending() {
 			continue
 		}
 		idx := s.params.index(w.param.ref)
+		// Gain echo is unverified (X32-F79, XA-F116): a missing Gain echo is
+		// no client-limit evidence (follow-up 1).
 		s.rememberSent(idx, sentWrite{arg: w.arg, origin: w.origin, at: now, changes: s.changesKnown(idx, w),
-			evidence: w.param.feature == featureCore})
+			evidence: w.param.feature == featureCore && w.param.conv != convGain})
 		s.markTouched(idx)
 		if w.param.conv == convGain {
-			s.unconfirmed[idx] = true
+			s.unconfirmed[idx] = w.arg
 		}
 		if s.audit != nil {
 			s.audit(driver.WriteRecord{Param: w.param.ref, Address: w.param.addr, Origin: w.origin, At: now})

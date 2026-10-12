@@ -302,3 +302,42 @@ func TestHeadamp_RereadAuthoritativeAfterADeskPush(t *testing.T) {
 		}
 	})
 }
+
+// Follow-up 2: the re-read reply of our own unechoed Gain write is flagged
+// OwnWrite; a desk value is not.
+func TestHeadamp_RereadFlagsOurOwnValue(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t, simx32.Options{})
+		sess := r.connect()
+		events, _ := r.run(sess)
+		for _, desk := range []bool{false, true} {
+			writeGainUnechoed(t, r, sess, 1, 6+boolDB(desk))
+			if desk {
+				_ = r.sim.SurfaceSet("/headamp/000/gain", osc.Float(72.0/144)) // the desk: +24 dB
+				synctest.Wait()
+			}
+			time.Sleep(DefaultTiming.EchoWindow + time.Second)
+			_ = drain(events)
+			_ = sess.(driver.Rereader).Reread()
+			for {
+				ev, ok := nextOf[driver.ParamChanged](events, DefaultTiming.RereadGap+passTime)
+				if !ok {
+					t.Fatal("no re-read report")
+				}
+				if ev.Param == headamp(1, model.FieldGain) {
+					if !ev.Authoritative || ev.OwnWrite == desk {
+						t.Fatalf("desk %v: %+v", desk, ev)
+					}
+					break
+				}
+			}
+		}
+	})
+}
+
+func boolDB(b bool) float64 {
+	if b {
+		return 3
+	}
+	return 0
+}

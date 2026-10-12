@@ -70,7 +70,9 @@ behave the same and a UI bug cannot bypass them:
   item 17; XS10 avoids it): each entry's `writeMaxDB` is the top a write may reach (+59.5 mic, +19.5 line); a set above
   it is `ERR_INVALID_VALUE`, and a Gain gesture's cap stops there. Rule (lead decision, review pass 4): if hardware
   (x32.md item 17, xair.md item 22) shows that a family does not echo Gain writes, that family's Gain becomes read-only
-  (`writable: false`): the in-flight bound would otherwise rest on re-reads alone.
+  (`writable: false`): the in-flight bound would otherwise rest on re-reads alone. Until then, on a console that does
+  not echo Gain, a hold that has 8 values in flight stops at `atCap` in both directions, lowerings included, until the
+  next re-read ends them (intended: the core cannot know where the console is; lift and drag again after the re-read).
 
   The index is a model number, never UI text: the UI names a headamp by `bank` and `number` ("Local 1", "AES50 A 05",
   "Aux"). On x32 an input's `headamp` field says which headamp feeds it (`null`: none, the channel has no Gain); xair
@@ -132,7 +134,8 @@ behave the same and a UI bug cannot bypass them:
    active hold (`holdCancelled` event): when the status returns to `live`, no write resumes without a new `holdBegin`.
    A scene recall detected at the console (v0.1 event `sceneRecalledAtConsole`) ends every held fader as an external
    change, whether or not that fader's own update has arrived yet. A report of the value the state already has (for
-   example the core's re-read of an unchanged Gain) is not a change and never ends a hold.
+   example the core's re-read of an unchanged Gain) is not a change and never ends a hold; nor is the core's re-read of
+   the last Gain value it sent (on a console that does not echo Gain it updates the state, but it is our own write).
 5. Echo: a diff caused by the app's own write carries the write's origin (`kind`, `clientId`, `seq`), so the UI can tell
    its own echo from a change made at the desk. A write of another client (another `clientId` through the same engine,
    or a MixLink client) carries that client's origin and is an external change for everyone else's holds.

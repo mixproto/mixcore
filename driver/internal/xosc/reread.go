@@ -157,18 +157,27 @@ func (s *session) rereadReply(idx int, v model.Value, at time.Time) (driver.Para
 		return driver.ParamChanged{}, false
 	}
 	delete(s.rr.asked, idx)
-	wrote := s.unconfirmed[idx]
+	sent, wrote := s.unconfirmed[idx]
 	delete(s.unconfirmed, idx)
 	unchanged := idx < len(s.known) && s.known[idx].Equal(v)
 	if unchanged && !wrote {
 		return driver.ParamChanged{}, false
 	}
 	s.remember(idx, v)
-	if !unchanged {
+	ownReadBack := wrote && s.isOwnValue(idx, sent, v) // our own write read back is no unpushed change
+	if !unchanged && !ownReadBack {
 		s.lim.passFound = true // the push of this change never reached us
 	}
 	return driver.ParamChanged{Param: s.params.all[idx].ref, Value: v, Origin: driver.Origin{Kind: driver.OriginConsole}, At: at,
-		Authoritative: wrote}, true
+		Authoritative: wrote, OwnWrite: ownReadBack}, true
+}
+
+// isOwnValue reports whether a re-read value is the last value we sent,
+// within half a step of the parameter's law.
+func (s *session) isOwnValue(idx int, sent osc.Arg, v model.Value) bool {
+	p := s.params.all[idx]
+	got, err := toWire(p, v)
+	return err == nil && sameWire(p, sent, got)
 }
 
 // remember records the newest value seen for idx.

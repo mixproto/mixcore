@@ -207,6 +207,10 @@ type ParamChanged struct {
 	// (which skips recently written parameters and drops superseded
 	// replies). It ends every value of ours still in flight (CR-23).
 	Authoritative bool
+	// OwnWrite: an Authoritative value that is the last value we sent (our
+	// own write read back, within half a step of the law). It updates the
+	// state but is not a change by someone else: it never ends a hold.
+	OwnWrite bool
 }
 
 // StateReplaced is a full re-read (scene recall or similar).
