@@ -48,7 +48,7 @@ behave the same and a UI bug cannot bypass them:
 | Gain | strip kind `headamp`, field `gain`, snapshot `headamps` and `headampRange` (xair; x32 waits for open question 44); every Gain write bounded to 6 dB from the console value except typed entry, `ERR_GAIN_BOUND` | CR-23, SR-31 |
 | Typed raises | command flags `typed`, `confirmed`; a typed raise over 6 dB without `confirmed` is `ERR_NEEDS_CONFIRM` | CR-26, SR-30 |
 | Show mode | `setShowMode`, `unlock`, `relock`; raising Gain is `ERR_SHOW_MODE` unless unlocked; `showMode`, `unlockedHeadamps`, event `gainUnlockEnded` in state | CR-24, SR-27 |
-| Monitor ceilings | config `safety.monitorCeiling`: engineer's latest value + headroom, never below it | CR-25, SR-28 |
+| Monitor ceilings | config `safety.monitorCeiling`: faders stop at the engineer's latest value + headroom, never below it; sends not modelled yet | CR-25, SR-28 |
 | Settings | config `safety.slipGuard` and command `setSlipGuard` per client (device class) | SR-26 |
 | Fixtures | `fixtures/gesture-paths.json`: the AC-PS touch paths as data for the core and every UI | CR-27 |
 
@@ -124,8 +124,11 @@ behave the same and a UI bug cannot bypass them:
      earlier the result stays `atWall`); the core re-anchors (the next upward move
      continues from the wall value, no jump) and sets the next wall 6 dB higher. Show mode never changes it.
    - **Gain caps** (headamp gain, every client, SR-24): `[start - 6, start + 3]` dB within the range; never opens.
-   - **Monitor ceiling** (`safety.monitorCeiling`, SR-28): every level write of this engine stops at the engineer's
-     latest value + headroom, and never below that value; it never opens and we never lower a value to meet it.
+   - **Monitor ceiling** (`safety.monitorCeiling`, SR-28): every fader write of this engine (channel, bus, main; a
+     musician's `My level` is the bus fader) stops at the engineer's latest value + headroom, and never below that
+     value; it never opens and we never lower a value to meet it. Sends are not in the model yet (no send field in
+     core-api v0.3), so SR-28's "each send" is not enforced: a monitor seat must not get send control until the send
+     field lands with its ceiling (follow-up, same rule).
    Typed entry (`typed`), steps and nudges outside a hold are not windowed (the ceiling and the Gain bound still apply).
 8. **Gain bound (CR-23, SR-31).** No Gain write moves more than 6 dB from the console's current value, whatever sent it
    (gesture, stepper, undo, macro, another client through the same core): `ERR_GAIN_BOUND`. Only `typed` (after

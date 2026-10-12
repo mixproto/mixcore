@@ -165,6 +165,26 @@ func TestMonitorCeiling_FollowsTheEngineer(t *testing.T) {
 	})
 }
 
+// Review LOW 8, contract rule 7: the ceiling covers every fader (here the
+// main fader the engineer set to -10 dB: a raise stops at -4), and only
+// faders: Gain is bounded by CR-23, not by the ceiling. Sends are not
+// modelled yet.
+func TestMonitorCeiling_CoversFadersOnly(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, drv := startSafe(t, SafetyConfig{}, safetyState(2))
+		sup.SetClientSafety("mon-2", ClientSafety{Monitor: &MonitorCeiling{HeadroomDB: defaultHeadroomDB}})
+		mainFader := model.ParamRef{Strip: model.MainRef, Field: model.FieldFader}
+		drv.session(0).push <- driver.ParamChanged{Param: mainFader, Value: lvl(t, -10), Origin: driver.Origin{Kind: driver.OriginConsole}}
+		synctest.Wait()
+		if r, _ := sup.Write(set(mainFader, lvl(t, 0), musician)); dbIn(t, r) != -4 || r.State != StateAtCeiling {
+			t.Fatalf("main fader: %v %s, want -4 atCeiling", dbIn(t, r), r.State)
+		}
+		if r, err := sup.Write(set(gain3, lvl(t, 37.5), musician)); err != nil || dbIn(t, r) != 37.5 || r.State != StateFree {
+			t.Fatalf("Gain has no ceiling: %v %s %v", dbIn(t, r), r.State, err)
+		}
+	})
+}
+
 // SR-28: we never lower a value to meet the ceiling.
 func TestMonitorCeiling_NeverLowersAValue(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
