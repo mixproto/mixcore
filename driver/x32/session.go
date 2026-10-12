@@ -79,6 +79,7 @@ type session struct {
 	lastPong time.Time
 	live     liveness
 	lim      limitState
+	scene    sceneState
 	outbox   []driver.Event // events produced outside handleInbound, sent by Run
 	tx       []byte
 	msg      osc.Message
@@ -94,7 +95,7 @@ func newSession(d *Driver, c *conn, opts driver.Options) *session {
 		timing: d.timing, params: &d.params, c: c, log: logger(opts), audit: opts.WriteAudit,
 		pending: map[int]pendingWrite{}, done: make(chan struct{}), cmdReady: make(chan struct{}, 1), meterReady: make(chan struct{}, 1),
 		rereadReady: make(chan struct{}, 1), tx: make([]byte, 0, rxBufSize), sent: map[int][]sentWrite{},
-		rr: rereadPass{asked: map[int]bool{}},
+		rr: rereadPass{asked: map[int]bool{}}, scene: newSceneState(),
 	}
 }
 
@@ -336,6 +337,9 @@ func (s *session) decodeChange(p inPacket) (driver.ParamChanged, bool) {
 		s.lastPong = p.at // X32-F25
 		return driver.ParamChanged{}, false
 	}
+	if !p.viaCmd && s.onMarker(p.at) { // X32-F61, X32-F62: scene markers, if the console pushes them
+		return driver.ParamChanged{}, false
+	}
 	par, ok := s.params.byAddress(s.msg.Address)
 	if !ok || s.absent[par.feature] {
 		return driver.ParamChanged{}, false // anything we did not ask for
@@ -357,6 +361,9 @@ func (s *session) decodeChange(p inPacket) (driver.ParamChanged, bool) {
 	s.remember(idx, v)
 	s.onPush() // a push (or our echo) on the /xremote socket: we are served
 	origin := s.matchEcho(idx, arg, p.at)
+	if origin.Kind == driver.OriginConsole {
+		s.onConsolePush(idx, p.at) // X32-F60: a recall is a burst of pushes
+	}
 	return driver.ParamChanged{Param: par.ref, Value: v, Origin: origin, At: p.at}, true
 }
 

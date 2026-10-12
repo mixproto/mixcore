@@ -337,7 +337,7 @@ func TestHold_ExternalChangeEndsGesture(t *testing.T) {
 			t.Fatalf("diff = %+v", d)
 		}
 		ev := d.Events[0]
-		if ev.Type != "externalChangeOnHeld" || ev.ClientID != "ui" || ev.Origin.Kind != "console" || math.Abs(ev.Value.(float64)+10) > 0.05 {
+		if ev.Type != "externalChangeOnHeld" || *ev.ClientID != "ui" || ev.Origin.Kind != "console" || math.Abs(ev.Value.(float64)+10) > 0.05 {
 			t.Fatalf("event = %+v", ev)
 		}
 		writes := len(e.sim.Writes())

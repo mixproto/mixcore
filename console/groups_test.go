@@ -92,3 +92,29 @@ func TestToggle_WritesTheInverseOfTheConsoleValue(t *testing.T) {
 		}
 	})
 }
+
+// SR-15: a scene recall ends every held fader at once, even one whose own
+// update has not arrived; the recall is reported once.
+func TestSceneRecall_EndsEveryHold(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		drv := &fakeDriver{snapshot: stateWithGroups()}
+		sup := start(t, drv)
+		synctest.Wait()
+		if err := sup.Hold(ch1Fader, gesture, true); err != nil {
+			t.Fatal(err)
+		}
+		sup.Drain()
+		drv.session(0).push <- driver.SceneRecalled{Confidence: driver.ConfidenceLow, Signals: []string{driver.SignalBurst}, HighlightedScene: driver.NoScene}
+		synctest.Wait()
+		u := sup.Drain()
+		if len(u.Scenes) != 1 || len(u.Events) != 1 || u.Events[0].Kind != HoldExternalChange || u.Events[0].Origin.Kind != driver.OriginConsole {
+			t.Fatalf("scenes %+v events %+v", u.Scenes, u.Events)
+		}
+		if err := sup.Apply(driver.Command{Param: ch1Fader, Value: lvl(t, -3), Origin: gesture}); !errors.Is(err, ErrGestureEnded) {
+			t.Fatalf("Apply after the recall = %v, want ErrGestureEnded", err)
+		}
+		if u := sup.Drain(); len(u.Scenes) != 0 {
+			t.Fatal("a scene is reported once")
+		}
+	})
+}

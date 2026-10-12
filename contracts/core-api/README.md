@@ -14,6 +14,7 @@ working unchanged. What v0.1 adds:
 | Client limit | `limited` and `limitedReason`: the console does not send this engine updates (slots full); input locked, holds cancelled with reason `limited` | SR-17, CR-10 |
 | Meters | Main L/R as levels 32/33 of the meter frame; `MeterScale`, `MeterPosition`, `MeterRelease` so every UI draws meters alike | CR-17, OQ 24, OQ 27 |
 | Mute groups and DCAs | strip kinds `muteGroup` and `dca` (field `mute`), membership fields `muteGroups` and `dcas`, derived `effectiveMute` per strip; command type `toggle` | CR-01, CR-02, SR-04 |
+| Scene recall | event `sceneRecalledAtConsole` with `confidence` and `signals`; ends every held fader; background re-read starts | SR-15, CR-03, CR-08 |
 | Fader steps | `FaderStep(db, deltaDB)`: the bottom-of-scale rule (`-inf` <-> -60 dB) for keyboard, screen reader and +/- buttons | CR-21, OQ 26 |
 
 ## Calls
@@ -64,6 +65,8 @@ working unchanged. What v0.1 adds:
    the mixer: -10.0 dB"). Further `set` commands for that fader from that client return `ERR_GESTURE_ENDED` until the
    client sends `holdBegin` (new gesture) or `holdEnd` (finger lifted). Going stale, pausing or stopping cancels every
    active hold (`holdCancelled` event): when the status returns to `live`, no write resumes without a new `holdBegin`.
+   A scene recall detected at the console (v0.1 event `sceneRecalledAtConsole`) ends every held fader as an external
+   change, whether or not that fader's own update has arrived yet.
 5. Echo: a diff caused by the app's own write carries the write's origin (`kind`, `clientId`, `seq`), so the UI can tell
    its own echo from a change made at the desk. A write of another client (another `clientId` through the same engine,
    or a MixLink client) carries that client's origin and is an external change for everyone else's holds.

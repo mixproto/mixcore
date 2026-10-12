@@ -42,6 +42,7 @@ func (s *session) onTick(now time.Time) error {
 		s.live.lastProbe = now
 	}
 	s.expireUnechoed(now)
+	s.sceneTick(now)
 	if now.Sub(s.live.lastStep) >= s.timing.PingEvery {
 		s.live.lastStep = now
 		s.rereadStep(now)

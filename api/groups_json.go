@@ -6,6 +6,7 @@ package api
 
 import (
 	"github.com/mixproto/mixcore/console"
+	"github.com/mixproto/mixcore/driver"
 	"github.com/mixproto/mixcore/model"
 )
 
@@ -64,6 +65,22 @@ func effectiveChangesJSON(evs []console.EffectiveChange) []changeJSON {
 		p := paramToJSON(model.ParamRef{Strip: e.Strip})
 		p.Field = fieldEffective
 		out = append(out, changeJSON{Param: p, Value: effectiveJSON(e.Mute), Origin: originToJSON(e.Origin)})
+	}
+	return out
+}
+
+// eventScene is the type of the v0.1 scene-recall event.
+const eventScene = "sceneRecalledAtConsole"
+
+func sceneEventsJSON(scenes []driver.SceneRecalled) []eventJSON {
+	out := make([]eventJSON, 0, len(scenes))
+	for _, sc := range scenes {
+		e := eventJSON{Type: eventScene, Confidence: sc.Confidence, Signals: sc.Signals}
+		if sc.HighlightedScene != driver.NoScene {
+			n := sc.HighlightedScene
+			e.HighlightedScene = &n
+		}
+		out = append(out, e)
 	}
 	return out
 }

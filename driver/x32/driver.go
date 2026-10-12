@@ -27,6 +27,10 @@
 // console is probed with /xinfo after QuietProbeAfter, and one /xinfo per
 // PingEvery checks the uplink (lost after DeadAfter without a reply).
 //
+// Scene recall (X32-F60..F62): no dedicated message exists; a burst of
+// console pushes and the scene markers, if pushed, raise SceneRecalled with a
+// confidence, and a background re-read starts at once.
+//
 // Background re-read (driver.Rereader): on request, one read-only pass over
 // every parameter, paced at one batch of reads per PingEvery, recovers changes
 // whose push was lost. Only values that differ from the last one seen are

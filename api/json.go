@@ -266,13 +266,18 @@ type changeJSON struct {
 	Origin originJSON `json:"origin"`
 }
 
+// eventJSON is one entry of events: a hold event (param, clientId, ...) or,
+// v0.1, a scene recall (confidence, signals, highlightedScene).
 type eventJSON struct {
-	Type     string      `json:"type"`
-	Param    paramJSON   `json:"param"`
-	ClientID string      `json:"clientId"`
-	Value    any         `json:"value,omitempty"`
-	Origin   *originJSON `json:"origin,omitempty"`
-	Reason   string      `json:"reason,omitempty"`
+	Type             string      `json:"type"`
+	Param            *paramJSON  `json:"param,omitempty"`
+	ClientID         *string     `json:"clientId,omitempty"`
+	Value            any         `json:"value,omitempty"`
+	Origin           *originJSON `json:"origin,omitempty"`
+	Reason           string      `json:"reason,omitempty"`
+	Confidence       string      `json:"confidence,omitempty"`
+	Signals          []string    `json:"signals,omitempty"`
+	HighlightedScene *int        `json:"highlightedScene,omitempty"`
 }
 
 type stateJSON struct {
@@ -296,7 +301,8 @@ type stateJSON struct {
 
 // encodeUpdate renders a supervisor update as a state message with sequence seq.
 func encodeUpdate(u console.Update, seq uint64, full bool) ([]byte, error) {
-	out := stateJSON{Version: contractVersion, Seq: seq, Status: u.Status.String(), Reason: u.Reason, Events: eventsJSON(u.Events),
+	out := stateJSON{Version: contractVersion, Seq: seq, Status: u.Status.String(), Reason: u.Reason,
+		Events:  append(eventsJSON(u.Events), sceneEventsJSON(u.Scenes)...),
 		Offline: u.Offline, Limited: u.Limited, LimitedReason: u.LimitedReason}
 	if !u.StaleSince.IsZero() {
 		out.StaleSinceMs = u.StaleSince.UnixMilli()
@@ -322,7 +328,8 @@ func encodeUpdate(u console.Update, seq uint64, full bool) ([]byte, error) {
 func eventsJSON(evs []console.HoldEvent) []eventJSON {
 	out := make([]eventJSON, 0, len(evs))
 	for _, ev := range evs {
-		e := eventJSON{Type: ev.Kind.String(), Param: paramToJSON(ev.Param), ClientID: ev.ClientID, Reason: ev.Reason}
+		p, client := paramToJSON(ev.Param), ev.ClientID
+		e := eventJSON{Type: ev.Kind.String(), Param: &p, ClientID: &client, Reason: ev.Reason}
 		if ev.Kind == console.HoldExternalChange {
 			o := originToJSON(ev.Origin)
 			e.Value, e.Origin = valueJSON(ev.Value), &o

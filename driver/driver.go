@@ -217,7 +217,31 @@ type ClientLimitHit struct {
 // ClientLimitCleared means updates arrive again after a ClientLimitHit.
 type ClientLimitCleared struct{}
 
+// Scene recall confidences and signals (SceneRecalled).
+const (
+	ConfidenceHigh   = "high"   // a burst and a scene marker
+	ConfidenceMedium = "medium" // a scene marker alone
+	ConfidenceLow    = "low"    // a burst alone
+
+	SignalBurst            = "burst"            // many parameters pushed within a short window
+	SignalUndoTime         = "undoTime"         // the console's undo checkpoint changed
+	SignalHighlightedScene = "highlightedScene" // the highlighted scene changed
+
+	NoScene = -1 // HighlightedScene when the console did not report one
+)
+
+// SceneRecalled means a scene (snapshot) was recalled at the console, as far
+// as the driver can tell; the family's protocol doc says how it is inferred.
+// Every held parameter must end; the driver re-reads the console itself.
+type SceneRecalled struct {
+	Confidence       string
+	Signals          []string
+	HighlightedScene int // NoScene when unknown; never "the loaded scene" unless the family says so
+	At               time.Time
+}
+
 func (ParamChanged) isEvent()       {}
+func (SceneRecalled) isEvent()      {}
 func (StateReplaced) isEvent()      {}
 func (ClientLimitHit) isEvent()     {}
 func (ClientLimitCleared) isEvent() {}

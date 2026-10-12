@@ -201,7 +201,7 @@ func TestSession_EndToEndAgainstTheSimulator(t *testing.T) {
 			"no-echo-to-sender": Confirmed, "fader-steps": Confirmed, "mute-group-polarity": Confirmed,
 			"mute-group-or-model": Confirmed, "meters-bank1": Confirmed, "meters-bank-name": Measured, "meters-bank2": Confirmed,
 			"quiet-console-stays-live": Confirmed, "reconnect-cycles": Measured, "client-slots": Confirmed,
-			"desk-move-ends-hold": Confirmed, "scene-recall-pushes": Measured, "stale-timing": Confirmed,
+			"desk-move-ends-hold": Confirmed, "scene-recall-pushes": Measured, "scene-recall-engine": Confirmed, "stale-timing": Confirmed,
 			"replug-live": Measured, "reboot-live": Measured,
 		} {
 			if f, ok := got[id]; !ok || f.Status != want {

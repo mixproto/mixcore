@@ -90,6 +90,9 @@ type Update struct {
 	// update carries every strip's effective mute in State).
 	Effective []EffectiveChange
 	Events    []HoldEvent
+	// Scenes are scene recalls detected at the console since the last Drain
+	// (never folded into Full, like Events).
+	Scenes []driver.SceneRecalled
 }
 
 // Config configures a Supervisor.
@@ -125,6 +128,7 @@ type Supervisor struct {
 	holds      holds
 	changes    []Change
 	eff        effective
+	scenes     []driver.SceneRecalled
 	full       bool
 	seq        uint64
 	cancel     context.CancelFunc
@@ -221,8 +225,8 @@ func (s *Supervisor) Drain() Update {
 	if !s.full {
 		u.Changes, u.Effective = s.changes, s.eff.changes
 	}
-	u.Events = s.holds.events
-	s.changes, s.full, s.holds.events, s.eff.changes = nil, false, nil, nil
+	u.Events, u.Scenes = s.holds.events, s.scenes
+	s.changes, s.full, s.holds.events, s.eff.changes, s.scenes = nil, false, nil, nil, nil
 	return u
 }
 
@@ -428,6 +432,14 @@ func (s *Supervisor) handleEvent(ev driver.Event) {
 		s.limited = e.Reason
 		s.holds.cancelAll(ReasonLimited)
 		s.full = true
+		s.signal()
+	case driver.SceneRecalled:
+		// SR-15: a recall at the desk ends every held fader, even one whose own
+		// update has not arrived (or was lost); the driver re-reads meanwhile.
+		s.endHeldOnReplaceLocked()
+		if len(s.scenes) < maxPendingEvents {
+			s.scenes = append(s.scenes, e)
+		}
 		s.signal()
 	case driver.ClientLimitCleared:
 		s.cfg.Logger.Info("console: updates arrive again")

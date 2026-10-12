@@ -55,7 +55,7 @@ func TestHold_OtherOwnClientWriteEndsGesture(t *testing.T) {
 		}
 		synctest.Wait()
 		d := e.rec.last()
-		if len(d.Events) != 1 || d.Events[0].Type != "externalChangeOnHeld" || d.Events[0].ClientID != "ui" ||
+		if len(d.Events) != 1 || d.Events[0].Type != "externalChangeOnHeld" || *d.Events[0].ClientID != "ui" ||
 			d.Events[0].Origin.ClientID != "tablet" || d.Events[0].Origin.Kind != "gesture" {
 			t.Fatalf("events = %+v, want ui's gesture ended by the tablet", d.Events)
 		}
