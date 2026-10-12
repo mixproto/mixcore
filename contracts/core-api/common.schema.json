@@ -22,7 +22,7 @@
             "dca",
             "headamp"
           ],
-          "description": "muteGroup and dca are v0.1 (x32: mute groups 1..6, DCA groups 1..8; xair, v0.2: mute groups 1..4, DCA groups 1..4). Their only field is mute. headamp is v0.3: a microphone preamp, numbered as the console numbers it (xair: /headamp/01..16, XA-F73); its only field is gain. Which channel a headamp feeds is not modelled yet (xair.md section 3.4: insrc is unverified), so a UI names it 'Preamp N'."
+          "description": "muteGroup and dca are v0.1 (x32: mute groups 1..6, DCA groups 1..8; xair, v0.2: mute groups 1..4, DCA groups 1..4). Their only field is mute. headamp is v0.3: a preamp (the physical input, not the channel). Index: xair /headamp/NN is NN (01..16 mic, fewer on XR16/XR12, XA-F73; 17 aux on the 18-channel models); x32 /headamp/NNN is NNN + 1 (1..32 local, 33..80 AES50 A, 81..128 AES50 B, X32-F70). UI text never shows the index: it names a headamp by its snapshot entry's bank and number ('Local 1', 'AES50 A 05', 'Aux'). Fields: gain, phantom (read-only). Which channel a headamp feeds: x32 input field headamp; xair not modelled (insrc unverified, XA-F115)."
         },
         "index": {
           "type": "integer",
@@ -57,9 +57,11 @@
         "muteGroups",
         "dcas",
         "effectiveMute",
-        "gain"
+        "gain",
+        "phantom",
+        "headamp"
       ],
-      "description": "v0.1: muteGroups and dcas are the strip's group membership (read-only); effectiveMute is derived by the core and appears only in state messages, never in commands. For a muteGroup strip, mute true means the group is engaged (muting its members); for a dca strip, mute true means the DCA is muted. v0.2: a strip without a membership on its console has no such field: on xair the main strip belongs to no mute group and no DCA (docs/protocols/xair.md section 3.2), so a set or read of main muteGroups is ERR_UNSUPPORTED and state messages omit it. v0.3: gain is the dB gain of a headamp strip (CR-23)."
+      "description": "v0.1: muteGroups and dcas are the strip's group membership (read-only); effectiveMute is derived by the core and appears only in state messages, never in commands. For a muteGroup strip, mute true means the group is engaged (muting its members); for a dca strip, mute true means the DCA is muted. v0.2: a strip without a membership on its console has no such field: on xair the main strip belongs to no mute group and no DCA (docs/protocols/xair.md section 3.2), so a set or read of main muteGroups is ERR_UNSUPPORTED and state messages omit it. v0.3: gain is the dB gain of a headamp strip (CR-23); phantom (headamp, read-only) is its 48 V, true = on, only on headamps whose snapshot entry has phantom (x32 local, xair mic); headamp (input, read-only, x32 only, /-ha/NN/index) is the index of the headamp that feeds the channel, null when its source has none (card, USB, internal). A set of phantom or headamp is ERR_UNSUPPORTED. Trim (x32 /ch/NN/preamp/trim) is not modelled yet and not bounded by the core."
     },
     "param": {
       "type": "object",
@@ -89,8 +91,15 @@
       ]
     },
     "value": {
-      "description": "fader and gain (v0.3): level; mute: boolean (true = muted, or for a muteGroup: engaged); name: string; muteGroups/dcas (v0.1): groupList; effectiveMute (v0.1): effectiveMute object. The field decides the type.",
+      "description": "fader and gain (v0.3): level; mute and phantom (v0.3): boolean (true = muted, or for a muteGroup: engaged; phantom: 48 V on); name: string; muteGroups/dcas (v0.1): groupList; effectiveMute (v0.1): effectiveMute object; headamp (v0.3): headamp index or null. The field decides the type.",
       "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 1
+        },
+        {
+          "type": "null"
+        },
         {
           "$ref": "#/$defs/level"
         },

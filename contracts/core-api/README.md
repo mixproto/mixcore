@@ -45,7 +45,7 @@ behave the same and a UI bug cannot bypass them:
 | Area | Addition | Design ref |
 |---|---|---|
 | Gesture window | every `set` inside a hold is a candidate the core clamps: slip guard (6 dB above the start, floor -16 dB, upward only), Gain caps (+3 / -6 dB, never open), monitor ceiling; `openWall` after a rest; new call `Gesture` answers the applied value, `state` and window | CR-22, SR-24, SR-26 |
-| Gain | strip kind `headamp`, field `gain`, snapshot `headamps` and `headampRange` (xair; x32 waits for open question 44); every Gain write bounded to 6 dB from the console value except typed entry, `ERR_GAIN_BOUND` | CR-23, SR-31 |
+| Gain | strip kind `headamp`, fields `gain` and `phantom` (read-only), input field `headamp` (x32); snapshot `headamps` with each headamp's own law, `writable`, `bank` and `number` (x32 and xair); every Gain write bounded to 6 dB from the console value except typed entry, `ERR_GAIN_BOUND` | CR-23, SR-31 |
 | Typed raises | command flags `typed`, `confirmed`; a typed raise over 6 dB without `confirmed` is `ERR_NEEDS_CONFIRM` | CR-26, SR-30 |
 | Show mode | `setShowMode`, `unlock`, `relock`; raising Gain is `ERR_SHOW_MODE` unless unlocked; `showMode`, `unlockedHeadamps`, event `gainUnlockEnded` in state | CR-24, SR-27 |
 | Monitor ceilings | config `safety.monitorCeiling`: faders stop at the engineer's latest value + headroom, never below it; sends not modelled yet | CR-25, SR-28 |
@@ -55,6 +55,24 @@ behave the same and a UI bug cannot bypass them:
 - **Small models**: an XR12 or XR16 that does not answer for an input strip connects with fewer input strips (XA-F72);
   the snapshot lists the missing ones in `absentInputs`. The UI takes the number of strips from the snapshot, never from
   the model name. The first connect of an engine probes the optional strips once; reconnects reuse the answer.
+- **Headamps** (v0.3): Gain lives on the headamp (the physical input), not on the channel. Each snapshot entry carries
+  its own law (`minDB`, `maxDB`, `stepDB`) and `writable`; the core never writes with a law it has not confirmed.
+
+  | Family | Headamps | Index | Law | Writable | Phantom read |
+  |---|---|---|---|---|---|
+  | xair | mic `/headamp/01..16` (8 on XR16, 4 on XR12, probed) | NN | -12..+60 dB, 0.5 dB (k/144) | yes | yes |
+  | xair | aux `/headamp/17`, 18-channel models only | 17 | -12..+20 dB, 0.5 dB (k/64) | no: law unconfirmed (XA-F112) | no |
+  | xair | XR16/XR12 line inputs | - | absent: numbering unverified (XA-F110) | - | - |
+  | x32 | local `/headamp/000..031` (probed) | NNN + 1 | -12..+60 dB, 0.5 dB (k/144) | yes | yes |
+  | x32 | AES50 A `032..079`, B `080..127`, only those a channel's `/-ha` index points at | NNN + 1 | same | no: ownership unknown (X32-F76) | no |
+
+  The index is a model number, never UI text: the UI names a headamp by `bank` and `number` ("Local 1", "AES50 A 05",
+  "Aux"). On x32 an input's `headamp` field says which headamp feeds it (`null`: none, the channel has no Gain); xair
+  does not model it yet, so a UI there names headamps only. **Trim** (x32 `/ch/NN/preamp/trim`, -18..+18 dB) is not
+  modelled and not bounded by the core yet (follow-up; it needs the same Gain rules).
+- **Connect time** (lead decision, 2026-10-12): against the simulator on loopback, status `live` within 2 s at p95 for
+  both families, headamp reads included (`api` test `TestConnectTime_*`, which fails above 3 s to leave CI a margin).
+  The 5 s connect timeout stays the hard failure. Reconnect: all input back within 2 s after the link returns (SR-05).
 
 ## Calls
 
@@ -110,7 +128,8 @@ behave the same and a UI bug cannot bypass them:
 5. Echo: a diff caused by the app's own write carries the write's origin (`kind`, `clientId`, `seq`), so the UI can tell
    its own echo from a change made at the desk. A write of another client (another `clientId` through the same engine,
    or a MixLink client) carries that client's origin and is an external change for everyone else's holds.
-6. Background re-read: while live, the core re-reads the console state every 15 s (read-only, paced) to recover a
+6. Background re-read: while live, the core re-reads the console state (read-only, paced at 16 reads per second); the
+   next pass starts 15 s after the previous one ended, so passes never run back to back. It recovers a
    change whose push was lost. Only values that differ from the last one seen reach the listener, as ordinary diffs with
    origin `console`. v0.3: parameters that are held (`holdBegin` without `holdEnd`, also a resting finger) and parameters with a
    recent write of ours are left out of a pass; everything else is still re-read. It never writes.

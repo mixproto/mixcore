@@ -130,6 +130,14 @@
           },
           "effectiveMute": {
             "$ref": "common.schema.json#/$defs/effectiveMute"
+          },
+          "headamp": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "description": "v0.3, inputs on x32 only (/-ha/NN/index, X32-F74): the headamp feeding this channel, null when its source has none (card, USB, internal: the channel has no Gain). Absent when the family does not model it (xair) or the console did not answer /-ha. Several channels may use one headamp: one Gain write changes all of them. Read-only."
           }
         }
       }
@@ -144,13 +152,19 @@
     },
     "headamps": {
       "type": "array",
-      "description": "v0.3, snapshot only: Gain of every headamp the console answered for (xair: 1..16 mic preamps, fewer on XR16/XR12, XA-F73). Absent when the family has no Gain in the core yet (x32: open question 44). Changes arrive in diffs as param {strip: {kind: headamp, index}, field: gain}.",
+      "description": "v0.3, snapshot only: every headamp the core reads, with its own Gain law (CR-23). xair: mic 1..16 (fewer on XR16/XR12, XA-F73), aux 17 on the 18-channel models; XR16/XR12 line inputs are absent (numbering unverified, XA-F110). x32: local 1..32 (fewer on a model with fewer local inputs) and the AES50 headamps some channel's /-ha index points at; a patch change that brings in another one is followed by a snapshot. Changes arrive in diffs as param {strip: {kind: headamp, index}, field: gain or phantom}.",
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": [
           "index",
-          "gainDB"
+          "gainDB",
+          "minDB",
+          "maxDB",
+          "stepDB",
+          "writable",
+          "bank",
+          "number"
         ],
         "properties": {
           "index": {
@@ -159,28 +173,39 @@
           },
           "gainDB": {
             "type": "number"
+          },
+          "minDB": {
+            "type": "number",
+            "description": "Range and console step of this headamp's law: mic (xair mic, x32 all) -12..+60 dB, 0.5 dB (X32-F71, XA-F111); line (xair aux) -12..+20 dB, 0.5 dB (XA-F112). UI step = max(1 dB, stepDB)."
+          },
+          "maxDB": {
+            "type": "number"
+          },
+          "stepDB": {
+            "type": "number"
+          },
+          "writable": {
+            "type": "boolean",
+            "description": "false: shown, never written (a set is ERR_UNSUPPORTED). x32 AES50 headamps (ownership and the effect of a write unknown, X32-F76) and xair aux (line law unconfirmed, XA-F112) are read-only. The core never writes with a law it has not confirmed."
+          },
+          "bank": {
+            "enum": [
+              "local",
+              "aes50a",
+              "aes50b",
+              "aux"
+            ],
+            "description": "Where the console says this input is, for the UI label: local (x32 local XLR, xair mic), AES50 A or B (x32 stage boxes; the B numbering is unverified, X32-F70 item 16), aux (xair stereo aux)."
+          },
+          "number": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The console's own number within the bank: x32 /headamp/036 is AES50 A 05; xair /headamp/03 is local 3."
+          },
+          "phantom": {
+            "type": "boolean",
+            "description": "48 V on. Present only where the core reads it: x32 local and xair mic headamps (X32-F73, XA-F113). Read-only for now: a future show-mode gate."
           }
-        }
-      }
-    },
-    "headampRange": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "minDB",
-        "maxDB",
-        "stepDB"
-      ],
-      "description": "v0.3, snapshot with headamps: the Gain range and console step (xair mic preamps: -12 to +60 dB, 0.5 dB, XA section 4). UI step = max(1 dB, stepDB).",
-      "properties": {
-        "minDB": {
-          "type": "number"
-        },
-        "maxDB": {
-          "type": "number"
-        },
-        "stepDB": {
-          "type": "number"
         }
       }
     },
