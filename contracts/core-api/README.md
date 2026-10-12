@@ -68,7 +68,9 @@ behave the same and a UI bug cannot bypass them:
 
   The wire maximum (`maxDB`, f = 1.0) is read but never written until hardware confirms it (xair.md item 22, x32.md
   item 17; XS10 avoids it): each entry's `writeMaxDB` is the top a write may reach (+59.5 mic, +19.5 line); a set above
-  it is `ERR_INVALID_VALUE`, and a Gain gesture's cap stops there.
+  it is `ERR_INVALID_VALUE`, and a Gain gesture's cap stops there. Rule (lead decision, review pass 4): if hardware
+  (x32.md item 17, xair.md item 22) shows that a family does not echo Gain writes, that family's Gain becomes read-only
+  (`writable: false`): the in-flight bound would otherwise rest on re-reads alone.
 
   The index is a model number, never UI text: the UI names a headamp by `bank` and `number` ("Local 1", "AES50 A 05",
   "Aux"). On x32 an input's `headamp` field says which headamp feeds it (`null`: none, the channel has no Gain); xair

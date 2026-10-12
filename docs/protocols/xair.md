@@ -310,6 +310,8 @@ Consequence for CR-23: the core takes range and step from the headamp kind (mic 
 both 0.5 dB), not from the family. A 6 dB bound is 12 steps on both laws; on a line input the whole range is 32 dB.
 mixcore never writes the wire maximum 1.0 until item 22 shows it is safe (XA-F116; lead decision 2026-10-12, re-review
 LOW D): the writable top is +59.5 dB on the mic law and +19.5 dB on the line law; reading 1.0 is +60 / +20 dB.
+If item 22 shows that the mixer does not echo a Gain write, X Air Gain becomes read-only in mixcore (lead decision,
+review pass 4): the in-flight bound would otherwise rest on the background re-read alone.
 
 ## 4. Value encodings
 

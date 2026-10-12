@@ -184,7 +184,7 @@
           },
           "writeMaxDB": {
             "type": "number",
-            "description": "The highest value a write may set: one step below maxDB, because the wire maximum 1.0 is not confirmed safe to write (xair.md XA-F116 item 22, x32.md X32-F72 item 17). A set above it is ERR_INVALID_VALUE; a Gain gesture's cap stops at it. +59.5 dB mic, +19.5 dB line."
+            "description": "The highest value a write may set: one step below maxDB, because the wire maximum 1.0 is not confirmed safe to write (xair.md XA-F116 item 22, x32.md X32-F72 item 17). A set above it is ERR_INVALID_VALUE; a Gain gesture's cap stops at it. +59.5 dB mic, +19.5 dB line. If hardware (x32.md item 17, xair.md item 22) shows a family does not echo Gain writes, that family's Gain becomes read-only (writable false)."
           },
           "stepDB": {
             "type": "number"
