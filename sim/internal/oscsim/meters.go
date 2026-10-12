@@ -55,10 +55,14 @@ func (c *Core) dueMeters(now time.Time) []Outgoing {
 	if c.OfflineLocked(now) || len(c.meterSubs) == 0 {
 		return nil
 	}
+	// The loop ticks at the meter interval and real timers jitter: a tick a
+	// little early must still send, or the stream skips a whole interval and
+	// runs at about 12 packets/s instead of 20 (X32-F50, XA-F56).
+	slack := c.cfg.MeterInterval / 2
 	pkts := map[string][]byte{}
 	var out []Outgoing
 	for i := range c.meterSubs {
-		if now.Before(c.meterSubs[i].next) {
+		if c.meterSubs[i].next.Sub(now) > slack {
 			continue
 		}
 		c.meterSubs[i].next = now.Add(c.meterSubs[i].interval)
