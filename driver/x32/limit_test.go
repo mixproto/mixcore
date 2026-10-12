@@ -191,3 +191,53 @@ func TestLimit_NeverOnAHealthySession(t *testing.T) {
 		}
 	})
 }
+
+// writeGainUnechoed writes a Gain whose echo is lost (a console that does
+// not echo Gain, X32-F79 unverified).
+func writeGainUnechoed(t *testing.T, r *rig, sess driver.Session, h int, db float64) {
+	t.Helper()
+	r.net.SetDropFrom(consoleIP, true)
+	if err := sess.Apply(driver.Command{Param: headamp(h, model.FieldGain), Value: level(t, db), Origin: gesture}); err != nil {
+		t.Fatal(err)
+	}
+	synctest.Wait()
+	r.net.SetDropFrom(consoleIP, false)
+}
+
+// Follow-up 1: our own Gain write read back by the re-read is not a change
+// the console failed to push. Two unechoed Gain writes, each read back in
+// consecutive passes on an idle console, raised ClientLimitHit (input
+// locked, nothing to clear it).
+func TestLimit_OwnUnechoedGainReadBackIsNoEvidence(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t, simx32.Options{})
+		sess := r.connect()
+		events, _ := r.run(sess)
+		rr := sess.(driver.Rereader)
+		for _, h := range []int{1, 2} {
+			writeGainUnechoed(t, r, sess, h, 6)
+			time.Sleep(DefaultTiming.EchoWindow + time.Second) // the pass reads it
+			_ = rr.Reread()
+			time.Sleep(DefaultTiming.RereadGap + passTime)
+		}
+		if hit, ok := nextOf[driver.ClientLimitHit](events, passTime); ok {
+			t.Fatalf("our own Gain writes raised %+v", hit)
+		}
+	})
+}
+
+// Follow-up 1: Gain echo is unverified, so a missing Gain echo is not
+// write evidence either: three unechoed Gain writes raise no limit.
+func TestLimit_UnechoedGainWritesAreNoEvidence(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t, simx32.Options{})
+		sess := r.connect()
+		events, _ := r.run(sess)
+		for i, db := range []float64{3, 6, 9} {
+			writeGainUnechoed(t, r, sess, 1+i, db)
+		}
+		if hit, ok := nextOf[driver.ClientLimitHit](events, DefaultTiming.EchoWindow+time.Second); ok {
+			t.Fatalf("unechoed Gain writes raised %+v", hit)
+		}
+	})
+}
