@@ -24,7 +24,10 @@ const (
 	bankInputs  = "/meters/1"
 	// bankInputsAlt is the unslashed spelling printed in the command table (X32-F52).
 	bankInputsAlt     = "meters/1"
+	bankBuses         = "/meters/2"
 	meterBank1Values  = 96 // X32-F51: 32 inputs + 32 gate GR + 32 dynamics GR
+	meterBank2Values  = 49 // X32-F55: 16 buses, 6 matrices, main L, R, M/C, 24 GR
+	bank2MainL        = 22 // X32-F55
 	infoServerVersion = "V2.05"
 	infoServerName    = "osc-server"
 	minTimeFactor     = 1
@@ -58,6 +61,9 @@ func (s *Sim) handlePacket(from netip.AddrPort, b []byte) {
 // dispatch handles one message. Callers hold s.mu.
 func (s *Sim) dispatch(now time.Time, from netip.AddrPort, m *osc.Message) []outgoing {
 	addr := string(m.Address)
+	if s.opts.SlotForAnySender && addr != addrXremote {
+		s.touchSlot(now, from, false)
+	}
 	switch addr {
 	case addrXinfo:
 		s.record(now, from, ClassRead, addr, osc.Arg{}, false)
@@ -125,37 +131,50 @@ func (s *Sim) reply(to netip.AddrPort, addr string, args ...osc.Arg) []outgoing 
 }
 
 // registerXremote adds or renews a push client (X32-F20, X32-F21).
-func (s *Sim) registerXremote(now time.Time, from netip.AddrPort) {
-	s.subs = slices.DeleteFunc(s.subs, func(sub subscriber) bool { return !now.Before(sub.expires) })
-	expires := now.Add(s.opts.SubscriptionTTL)
-	for i := range s.subs {
-		if s.subs[i].addr == from {
-			s.subs[i].expires = expires
-			return
+func (s *Sim) registerXremote(now time.Time, from netip.AddrPort) { s.touchSlot(now, from, true) }
+
+// touchSlot adds or renews the client-table entry of from (X32-F21, X32-F28).
+// xremote also (re)starts its push lifetime. A newcomer finds no free slot when
+// the table is full: it is ignored, or the oldest entry is evicted (option).
+func (s *Sim) touchSlot(now time.Time, from netip.AddrPort, xremote bool) {
+	s.subs = slices.DeleteFunc(s.subs, func(sub subscriber) bool { return !now.Before(sub.slotUntil) })
+	until := now.Add(s.opts.SubscriptionTTL)
+	i := slices.IndexFunc(s.subs, func(sub subscriber) bool { return sub.addr == from })
+	if i < 0 {
+		if len(s.subs) >= s.opts.MaxPushClients {
+			if !s.opts.EvictOldestWhenFull {
+				return // [UNVERIFIED] default: the newcomer gets no slot and no pushes
+			}
+			s.subs = s.subs[1:] // oldest registration first
 		}
+		s.subs = append(s.subs, subscriber{addr: from, since: now})
+		i = len(s.subs) - 1
+		s.maxSlots = max(s.maxSlots, len(s.subs))
 	}
-	if len(s.subs) >= s.opts.MaxPushClients {
-		if !s.opts.EvictOldestWhenFull {
-			return // [UNVERIFIED] default: the newcomer gets no pushes
-		}
-		s.subs = s.subs[1:] // oldest registration first
+	s.subs[i].slotUntil = until
+	if xremote {
+		s.subs[i].pushUntil = until
 	}
-	s.subs = append(s.subs, subscriber{addr: from, since: now, expires: expires})
 }
 
 // registerMeters starts or renews the input meter stream (X32-F50..F52).
 func (s *Sim) registerMeters(now time.Time, from netip.AddrPort, m *osc.Message) {
 	bank, ok := m.StringArg(0)
-	if !ok || (bank != bankInputs && bank != bankInputsAlt) {
+	switch {
+	case !ok:
+		return
+	case bank == bankInputsAlt:
+		bank = bankInputs
+	case bank != bankInputs && bank != bankBuses:
 		return // other banks are not modelled
 	}
 	tf := int32(minTimeFactor)
 	if v, ok := m.IntArg(1); ok && v >= minTimeFactor && v <= maxTimeFactor {
 		tf = v
 	}
-	sub := meterSub{addr: from, expires: now.Add(s.opts.MeterTTL), interval: s.opts.MeterInterval * time.Duration(tf), next: now}
+	sub := meterSub{addr: from, bank: bank, expires: now.Add(s.opts.MeterTTL), interval: s.opts.MeterInterval * time.Duration(tf), next: now}
 	for i := range s.meterSubs {
-		if s.meterSubs[i].addr == from {
+		if s.meterSubs[i].addr == from && s.meterSubs[i].bank == bank {
 			sub.next = s.meterSubs[i].next
 			s.meterSubs[i] = sub
 			return
@@ -173,7 +192,7 @@ func (s *Sim) pushLocked(now time.Time, addr string, v *value, sender netip.Addr
 	}
 	var out []outgoing
 	for _, sub := range s.subs {
-		if !now.Before(sub.expires) || (sub.addr == sender && !toSender) {
+		if !now.Before(sub.pushUntil) || (sub.addr == sender && !toSender) {
 			continue
 		}
 		out = append(out, outgoing{to: sub.addr, pkt: pkt})
@@ -214,14 +233,15 @@ func (s *Sim) Value(addr string) (osc.Arg, bool) {
 	return v.arg(), true
 }
 
-// appendMeterBlob encodes bank 1 as described in X32-F53: little-endian count,
-// then little-endian float32 values.
-func appendMeterBlob(dst []byte, inputs []float32) []byte {
-	dst = binary.LittleEndian.AppendUint32(dst, meterBank1Values)
-	for i := range meterBank1Values {
+// appendMeterBlob encodes a bank as described in X32-F53: little-endian
+// count, then count little-endian float32 values; values beyond len(levels)
+// are 0.
+func appendMeterBlob(dst []byte, count int, levels []float32) []byte {
+	dst = binary.LittleEndian.AppendUint32(dst, uint32(count))
+	for i := range count {
 		var v float32
-		if i < len(inputs) {
-			v = inputs[i]
+		if i < len(levels) {
+			v = levels[i]
 		}
 		dst = binary.LittleEndian.AppendUint32(dst, math.Float32bits(v))
 	}

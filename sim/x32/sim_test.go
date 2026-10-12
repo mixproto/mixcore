@@ -342,3 +342,152 @@ func TestQuantizeLevel(t *testing.T) {
 		t.Fatal("Class.String mismatch")
 	}
 }
+
+// X32-F28: a slot belongs to a source port. Under the documented model only
+// ports that sent /xremote hold one; a new port is a new client.
+func TestSim_SlotsBelongToSourcePorts(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := runSim(t, Options{})
+		reader := h.client("10.0.1.1")
+		reader.send("/ch/01/mix/fader")
+		sub := h.client("10.0.1.1")
+		sub.send("/xremote")
+		synctest.Wait()
+		if got := h.sim.Slots(); len(got) != 1 || !got[0].Xremote {
+			t.Fatalf("slots = %+v, want only the /xremote port", got)
+		}
+		again := h.client("10.0.1.1") // same host, new port: a second client
+		again.send("/xremote")
+		synctest.Wait()
+		if n := len(h.sim.Slots()); n != 2 || h.sim.MaxSlotsUsed() != 2 {
+			t.Fatalf("%d slots (max %d), want 2: a new port is a new client", n, h.sim.MaxSlotsUsed())
+		}
+		time.Sleep(DefaultSubscriptionTTL)
+		if n := len(h.sim.Slots()); n != 0 {
+			t.Fatalf("%d slots after the TTL, want 0", n)
+		}
+	})
+}
+
+// [UNVERIFIED] pessimistic variant: every sending port holds a slot, but only
+// /xremote ports get pushes; four readers starve a fifth /xremote client.
+func TestSim_SlotForAnySenderVariant(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := runSim(t, Options{SlotForAnySender: true})
+		for i := range DefaultMaxPushClients {
+			c := h.client("10.0.2." + string(rune('1'+i)))
+			c.send("/ch/01/mix/fader")
+			synctest.Wait()
+			c.drain()
+		}
+		late := h.client("10.0.2.9")
+		late.send("/xremote")
+		synctest.Wait()
+		if n := len(h.sim.Slots()); n != DefaultMaxPushClients {
+			t.Fatalf("%d slots, want %d readers", n, DefaultMaxPushClients)
+		}
+		if err := h.sim.SurfaceSet("/ch/02/mix/on", osc.Int(0)); err != nil {
+			t.Fatal(err)
+		}
+		if _, got := late.recv(time.Second); got {
+			t.Fatal("the fifth client must find no free slot")
+		}
+		if len(h.sim.Subscribers()) != 0 {
+			t.Fatal("readers hold slots but are not push clients")
+		}
+	})
+}
+
+// X32-F35..F38: groups, DCAs and membership bitmaps with their ranges.
+func TestSim_GroupParametersAndRanges(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := runSim(t, Options{})
+		c := h.client("10.0.3.1")
+		for addr, want := range map[string]int32{"/config/mute/6": 0, "/dca/8/on": 1, "/ch/32/grp/mute": 0, "/ch/01/grp/dca": 0, "/main/st/grp/mute": 0} {
+			c.send(addr)
+			m, ok := c.recv(time.Second)
+			if v, _ := m.IntArg(0); !ok || string(m.Address) != addr || v != want {
+				t.Fatalf("read %s = %v %v, want %d", addr, m.String(), ok, want)
+			}
+		}
+		for _, tc := range []struct {
+			addr string
+			v    int32
+			ok   bool
+		}{
+			{"/config/mute/1", 1, true}, {"/config/mute/1", 2, false},
+			{"/ch/01/grp/mute", 63, true}, {"/ch/01/grp/mute", 64, false},
+			{"/ch/01/grp/dca", 255, true}, {"/ch/01/grp/dca", 256, false}, {"/ch/01/grp/dca", -1, false},
+			{"/-show/prepos/current", -1, true}, {"/-show/prepos/current", 100, false},
+		} {
+			c.send(tc.addr, osc.Int(tc.v))
+			synctest.Wait()
+			w := h.sim.Writes()
+			if last := w[len(w)-1]; last.Address != tc.addr || last.Accepted != tc.ok {
+				t.Fatalf("write %s %d accepted = %v, want %v", tc.addr, tc.v, last.Accepted, tc.ok)
+			}
+		}
+	})
+}
+
+// X32-F55: bank 2 carries 49 values with Main L/R at 22/23.
+func TestSim_Bank2MainLevels(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := runSim(t, Options{})
+		h.sim.SetMainLevels(0.5, 1)
+		c := h.client("10.0.3.2")
+		c.send("/meters", osc.String("/meters/2"))
+		m, ok := c.recv(time.Second)
+		blob, _ := m.BlobArg(0)
+		if !ok || string(m.Address) != "/meters/2" || binary.LittleEndian.Uint32(blob) != 49 {
+			t.Fatalf("bank 2 packet = %v", m.String())
+		}
+		l := math.Float32frombits(binary.LittleEndian.Uint32(blob[4+4*22:]))
+		r := math.Float32frombits(binary.LittleEndian.Uint32(blob[4+4*23:]))
+		if l != 0.5 || r != 1 {
+			t.Fatalf("main L/R = %v %v", l, r)
+		}
+	})
+}
+
+// X32-F60: a recall is a burst of pushes of what changed; the markers are an
+// [UNVERIFIED] variant.
+func TestSim_RecallSceneBurst(t *testing.T) {
+	for _, markers := range []bool{false, true} {
+		t.Run(map[bool]string{false: "parameters only (default)", true: "with scene markers"}[markers], func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				h := runSim(t, Options{PushSceneMarkers: markers})
+				c := h.client("10.0.3.3")
+				c.send("/xremote")
+				synctest.Wait()
+				scene := map[string]osc.Arg{"/ch/01/mix/fader": osc.Float(0.5), "/ch/02/mix/on": osc.Int(0), "/ch/03/mix/on": osc.Int(1)}
+				if err := h.sim.RecallScene(12, scene); err != nil {
+					t.Fatal(err)
+				}
+				got := map[string]bool{}
+				for {
+					m, ok := c.recv(100 * time.Millisecond)
+					if !ok {
+						break
+					}
+					got[string(m.Address)] = true
+				}
+				want := map[string]bool{"/ch/01/mix/fader": true, "/ch/02/mix/on": true} // ch 3 was already on
+				if markers {
+					want["/-show/prepos/current"], want["/-undo/time"] = true, true
+				}
+				if len(got) != len(want) {
+					t.Fatalf("pushed %v, want %v", got, want)
+				}
+				for a := range want {
+					if !got[a] {
+						t.Fatalf("pushed %v, want %v", got, want)
+					}
+				}
+				if err := h.sim.RecallScene(1, map[string]osc.Arg{"/nope": osc.Int(1)}); !errors.Is(err, ErrUnknownAddress) {
+					t.Fatalf("unknown address err = %v", err)
+				}
+			})
+		})
+	}
+}

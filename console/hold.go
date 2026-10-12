@@ -16,6 +16,10 @@ import (
 // maxPendingEvents bounds hold events kept between two Drain calls.
 const maxPendingEvents = 256
 
+// ReasonLimited is the HoldCancelled reason when the console stops sending
+// us updates (client limit). Other reasons are Status names.
+const ReasonLimited = "limited"
+
 // ErrGestureEnded is returned by Apply for a fader whose hold was ended by an
 // external change or by losing the console. A new hold-begin starts a new gesture.
 var ErrGestureEnded = errors.New("console: gesture ended; start a new hold")
@@ -44,7 +48,7 @@ type HoldEvent struct {
 	ClientID string        // whose hold ended
 	Value    model.Value   // HoldExternalChange: the console's new value
 	Origin   driver.Origin // HoldExternalChange: who changed it
-	Reason   string        // HoldCancelled: "stale" or "stopped"
+	Reason   string        // HoldCancelled: "stale", "stopped" or "limited"
 }
 
 type holdKey struct {
@@ -113,7 +117,7 @@ func (s *Supervisor) Hold(p model.ParamRef, origin driver.Origin, held bool) err
 	k := holdKey{param: p, client: origin.ClientID}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if held && s.status != StatusLive {
+	if held && (s.status != StatusLive || s.limited != "") {
 		return driver.ErrStale
 	}
 	delete(s.holds.ended, k)

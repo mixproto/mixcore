@@ -186,7 +186,7 @@ func (e *Engine) Pause() (err error) {
 	if err != nil {
 		return err
 	}
-	sup.Stop()
+	sup.Pause() // keeps the sockets, so a quick Resume is not a new client to the console
 	e.slot.Reset()
 	return nil
 }
@@ -258,6 +258,8 @@ func (e *Engine) Apply(commandJSON string) (err error) {
 	switch cmd.kind {
 	case cmdHoldBegin, cmdHoldEnd:
 		return sup.Hold(cmd.param, cmd.origin, cmd.kind == cmdHoldBegin)
+	case cmdToggle:
+		return sup.Toggle(cmd.param, cmd.origin)
 	default:
 		return sup.Apply(driver.Command{Param: cmd.param, Value: cmd.value, Origin: cmd.origin})
 	}

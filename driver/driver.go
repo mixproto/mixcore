@@ -126,6 +126,29 @@ type Driver interface {
 	Connect(ctx context.Context, ep Endpoint, opts Options) (Session, error)
 }
 
+// LinkOpener is implemented by drivers whose sessions can share one
+// long-lived transport. Some consoles tell clients apart by source port and
+// keep a client slot for a while after its last packet (x32: X32-F28), so a
+// new socket per reconnect can fill the console's client table. A supervisor
+// opens one Link per engine session and reuses it for every reconnect.
+type LinkOpener interface {
+	OpenLink(ctx context.Context, ep Endpoint, opts Options) (Link, error)
+}
+
+// Link owns the sockets to one console. Sessions made by Connect run over
+// them one at a time; closing a session never closes the link.
+type Link interface {
+	// Connect identifies the console, subscribes and reads the full state,
+	// like Driver.Connect, over the link's sockets. A session still open on
+	// the link is closed first. It never writes a parameter.
+	Connect(ctx context.Context) (Session, error)
+	// Err is non-nil once a socket of the link failed; the link must then be
+	// closed and a new one opened.
+	Err() error
+	// Close closes the open session, if any, and the sockets. Idempotent.
+	Close() error
+}
+
 // Session is one live connection, owned by exactly one console.Supervisor.
 type Session interface {
 	Identity() Identity
@@ -178,12 +201,50 @@ type StateReplaced struct {
 	Reason string
 }
 
-// ClientLimitHit means the console accepts us but will not push updates.
-type ClientLimitHit struct{ Limit int }
+// Reasons of ClientLimitHit.
+const (
+	LimitNoEcho          = "noEchoOfOwnWrites"          // our writes got no echo while the console answered
+	LimitUnpushedChanges = "rereadFoundUnpushedChanges" // re-reads found changes that were never pushed
+)
 
-func (ParamChanged) isEvent()   {}
-func (StateReplaced) isEvent()  {}
-func (ClientLimitHit) isEvent() {}
+// ClientLimitHit means the console accepts us but does not push updates to
+// us: its client slots are full. Values may be stale until ClientLimitCleared.
+type ClientLimitHit struct {
+	Limit  int
+	Reason string // LimitNoEcho or LimitUnpushedChanges
+}
+
+// ClientLimitCleared means updates arrive again after a ClientLimitHit.
+type ClientLimitCleared struct{}
+
+// Scene recall confidences and signals (SceneRecalled).
+const (
+	ConfidenceHigh   = "high"   // a burst and the undo checkpoint
+	ConfidenceMedium = "medium" // the undo checkpoint alone
+	ConfidenceLow    = "low"    // a burst alone
+
+	SignalBurst            = "burst"            // many parameters pushed within a short window
+	SignalUndoTime         = "undoTime"         // the console's undo checkpoint changed
+	SignalHighlightedScene = "highlightedScene" // the highlighted scene changed (a hint, never a signal alone)
+
+	NoScene = -1 // HighlightedScene when the console did not report one
+)
+
+// SceneRecalled means a scene (snapshot) was recalled at the console, as far
+// as the driver can tell; the family's protocol doc says how it is inferred.
+// Every held parameter must end; the driver re-reads the console itself.
+type SceneRecalled struct {
+	Confidence       string
+	Signals          []string
+	HighlightedScene int // NoScene when unknown; never "the loaded scene" unless the family says so
+	At               time.Time
+}
+
+func (ParamChanged) isEvent()       {}
+func (SceneRecalled) isEvent()      {}
+func (StateReplaced) isEvent()      {}
+func (ClientLimitHit) isEvent()     {}
+func (ClientLimitCleared) isEvent() {}
 
 // Sentinel errors. Compare with errors.Is.
 var (

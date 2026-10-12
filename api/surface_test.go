@@ -24,8 +24,9 @@ func TestReadMeterFrame_FillsCallerBufferOrReportsSize(t *testing.T) {
 		e.startLive(t)
 		buf := make([]byte, MeterFrameMaxBytes)
 		n := e.eng.ReadMeterFrame(buf)
-		if n != meters.FrameHeaderSize+32*4 || !bytes.Equal(buf[:n], e.eng.MeterFrame()) {
-			t.Fatalf("ReadMeterFrame = %d bytes, want the same frame as MeterFrame", n)
+		other := e.eng.MeterFrame() // may be a newer frame: compare the layout, not the levels
+		if n != meters.FrameHeaderSize+34*4 || len(other) != n || !bytes.Equal(buf[:8], other[:8]) {
+			t.Fatalf("ReadMeterFrame = %d bytes, want a frame shaped like MeterFrame (%d bytes)", n, len(other))
 		}
 		small := bytes.Repeat([]byte{0xAA}, 10)
 		if got := e.eng.ReadMeterFrame(small); got != n || !bytes.Equal(small, bytes.Repeat([]byte{0xAA}, 10)) {
@@ -54,7 +55,7 @@ func TestHold_OtherOwnClientWriteEndsGesture(t *testing.T) {
 		}
 		synctest.Wait()
 		d := e.rec.last()
-		if len(d.Events) != 1 || d.Events[0].Type != "externalChangeOnHeld" || d.Events[0].ClientID != "ui" ||
+		if len(d.Events) != 1 || d.Events[0].Type != "externalChangeOnHeld" || *d.Events[0].ClientID != "ui" ||
 			d.Events[0].Origin.ClientID != "tablet" || d.Events[0].Origin.Kind != "gesture" {
 			t.Fatalf("events = %+v, want ui's gesture ended by the tablet", d.Events)
 		}

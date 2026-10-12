@@ -184,6 +184,46 @@ func MixFaderDB(position C.double) (db C.double) {
 	return C.double(engine.FaderDB(float64(position)))
 }
 
+// MixMeterScale writes the meter display scale (meter-scale.schema.json) to
+// *outJSON / *outLen; free it with MixFree.
+//
+//export MixMeterScale
+func MixMeterScale(outJSON **C.char, outLen *C.int32_t) (code C.int32_t) {
+	defer recoverCode(&code)
+	if outJSON == nil || outLen == nil {
+		return C.MIX_ERR_INVALID_ARGUMENT
+	}
+	scale := engine.MeterScale()
+	*outJSON = C.CString(scale)
+	*outLen = C.int32_t(len(scale))
+	return C.MIX_OK
+}
+
+// MixMeterPosition maps a level in dBFS to 0..1 on the meter scale.
+//
+//export MixMeterPosition
+func MixMeterPosition(dbfs C.double) (pos C.double) {
+	defer func() { _ = recover() }()
+	return C.double(engine.MeterPosition(float64(dbfs)))
+}
+
+// MixMeterRelease is one meter ballistics step (meter-frame.md).
+//
+//export MixMeterRelease
+func MixMeterRelease(shownDB, inputDB, elapsedMs C.double) (db C.double) {
+	defer func() { _ = recover() }()
+	return C.double(engine.MeterRelease(float64(shownDB), float64(inputDB), float64(elapsedMs)))
+}
+
+// MixFaderStep applies a discrete fader step with the bottom-of-scale rule
+// (-inf <-> -60 dB, design CR-21).
+//
+//export MixFaderStep
+func MixFaderStep(db, deltaDB C.double) (next C.double) {
+	defer func() { _ = recover() }()
+	return C.double(engine.FaderStep(float64(db), float64(deltaDB)))
+}
+
 // MixSetStateListener registers (or, with NULL, clears) the state callback.
 // The next message is a full snapshot.
 //

@@ -29,6 +29,7 @@ const (
 	KindLevel ValueKind = iota + 1 // dB, finite or -inf (off)
 	KindBool                       // on/off
 	KindText                       // UTF-8 text
+	KindMask                       // group membership: bit n-1 set = member of group n
 )
 
 // Value is an immutable engineering-unit value. The zero Value is invalid.
@@ -37,6 +38,7 @@ type Value struct {
 	db   float64
 	on   bool
 	text string
+	mask uint32
 }
 
 // Level returns a level in dB. -inf means fully off. NaN and +inf are invalid,
@@ -59,6 +61,9 @@ func Text(s string) (Value, error) {
 	return Value{kind: KindText, text: s}, nil
 }
 
+// Mask returns a group-membership value: bit n-1 set means member of group n.
+func Mask(m uint32) Value { return Value{kind: KindMask, mask: m} }
+
 // Kind returns the value kind (0 for the invalid zero Value).
 func (v Value) Kind() ValueKind { return v.kind }
 
@@ -67,6 +72,9 @@ func (v Value) DB() (float64, bool) { return v.db, v.kind == KindLevel }
 
 // Bool returns the on/off state if v is a bool.
 func (v Value) Bool() (bool, bool) { return v.on, v.kind == KindBool }
+
+// Mask returns the membership bits if v is a mask.
+func (v Value) Mask() (uint32, bool) { return v.mask, v.kind == KindMask }
 
 // Text returns the text if v is text.
 func (v Value) Text() (string, bool) { return v.text, v.kind == KindText }
@@ -83,6 +91,8 @@ func (v Value) String() string {
 		return fmt.Sprintf("%t", v.on)
 	case KindText:
 		return fmt.Sprintf("%q", v.text)
+	case KindMask:
+		return fmt.Sprintf("mask %b", v.mask)
 	default:
 		return "<invalid>"
 	}

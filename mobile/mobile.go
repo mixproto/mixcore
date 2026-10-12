@@ -15,8 +15,9 @@
 //   - No call blocks on the network; callbacks come from engine goroutines and
 //     must return quickly.
 //   - Errors carry a stable code as their whole message (the Err* constants).
-//   - No []byte is taken from the caller, so none is retained; MeterFrame
-//     returns a new slice that the binding copies again.
+//   - MeterFrame returns a new slice that the binding copies again;
+//     ReadMeterFrame writes into the caller's buffer during the call and
+//     never retains it.
 package mobile
 
 import (
@@ -143,6 +144,22 @@ func MeterFrame() (frame []byte) {
 	return engine.MeterFrame()
 }
 
+// ReadMeterFrame copies the newest meter frame (meter-frame.md) into dst and
+// returns its length; nothing is allocated. When dst is shorter than the
+// frame nothing is written: call again with at least the returned size
+// (MeterFrameMaxBytes always fits). gomobile passes dst by reference: Swift
+// must pass an NSMutableData of MeterFrameMaxBytes allocated once (an
+// immutable Data is copied by the binding and the frame is lost); Kotlin and
+// Java pass a ByteArray allocated once (the JNI layer copies the bytes back).
+func ReadMeterFrame(dst []byte) (n int) {
+	defer func() {
+		if recover() != nil {
+			n = 0
+		}
+	}()
+	return engine.ReadMeterFrame(dst)
+}
+
 // FaderPosition maps dB (-inf allowed) to a fader position 0..1.
 func FaderPosition(db float64) (pos float64) {
 	defer recoverQuiet()
@@ -153,6 +170,31 @@ func FaderPosition(db float64) (pos float64) {
 func FaderDB(position float64) (db float64) {
 	defer recoverQuiet()
 	return engine.FaderDB(position)
+}
+
+// MeterScale returns the meter display scale (meter-scale.schema.json).
+func MeterScale() (scale string) {
+	defer recoverQuiet()
+	return engine.MeterScale()
+}
+
+// MeterPosition maps a level in dBFS to 0..1 on the meter scale.
+func MeterPosition(dbfs float64) (pos float64) {
+	defer recoverQuiet()
+	return engine.MeterPosition(dbfs)
+}
+
+// MeterRelease is one meter ballistics step (meter-frame.md).
+func MeterRelease(shownDB, inputDB, elapsedMs float64) (db float64) {
+	defer recoverQuiet()
+	return engine.MeterRelease(shownDB, inputDB, elapsedMs)
+}
+
+// FaderStep applies a discrete fader step with the bottom-of-scale rule
+// (-inf <-> -60 dB, design CR-21).
+func FaderStep(db, deltaDB float64) (next float64) {
+	defer recoverQuiet()
+	return engine.FaderStep(db, deltaDB)
 }
 
 // SetDiscoveryListener sets (or clears, with nil) the discovery listener.

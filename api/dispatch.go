@@ -41,7 +41,7 @@ func (e *Engine) dispatch(ctx context.Context, sup *console.Supervisor) {
 func (e *Engine) deliver(sup *console.Supervisor, seq *uint64) {
 	u := sup.Drain()
 	full := u.Full || e.wantFull.Swap(false)
-	if !full && len(u.Changes) == 0 && len(u.Events) == 0 {
+	if !full && len(u.Changes) == 0 && len(u.Effective) == 0 && len(u.Events) == 0 && len(u.Scenes) == 0 {
 		return
 	}
 	box := e.lis.Load()

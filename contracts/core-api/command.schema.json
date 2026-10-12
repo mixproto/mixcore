@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/command.schema.json",
-  "title": "mixcore core API v0: Apply(commandJSON)",
-  "description": "One user gesture. set writes a value; holdBegin/holdEnd mark a fader as held by a finger (no write). Only origin kinds gesture and macro are accepted; console and system are rejected with ERR_NOT_USER_ORIGIN. A set for a fader whose hold was ended by an external change or by losing the console is rejected with ERR_GESTURE_ENDED until the same client sends holdBegin or holdEnd for it.",
+  "title": "mixcore core API v0.1: Apply(commandJSON)",
+  "description": "One user gesture. set writes a value; holdBegin/holdEnd mark a fader as held by a finger (no write). Only origin kinds gesture and macro are accepted; console and system are rejected with ERR_NOT_USER_ORIGIN. A set for a fader whose hold was ended by an external change or by losing the console is rejected with ERR_GESTURE_ENDED until the same client sends holdBegin or holdEnd for it. v0.1: toggle (field mute only, no value) reads the console's current value in the core and writes the inverse as an absolute value; it is the way to toggle a mute group or a DCA mute. muteGroups, dcas and effectiveMute cannot be written (ERR_UNSUPPORTED / ERR_INVALID_COMMAND).",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -19,7 +19,8 @@
       "enum": [
         "set",
         "holdBegin",
-        "holdEnd"
+        "holdEnd",
+        "toggle"
       ]
     },
     "param": {
@@ -64,6 +65,31 @@
             "properties": {
               "field": {
                 "const": "fader"
+              }
+            }
+          }
+        },
+        "not": {
+          "required": [
+            "value"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "toggle"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "param": {
+            "properties": {
+              "field": {
+                "const": "mute"
               }
             }
           }
@@ -141,6 +167,39 @@
         "kind": "gesture",
         "clientId": "ios-1",
         "seq": 45
+      }
+    },
+    {
+      "version": 0,
+      "type": "toggle",
+      "param": {
+        "strip": {
+          "kind": "muteGroup",
+          "index": 2
+        },
+        "field": "mute"
+      },
+      "origin": {
+        "kind": "gesture",
+        "clientId": "ios-1",
+        "seq": 46
+      }
+    },
+    {
+      "version": 0,
+      "type": "set",
+      "param": {
+        "strip": {
+          "kind": "dca",
+          "index": 1
+        },
+        "field": "mute"
+      },
+      "value": true,
+      "origin": {
+        "kind": "gesture",
+        "clientId": "ios-1",
+        "seq": 47
       }
     }
   ]

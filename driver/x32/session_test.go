@@ -348,7 +348,7 @@ func TestMeters_InputLevelsPublishedInDBFS(t *testing.T) {
 		}
 		time.Sleep(time.Second)
 		var fr meters.Frame
-		if !r.slot.CopyLatest(&fr) || fr.Count != inputChannels {
+		if !r.slot.CopyLatest(&fr) || fr.Count != meterLevels {
 			t.Fatalf("frame count = %d", fr.Count)
 		}
 		if fr.Levels[0] != 0 || math.Abs(float64(fr.Levels[1])+6.0206) > 1e-3 || !math.IsInf(float64(fr.Levels[2]), -1) {
@@ -413,4 +413,32 @@ func TestDirectedBroadcast(t *testing.T) {
 	if len(BroadcastTargets()) < 1 {
 		t.Fatal("BroadcastTargets must include the limited broadcast")
 	}
+}
+
+// X32-F55, open question 27: Main L/R from bank 2 are levels 32 and 33.
+func TestMeters_MainLRFollowTheInputs(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t, simx32.Options{})
+		r.sim.SetInputLevels([]float32{1})
+		r.sim.SetMainLevels(0.5, 1)
+		sess := r.connect()
+		r.run(sess)
+		if err := sess.SetMeters(driver.MeterRequest{Inputs: true}); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Second)
+		var fr meters.Frame
+		if !r.slot.CopyLatest(&fr) || fr.Count != meterLevels {
+			t.Fatalf("frame count = %d, want %d", fr.Count, meterLevels)
+		}
+		if fr.Levels[0] != 0 || math.Abs(float64(fr.Levels[mainLLevel])+6.0206) > 1e-3 || fr.Levels[mainLLevel+1] != 0 {
+			t.Fatalf("levels: in1 %v, main L %v, main R %v", fr.Levels[0], fr.Levels[mainLLevel], fr.Levels[mainLLevel+1])
+		}
+		r.sim.SetMainLevels(0, 0)
+		time.Sleep(time.Second)
+		r.slot.CopyLatest(&fr)
+		if !math.IsInf(float64(fr.Levels[mainLLevel]), -1) || fr.Levels[0] != 0 {
+			t.Fatalf("main L %v after silence, input 1 %v", fr.Levels[mainLLevel], fr.Levels[0])
+		}
+	})
 }

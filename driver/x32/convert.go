@@ -98,23 +98,27 @@ func (faderLaw) DBFromPosition(pos float64) float64 {
 	return positionToDB(min(pos, 1))
 }
 
-// muteToWire: mix/on is the inverse of mute (X32-F33).
-func muteToWire(muted bool) int32 {
-	if muted {
-		return 0
+// switchToWire converts a model mute to an int switch: mix/on and dca/on are
+// the inverse of mute (X32-F33, X32-F37), a mute group is engaged = 1 (X32-F35).
+func switchToWire(c conv, muted bool) int32 {
+	if muted == (c == convEngaged) {
+		return 1
 	}
-	return 1
+	return 0
 }
 
-func muteFromWire(on int32) (bool, error) {
-	switch on {
-	case 0:
-		return true, nil
-	case 1:
-		return false, nil
-	default:
-		return false, fmt.Errorf("x32 mix/on %d: %w", on, errBadWire)
+func switchFromWire(c conv, v int32) (bool, error) {
+	if v != 0 && v != 1 {
+		return false, fmt.Errorf("x32 switch %d: %w", v, errBadWire)
 	}
+	return (v == 1) == (c == convEngaged), nil
+}
+
+func maskFromWire(p param, v int32) (model.Value, error) {
+	if v < 0 || v > p.maxMask {
+		return model.Value{}, fmt.Errorf("x32 %s bitmap %d: %w", p.addr, v, errBadWire)
+	}
+	return model.Mask(uint32(v)), nil
 }
 
 // nameToWire accepts at most 12 printable ASCII characters (X32-F31).
@@ -137,18 +141,20 @@ func toWire(p param, v model.Value) (osc.Arg, error) {
 	if v.Kind() != p.ref.Field.ValueKind() {
 		return osc.Arg{}, fmt.Errorf("x32 %s: value kind %d: %w", p.addr, v.Kind(), model.ErrInvalidValue)
 	}
-	switch p.ref.Field {
-	case model.FieldFader:
+	switch p.conv {
+	case convLevel:
 		db, _ := v.DB()
 		f, err := dbToFader(db)
 		return osc.Float(f), err
-	case model.FieldMute:
+	case convOnSwitch, convEngaged:
 		m, _ := v.Bool()
-		return osc.Int(muteToWire(m)), nil
-	default:
+		return osc.Int(switchToWire(p.conv, m)), nil
+	case convName:
 		s, _ := v.Text()
 		n, err := nameToWire(s)
 		return osc.String(n), err
+	default: // membership is read-only (Apply refuses it before)
+		return osc.Arg{}, fmt.Errorf("x32 %s is read-only: %w", p.addr, model.ErrInvalidValue)
 	}
 }
 
@@ -157,16 +163,18 @@ func fromWire(p param, a osc.Arg) (model.Value, error) {
 	if a.Type != p.typ {
 		return model.Value{}, fmt.Errorf("x32 %s: wire type %q: %w", p.addr, byte(a.Type), errBadWire)
 	}
-	switch p.ref.Field {
-	case model.FieldFader:
+	switch p.conv {
+	case convLevel:
 		db, err := faderToDB(a.Float)
 		if err != nil {
 			return model.Value{}, err
 		}
 		return model.Level(db)
-	case model.FieldMute:
-		m, err := muteFromWire(a.Int)
+	case convOnSwitch, convEngaged:
+		m, err := switchFromWire(p.conv, a.Int)
 		return model.Bool(m), err
+	case convMask:
+		return maskFromWire(p, a.Int)
 	default:
 		return model.Text(nameFromWire(a.Bytes))
 	}

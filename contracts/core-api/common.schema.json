@@ -1,53 +1,167 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/common.schema.json",
-  "title": "mixcore core API v0: shared definitions",
+  "title": "mixcore core API v0.1: shared definitions",
   "$defs": {
-    "version": { "const": 0, "description": "Contract version. v0 is unstable until the first tagged release." },
+    "version": {
+      "const": 0,
+      "description": "Contract version. v0 is unstable until the first tagged release."
+    },
     "stripRef": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind"],
+      "required": [
+        "kind"
+      ],
       "properties": {
-        "kind": { "enum": ["input", "main"] },
-        "index": { "type": "integer", "minimum": 1, "description": "Required for input (1-based). Omitted for main." }
+        "kind": {
+          "enum": [
+            "input",
+            "main",
+            "muteGroup",
+            "dca"
+          ],
+          "description": "muteGroup and dca are v0.1 (x32: mute groups 1..6, DCA groups 1..8). Their only field is mute."
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Required for input, muteGroup and dca (1-based). Omitted for main."
+        }
       },
-      "if": { "properties": { "kind": { "const": "input" } } },
-      "then": { "required": ["kind", "index"] }
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "input",
+              "muteGroup",
+              "dca"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "kind",
+          "index"
+        ]
+      }
     },
-    "field": { "enum": ["fader", "mute", "name"] },
+    "field": {
+      "enum": [
+        "fader",
+        "mute",
+        "name",
+        "muteGroups",
+        "dcas",
+        "effectiveMute"
+      ],
+      "description": "v0.1: muteGroups and dcas are the strip's group membership (read-only); effectiveMute is derived by the core and appears only in state messages, never in commands. For a muteGroup strip, mute true means the group is engaged (muting its members); for a dca strip, mute true means the DCA is muted."
+    },
     "param": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["strip", "field"],
+      "required": [
+        "strip",
+        "field"
+      ],
       "properties": {
-        "strip": { "$ref": "#/$defs/stripRef" },
-        "field": { "$ref": "#/$defs/field" }
+        "strip": {
+          "$ref": "#/$defs/stripRef"
+        },
+        "field": {
+          "$ref": "#/$defs/field"
+        }
       }
     },
     "level": {
       "description": "A level in dB. JSON has no infinity, so fully off is the string \"-inf\". NaN never appears.",
       "oneOf": [
-        { "type": "number" },
-        { "const": "-inf" }
+        {
+          "type": "number"
+        },
+        {
+          "const": "-inf"
+        }
       ]
     },
     "value": {
-      "description": "fader: level; mute: boolean (true = muted); name: string. The field decides the type.",
+      "description": "fader: level; mute: boolean (true = muted, or for a muteGroup: engaged); name: string; muteGroups/dcas (v0.1): groupList; effectiveMute (v0.1): effectiveMute object. The field decides the type.",
       "anyOf": [
-        { "$ref": "#/$defs/level" },
-        { "type": "boolean" },
-        { "type": "string" }
+        {
+          "$ref": "#/$defs/level"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/groupList"
+        },
+        {
+          "$ref": "#/$defs/effectiveMute"
+        }
       ]
     },
     "origin": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind"],
+      "required": [
+        "kind"
+      ],
       "properties": {
-        "kind": { "enum": ["gesture", "macro", "console", "system"] },
-        "clientId": { "type": "string", "maxLength": 128 },
-        "seq": { "type": "integer", "minimum": 0 }
+        "kind": {
+          "enum": [
+            "gesture",
+            "macro",
+            "console",
+            "system"
+          ]
+        },
+        "clientId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "groupList": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "uniqueItems": true,
+      "description": "v0.1: group numbers in ascending order, e.g. [2, 5]."
+    },
+    "effectiveMute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "muted",
+        "own",
+        "muteGroups",
+        "dcas"
+      ],
+      "description": "v0.1 (design CR-01, SR-04): whether the strip is silenced toward Main LR, and why. muted = own OR any listed group. muteGroups lists the engaged mute groups the strip belongs to; dcas lists the muted DCAs it belongs to (x32: a muted DCA silences its members toward Main LR only, unless the console preference says otherwise; per-bus effective mute comes with buses). UI text: 'MUTED by MG 2', 'DCA 1 muted'.",
+      "properties": {
+        "muted": {
+          "type": "boolean"
+        },
+        "own": {
+          "type": "boolean"
+        },
+        "muteGroups": {
+          "$ref": "#/$defs/groupList"
+        },
+        "dcas": {
+          "$ref": "#/$defs/groupList"
+        }
       }
     }
   }

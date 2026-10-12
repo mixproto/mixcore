@@ -1,4 +1,4 @@
-# mixcore core API v0: C ABI (`capi/`)
+# mixcore core API v0.1: C ABI (`capi/`)
 
 The c-shared build of the core API: `mixcore.dll` on Windows (P/Invoke from C#), `libmixcore.dylib` / `libmixcore.so`
 for interop tests on macOS and Linux. `go build -buildmode=c-shared` writes the header next to the library
@@ -45,6 +45,8 @@ numbers are part of the ABI and never change; new codes get new numbers.
 | `int32_t MixApply(char* commandJSON)` | one gesture; returns at once |
 | `int32_t MixMeterFrame(uint8_t* buf, int32_t capacity)` | see below |
 | `double MixFaderPosition(double db)`, `double MixFaderDB(double position)` | pure; `-inf` crosses as IEEE `-INFINITY` |
+| `int32_t MixMeterScale(char** outJSON, int32_t* outLen)` (v0.1) | `meter-scale.schema.json`; `MixFree` it |
+| `double MixMeterPosition(double dbfs)`, `double MixMeterRelease(double shownDB, double inputDB, double elapsedMs)`, `double MixFaderStep(double db, double deltaDB)` (v0.1) | pure, never allocate (`README.md`, `meter-frame.md`) |
 | `int32_t MixSetStateListener(MixBytesCallback cb, intptr_t context)` | NULL clears; next message is a snapshot |
 | `int32_t MixSetDiscoveryListener(MixBytesCallback cb, intptr_t context)` | NULL clears |
 | `int32_t MixDiscover(char* requestJSON)` | result later through the discovery callback |

@@ -34,9 +34,11 @@ type pendingWrite struct {
 }
 
 type sentWrite struct {
-	arg    osc.Arg
-	origin driver.Origin
-	at     time.Time
+	arg      osc.Arg
+	origin   driver.Origin
+	at       time.Time
+	changes  bool // the value differed from the newest one seen
+	evidence bool // its missing echo counts as client-limit evidence
 }
 
 // session is one live connection. Apply, SetMeters and Close may be called from
@@ -45,16 +47,23 @@ type session struct {
 	timing Timing
 	params *paramTable
 	c      *conn
-	log    *slog.Logger
-	audit  func(driver.WriteRecord)
+	// ownLink is set when the session was made by Driver.Connect: closing the
+	// session then closes its sockets. Sessions of a supervisor's link leave
+	// the sockets open for the next session (X32-F28).
+	ownLink *link
+	log     *slog.Logger
+	audit   func(driver.WriteRecord)
 
 	ident    driver.Identity
 	snapshot model.State
+	caps     model.Capabilities
+	absent   map[feature]bool // set during connect, read-only afterwards
 
 	mu      sync.Mutex
 	order   []int                // pending parameter indexes, first-seen order
 	pending map[int]pendingWrite // latest value per parameter (coalesced)
 
+	done        chan struct{} // closed by Close
 	cmdReady    chan struct{}
 	meterReady  chan struct{}
 	rereadReady chan struct{}
@@ -69,6 +78,10 @@ type session struct {
 	// 10 s after our uplink dies. time.Now keeps a monotonic reading, so a
 	// wall-clock step cannot fake or hide a loss.
 	lastPong time.Time
+	live     liveness
+	lim      limitState
+	scene    sceneState
+	outbox   []driver.Event // events produced outside handleInbound, sent by Run
 	tx       []byte
 	msg      osc.Message
 	sent     map[int][]sentWrite
@@ -81,14 +94,14 @@ var _ driver.Session = (*session)(nil)
 func newSession(d *Driver, c *conn, opts driver.Options) *session {
 	return &session{
 		timing: d.timing, params: &d.params, c: c, log: logger(opts), audit: opts.WriteAudit,
-		pending: map[int]pendingWrite{}, cmdReady: make(chan struct{}, 1), meterReady: make(chan struct{}, 1),
+		pending: map[int]pendingWrite{}, done: make(chan struct{}), cmdReady: make(chan struct{}, 1), meterReady: make(chan struct{}, 1),
 		rereadReady: make(chan struct{}, 1), tx: make([]byte, 0, rxBufSize), sent: map[int][]sentWrite{},
-		rr: rereadPass{asked: map[int]bool{}},
+		rr: rereadPass{asked: map[int]bool{}}, scene: newSceneState(),
 	}
 }
 
 func (s *session) Identity() driver.Identity        { return s.ident }
-func (s *session) Capabilities() model.Capabilities { return capabilities() }
+func (s *session) Capabilities() model.Capabilities { return s.caps }
 func (s *session) Snapshot() model.State            { return s.snapshot }
 
 // Apply queues one user write; the latest value per parameter wins.
@@ -100,7 +113,7 @@ func (s *session) Apply(cmd driver.Command) error {
 		return driver.ErrClosed
 	}
 	p, ok := s.params.byRef(cmd.Param)
-	if !ok {
+	if !ok || p.readOnly || s.absent[p.feature] {
 		return fmt.Errorf("x32 %s: %w", cmd.Param, driver.ErrUnsupported)
 	}
 	arg, err := toWire(p, cmd.Value)
@@ -128,17 +141,23 @@ func (s *session) SetMeters(req driver.MeterRequest) error {
 		return driver.ErrClosed
 	}
 	s.metersOn.Store(req.Inputs)
-	s.c.meters.enabled.Store(req.Inputs)
+	s.c.meters.switchOn(req.Inputs)
 	signal(s.meterReady)
 	return nil
 }
 
-// Close stops the session; queued writes are dropped, never sent.
+// Close stops the session; queued writes are dropped, never sent. Meters stop
+// being published at once. The sockets stay open unless the session owns them.
 func (s *session) Close() error {
 	s.closeOnce.Do(func() {
 		s.stopped.Store(true)
-		s.c.close()
+		s.c.meters.switchOn(false)
+		close(s.done)
 		s.dropPending()
+		if l := s.ownLink; l != nil {
+			l.release(s) // Close of the link must not close s again
+			_ = l.Close()
+		}
 	})
 	return nil
 }
@@ -176,13 +195,16 @@ func (s *session) Run(ctx context.Context, events chan<- driver.Event) error {
 		return errAlreadyRunning
 	}
 	defer func() { s.stopped.Store(true); s.dropPending() }() // nothing queued survives the session
-	ping := time.NewTicker(s.timing.PingEvery)
-	defer ping.Stop()
+	s.live = newLiveness(time.Now())
+	tick := time.NewTicker(s.timing.LivenessTick)
+	defer tick.Stop()
 	renew := time.NewTicker(s.timing.RenewEvery)
 	defer renew.Stop()
 	for {
 		select {
 		case <-ctx.Done():
+			return nil
+		case <-s.done:
 			return nil
 		case <-s.c.done:
 			return nil
@@ -198,17 +220,35 @@ func (s *session) Run(ctx context.Context, events chan<- driver.Event) error {
 			s.requestMeters()
 		case <-s.rereadReady:
 			s.startReread(time.Now())
-		case now := <-ping.C:
-			if silent := now.Sub(s.lastPong); silent > s.timing.DeadAfter {
-				return fmt.Errorf("x32: no /xinfo reply for %s: %w", silent.Round(time.Millisecond), driver.ErrConnectionLost)
+		case now := <-tick.C:
+			if err := s.onTick(now); err != nil {
+				return err
 			}
-			s.sendSub(addrXinfo) // X32-F25: a read, never a write
-			s.rereadStep(now)
 		case <-renew.C:
 			s.sendSub(addrXremote) // X32-F20, X32-F27
 			s.requestMeters()
 		}
+		if !s.flushOutbox(ctx, events) {
+			return nil
+		}
 	}
+}
+
+// emit queues an event for Run to deliver after the current step.
+func (s *session) emit(ev driver.Event) { s.outbox = append(s.outbox, ev) }
+
+// flushOutbox delivers queued events; false when ctx ended meanwhile.
+func (s *session) flushOutbox(ctx context.Context, events chan<- driver.Event) bool {
+	for len(s.outbox) > 0 {
+		select {
+		case events <- s.outbox[0]:
+			s.outbox = s.outbox[1:]
+		case <-ctx.Done():
+			return false
+		}
+	}
+	s.outbox = s.outbox[:0]
+	return true
 }
 
 // sendSub sends an argument-less message on the subscription socket.
@@ -224,10 +264,12 @@ func (s *session) sendSub(addr string, args ...osc.Arg) {
 	}
 }
 
-// requestMeters (re)starts the bank 1 stream while meters are on (X32-F50, X32-F52).
+// requestMeters (re)starts the bank 1 (inputs) and bank 2 (Main L/R) streams
+// while meters are on (X32-F50, X32-F52, X32-F55).
 func (s *session) requestMeters() {
 	if s.metersOn.Load() {
-		s.sendSub(addrMeters, osc.StringBytes([]byte(meterBank1)))
+		s.sendSub(addrMeters, osc.String(meterBank1))
+		s.sendSub(addrMeters, osc.String(meterBank2))
 	}
 }
 
@@ -246,12 +288,23 @@ func (s *session) flushPending() {
 			continue
 		}
 		idx := s.params.index(w.param.ref)
-		s.rememberSent(idx, sentWrite{arg: w.arg, origin: w.origin, at: now})
+		s.rememberSent(idx, sentWrite{arg: w.arg, origin: w.origin, at: now, changes: s.changesKnown(idx, w),
+			evidence: w.param.feature == featureCore})
 		s.markTouched(idx)
 		if s.audit != nil {
 			s.audit(driver.WriteRecord{Param: w.param.ref, Address: w.param.addr, Origin: w.origin, At: now})
 		}
 	}
+}
+
+// changesKnown reports whether w sets a value other than the newest one we
+// wrote (still in the echo history) or, without one, the newest one seen.
+func (s *session) changesKnown(idx int, w pendingWrite) bool {
+	if h := s.sent[idx]; len(h) > 0 {
+		return !sameWire(h[len(h)-1].arg, w.arg)
+	}
+	v, err := fromWire(w.param, w.arg)
+	return err != nil || idx >= len(s.known) || !s.known[idx].Equal(v)
 }
 
 func (s *session) rememberSent(idx int, w sentWrite) {
@@ -286,8 +339,11 @@ func (s *session) decodeChange(p inPacket) (driver.ParamChanged, bool) {
 		s.lastPong = p.at // X32-F25
 		return driver.ParamChanged{}, false
 	}
+	if !p.viaCmd && s.onMarker(p.at) { // X32-F61, X32-F62: scene markers, if the console pushes them
+		return driver.ParamChanged{}, false
+	}
 	par, ok := s.params.byAddress(s.msg.Address)
-	if !ok {
+	if !ok || s.absent[par.feature] {
 		return driver.ParamChanged{}, false // anything we did not ask for
 	}
 	arg, ok := s.msg.Arg(0)
@@ -305,7 +361,11 @@ func (s *session) decodeChange(p inPacket) (driver.ParamChanged, bool) {
 	}
 	s.markTouched(idx)
 	s.remember(idx, v)
+	s.onPush() // a push (or our echo) on the /xremote socket: we are served
 	origin := s.matchEcho(idx, arg, p.at)
+	if origin.Kind == driver.OriginConsole {
+		s.onConsolePush(idx, p.at) // X32-F60: a recall is a burst of pushes
+	}
 	return driver.ParamChanged{Param: par.ref, Value: v, Origin: origin, At: p.at}, true
 }
 

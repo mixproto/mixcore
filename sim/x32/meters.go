@@ -36,18 +36,37 @@ func (s *Sim) dueMeters(now time.Time) []outgoing {
 	if s.offline(now) || len(s.meterSubs) == 0 {
 		return nil
 	}
-	blob := appendMeterBlob(nil, s.levels[:])
-	pkt, err := osc.AppendString(nil, bankInputs, osc.Blob(blob))
-	if err != nil {
-		return nil
-	}
+	pkts := map[string][]byte{}
 	var out []outgoing
 	for i := range s.meterSubs {
 		if now.Before(s.meterSubs[i].next) {
 			continue
 		}
 		s.meterSubs[i].next = now.Add(s.meterSubs[i].interval)
-		out = append(out, outgoing{to: s.meterSubs[i].addr, pkt: pkt})
+		bank := s.meterSubs[i].bank
+		if _, ok := pkts[bank]; !ok {
+			pkts[bank] = s.meterPacket(bank)
+		}
+		if pkts[bank] != nil {
+			out = append(out, outgoing{to: s.meterSubs[i].addr, pkt: pkts[bank]})
+		}
 	}
 	return out
+}
+
+// meterPacket encodes one bank (X32-F51, X32-F53, X32-F55). Callers hold s.mu.
+func (s *Sim) meterPacket(bank string) []byte {
+	var blob []byte
+	if bank == bankBuses {
+		var levels [bank2MainL + 2]float32
+		levels[bank2MainL], levels[bank2MainL+1] = s.mainLR[0], s.mainLR[1]
+		blob = appendMeterBlob(nil, meterBank2Values, levels[:])
+	} else {
+		blob = appendMeterBlob(nil, meterBank1Values, s.levels[:])
+	}
+	pkt, err := osc.AppendString(nil, bank, osc.Blob(blob))
+	if err != nil {
+		return nil
+	}
+	return pkt
 }

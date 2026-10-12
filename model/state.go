@@ -13,14 +13,17 @@ import (
 // StripKind is the kind of a channel strip.
 type StripKind uint8
 
-// Strip kinds supported so far. More kinds (bus, matrix, DCA) arrive with the
-// drivers that need them.
+// Strip kinds supported so far. More kinds (bus, matrix) arrive with the
+// drivers that need them. Mute groups and DCAs are group strips: their only
+// field is FieldMute (a mute group: engaged; a DCA: muted).
 const (
 	StripInput StripKind = iota + 1
 	StripMain
+	StripMuteGroup
+	StripDCA
 )
 
-var stripKindNames = map[StripKind]string{StripInput: "input", StripMain: "main"}
+var stripKindNames = map[StripKind]string{StripInput: "input", StripMain: "main", StripMuteGroup: "muteGroup", StripDCA: "dca"}
 
 func (k StripKind) String() string {
 	if s, ok := stripKindNames[k]; ok {
@@ -58,14 +61,19 @@ func (r StripRef) String() string {
 // Field is a parameter of a strip.
 type Field uint8
 
-// Fields supported so far.
+// Fields supported so far. FieldMuteGroups and FieldDCAs are the group
+// membership of an input or main strip.
 const (
 	FieldFader Field = iota + 1
 	FieldMute
 	FieldName
+	FieldMuteGroups
+	FieldDCAs
 )
 
-var fieldNames = map[Field]string{FieldFader: "fader", FieldMute: "mute", FieldName: "name"}
+var fieldNames = map[Field]string{
+	FieldFader: "fader", FieldMute: "mute", FieldName: "name", FieldMuteGroups: "muteGroups", FieldDCAs: "dcas",
+}
 
 func (f Field) String() string {
 	if s, ok := fieldNames[f]; ok {
@@ -93,6 +101,8 @@ func (f Field) ValueKind() ValueKind {
 		return KindBool
 	case FieldName:
 		return KindText
+	case FieldMuteGroups, FieldDCAs:
+		return KindMask
 	default:
 		return 0
 	}
@@ -108,10 +118,12 @@ func (p ParamRef) String() string { return p.Strip.String() + " " + p.Field.Stri
 
 // Strip is the state of one channel strip in engineering units.
 type Strip struct {
-	Ref     StripRef
-	Name    string
-	FaderDB float64 // -inf = off
-	Muted   bool
+	Ref        StripRef
+	Name       string
+	FaderDB    float64 // -inf = off
+	Muted      bool
+	MuteGroups uint32 // membership: bit n-1 = mute group n
+	DCAs       uint32 // membership: bit d-1 = DCA d
 }
 
 // Value returns the value of field f.
@@ -125,6 +137,10 @@ func (s Strip) Value(f Field) (Value, bool) {
 	case FieldName:
 		v, err := Text(s.Name)
 		return v, err == nil
+	case FieldMuteGroups:
+		return Mask(s.MuteGroups), true
+	case FieldDCAs:
+		return Mask(s.DCAs), true
 	default:
 		return Value{}, false
 	}
@@ -143,6 +159,10 @@ func (s Strip) with(f Field, v Value) (Strip, error) {
 		s.FaderDB, _ = v.DB()
 	case FieldMute:
 		s.Muted, _ = v.Bool()
+	case FieldMuteGroups:
+		s.MuteGroups, _ = v.Mask()
+	case FieldDCAs:
+		s.DCAs, _ = v.Mask()
 	default:
 		s.Name, _ = v.Text()
 	}
@@ -159,9 +179,11 @@ func (s Strip) validate() error {
 // State is an immutable snapshot of the console. Mutating methods return a new
 // State; accessors return copies.
 type State struct {
-	inputs  []Strip
-	main    Strip
-	hasMain bool
+	inputs     []Strip
+	main       Strip
+	hasMain    bool
+	muteGroups []bool // engaged, by group number - 1
+	dcaMutes   []bool // muted, by DCA number - 1
 }
 
 // NewState builds a state from input strips numbered 1..n in order and an
@@ -203,13 +225,17 @@ func (s State) Strips() []Strip {
 	return out
 }
 
-// Strip returns the strip with the given ref.
+// Strip returns the strip with the given ref. A group strip carries only Ref
+// and Muted.
 func (s State) Strip(ref StripRef) (Strip, bool) {
 	switch {
 	case ref.Kind == StripInput && ref.Index >= 1 && ref.Index <= len(s.inputs):
 		return s.inputs[ref.Index-1], true
 	case ref == MainRef && s.hasMain:
 		return s.main, true
+	case ref.Kind == StripMuteGroup || ref.Kind == StripDCA:
+		on, ok := groupAt(s.groupList(ref.Kind), ref.Index)
+		return Strip{Ref: ref, Muted: on}, ok
 	default:
 		return Strip{}, false
 	}
@@ -218,7 +244,7 @@ func (s State) Strip(ref StripRef) (Strip, bool) {
 // Value returns the current value of p.
 func (s State) Value(p ParamRef) (Value, bool) {
 	st, ok := s.Strip(p.Strip)
-	if !ok {
+	if !ok || (p.Strip.isGroup() && p.Field != FieldMute) {
 		return Value{}, false
 	}
 	return st.Value(p.Field)
@@ -226,6 +252,9 @@ func (s State) Value(p ParamRef) (Value, bool) {
 
 // With returns a new State with p set to v. The receiver is not modified.
 func (s State) With(p ParamRef, v Value) (State, error) {
+	if p.Strip.isGroup() {
+		return s.withGroup(p, v)
+	}
 	st, ok := s.Strip(p.Strip)
 	if !ok {
 		return s, fmt.Errorf("%s: %w", p, ErrUnknownParam)
@@ -248,6 +277,8 @@ func (s State) With(p ParamRef, v Value) (State, error) {
 type Capabilities struct {
 	InputCount      int
 	HasMain         bool
+	MuteGroups      int
+	DCAs            int
 	InputMeters     bool
 	EchoesOwnWrites bool
 	MaxPushClients  int

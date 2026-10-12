@@ -49,6 +49,39 @@ func FuzzDecodeMeters1(f *testing.F) {
 	})
 }
 
+// bank2Blob builds a bank 2 blob (X32-F55): 49 values, Main L/R at 22/23.
+func bank2Blob(l, r float32) []byte {
+	b := binary.LittleEndian.AppendUint32(nil, 49)
+	for i := range 49 {
+		var v float32
+		switch i {
+		case 22:
+			v = l
+		case 23:
+			v = r
+		}
+		b = binary.LittleEndian.AppendUint32(b, math.Float32bits(v))
+	}
+	return b
+}
+
+func FuzzDecodeMainLR(f *testing.F) {
+	f.Add(bank2Blob(1, 0.5))
+	f.Add(bank2Blob(float32(math.NaN()), float32(math.Inf(1))))
+	f.Add([]byte{0x18, 0, 0, 0})
+	f.Fuzz(func(t *testing.T, blob []byte) {
+		var fr meters.Frame
+		if err := decodeMainLR(blob, &fr); err != nil {
+			return
+		}
+		for _, l := range fr.Levels[mainLLevel : mainLLevel+2] {
+			if math.IsNaN(float64(l)) || math.IsInf(float64(l), 1) {
+				t.Fatalf("level %v must be finite or -inf", l)
+			}
+		}
+	})
+}
+
 func FuzzParseXinfo(f *testing.F) {
 	ok, _ := osc.AppendString(nil, "/xinfo", osc.String("192.168.1.62"), osc.String("X32-02-4A-53"),
 		osc.String("X32"), osc.String("3.04")) // X32-F10 example

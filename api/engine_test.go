@@ -75,12 +75,18 @@ type env struct {
 // newEnv runs a simulator and an engine on an in-memory network (call inside synctest).
 func newEnv(t *testing.T) *env {
 	t.Helper()
+	return newEnvWith(t, simx32.Options{Name: "FOH"})
+}
+
+// newEnvWith is newEnv with simulator options.
+func newEnvWith(t *testing.T, simOpts simx32.Options) *env {
+	t.Helper()
 	n := memnet.New()
 	pc, err := n.ListenPacket(consoleIP + ":10023")
 	if err != nil {
 		t.Fatal(err)
 	}
-	sim := simx32.New(simx32.Options{Name: "FOH"})
+	sim := simx32.New(simOpts)
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 	wg.Go(func() { _ = sim.Serve(ctx, pc) })
@@ -168,8 +174,11 @@ func TestEngine_ConnectsAndSendsSnapshotThenDiffs(t *testing.T) {
 		_ = e.sim.SurfaceSet("/ch/04/mix/on", osc.Int(0))
 		synctest.Wait()
 		diff := e.rec.last()
-		if diff.Type != "diff" || len(*diff.Changes) != 1 || (*diff.Changes)[0].Origin.Kind != "console" || (*diff.Changes)[0].Value != true {
+		if diff.Type != "diff" || len(*diff.Changes) != 2 || (*diff.Changes)[0].Origin.Kind != "console" || (*diff.Changes)[0].Value != true {
 			t.Fatalf("diff = %+v", diff)
+		}
+		if eff := (*diff.Changes)[1]; eff.Param.Field != "effectiveMute" || eff.Param.Strip.Index != 4 || eff.Value.(map[string]any)["muted"] != true {
+			t.Fatalf("effective mute change = %+v", eff) // v0.1: the UI never computes it
 		}
 		for i, m := range e.rec.all() {
 			if m.Seq != uint64(i+1) {
@@ -328,7 +337,7 @@ func TestHold_ExternalChangeEndsGesture(t *testing.T) {
 			t.Fatalf("diff = %+v", d)
 		}
 		ev := d.Events[0]
-		if ev.Type != "externalChangeOnHeld" || ev.ClientID != "ui" || ev.Origin.Kind != "console" || math.Abs(ev.Value.(float64)+10) > 0.05 {
+		if ev.Type != "externalChangeOnHeld" || *ev.ClientID != "ui" || ev.Origin.Kind != "console" || math.Abs(ev.Value.(float64)+10) > 0.05 {
 			t.Fatalf("event = %+v", ev)
 		}
 		writes := len(e.sim.Writes())
@@ -357,7 +366,7 @@ func TestMeterFrame(t *testing.T) {
 		e.sim.SetInputLevels([]float32{1})
 		e.startLive(t)
 		b := e.eng.MeterFrame()
-		if string(b[:4]) != meters.FrameMagic || binary.LittleEndian.Uint16(b[6:]) != 32 {
+		if string(b[:4]) != meters.FrameMagic || binary.LittleEndian.Uint16(b[6:]) != 34 { // 32 inputs + Main L/R
 			t.Fatalf("live frame header = %x", b[:meters.FrameHeaderSize])
 		}
 		if l := math.Float32frombits(binary.LittleEndian.Uint32(b[24:])); l != 0 {

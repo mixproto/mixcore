@@ -82,8 +82,8 @@ func TestABI_StartApplyMetersDiscoverWithCMemory(t *testing.T) {
 		t.Fatalf("MixApply with a system origin = %d, want MIX_ERR_NOT_USER_ORIGIN", code)
 	}
 
-	waitFor(t, "a meter frame", func() bool { b, _ := testMeterFrame(536); return len(b) == 24+32*4 })
-	if _, n := testMeterFrame(10); n != 24+32*4 {
+	waitFor(t, "a meter frame", func() bool { b, _ := testMeterFrame(536); return len(b) == 24+34*4 })
+	if _, n := testMeterFrame(10); n != 24+34*4 {
 		t.Fatalf("short buffer returned %d, want the needed length", n)
 	}
 

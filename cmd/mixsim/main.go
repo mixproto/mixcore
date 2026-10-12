@@ -106,6 +106,7 @@ func animateMeters(ctx context.Context, sim *simx32.Sim) {
 				levels[i] = float32(0.5 + 0.5*math.Sin(phase+float64(i)*0.3))
 			}
 			sim.SetInputLevels(levels)
+			sim.SetMainLevels(levels[0], levels[1])
 		}
 	}
 }

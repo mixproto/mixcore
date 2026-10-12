@@ -50,10 +50,23 @@ type Options struct {
 	EvictOldestWhenFull bool
 	// EchoToSender: [UNVERIFIED] variant of X32-F23. False (documented
 	// behaviour) never pushes a change back to the client that sent it.
-	EchoToSender  bool
-	MeterTTL      time.Duration // X32-F50
-	MeterInterval time.Duration // X32-F50
-	Logger        *slog.Logger
+	EchoToSender bool
+	// SlotForAnySender: [UNVERIFIED] pessimistic reading of X32-F28. False
+	// (documented) gives a client-table slot only to ports that sent /xremote;
+	// true lets every sending port hold a slot for SubscriptionTTL, although
+	// only /xremote ports receive pushes.
+	SlotForAnySender bool
+	// PushSceneMarkers: [UNVERIFIED] X32-F60 variant. False (default) makes a
+	// scene recall push only the changed parameters; true also sets and pushes
+	// /-show/prepos/current and /-undo/time (X32-F61, X32-F62).
+	PushSceneMarkers bool
+	// UnknownAddresses are parameters this console does not know (older
+	// firmware, another model): reads get no reply and writes are not
+	// applied (X32-F06). A test option, not a documented fact.
+	UnknownAddresses []string
+	MeterTTL         time.Duration // X32-F50
+	MeterInterval    time.Duration // X32-F50
+	Logger           *slog.Logger
 }
 
 func (o Options) withDefaults() Options {
@@ -103,14 +116,24 @@ type Entry struct {
 	Accepted bool    // for writes: the value was applied
 }
 
+// subscriber is one entry of the console's client table (X32-F21, X32-F28).
 type subscriber struct {
-	addr    netip.AddrPort
-	since   time.Time
-	expires time.Time
+	addr      netip.AddrPort
+	since     time.Time
+	slotUntil time.Time // the entry holds a slot until then
+	pushUntil time.Time // pushes go to it until then (its /xremote lifetime)
+}
+
+// ClientSlot is one active entry of the simulated client table.
+type ClientSlot struct {
+	Addr    netip.AddrPort
+	Since   time.Time
+	Xremote bool // a live /xremote registration (receives pushes)
 }
 
 type meterSub struct {
 	addr     netip.AddrPort
+	bank     string
 	expires  time.Time
 	interval time.Duration
 	next     time.Time
@@ -126,8 +149,10 @@ type Sim struct {
 	subs      []subscriber
 	meterSubs []meterSub
 	levels    [inputChannels]float32 // linear input meter levels (X32-F54)
+	mainLR    [2]float32             // linear Main L/R meter levels (X32-F55)
 	log       []Entry
 	nWrites   int
+	maxSlots  int
 	paused    bool
 	downUntil time.Time
 }
@@ -137,7 +162,11 @@ var ErrUnknownAddress = errors.New("x32 sim: unknown address")
 
 // New creates a simulator with the documented defaults applied to opts.
 func New(opts Options) *Sim {
-	return &Sim{opts: opts.withDefaults(), params: newParams()}
+	params := newParams()
+	for _, a := range opts.UnknownAddresses {
+		delete(params, a)
+	}
+	return &Sim{opts: opts.withDefaults(), params: params}
 }
 
 // Serve answers packets on pc until ctx is cancelled. It closes nothing; the
@@ -265,11 +294,40 @@ func (s *Sim) Subscribers() []netip.AddrPort {
 	now := time.Now()
 	var out []netip.AddrPort
 	for _, sub := range s.subs {
-		if now.Before(sub.expires) {
+		if now.Before(sub.pushUntil) {
 			out = append(out, sub.addr)
 		}
 	}
 	return out
+}
+
+// Slots returns the active entries of the client table (X32-F28).
+func (s *Sim) Slots() []ClientSlot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	var out []ClientSlot
+	for _, sub := range s.subs {
+		if now.Before(sub.slotUntil) {
+			out = append(out, ClientSlot{Addr: sub.addr, Since: sub.since, Xremote: now.Before(sub.pushUntil)})
+		}
+	}
+	return out
+}
+
+// MaxSlotsUsed is the largest number of client-table slots that were in use
+// at the same time since New.
+func (s *Sim) MaxSlotsUsed() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.maxSlots
+}
+
+// SetMainLevels sets the linear Main L/R meter levels of bank 2 (X32-F55).
+func (s *Sim) SetMainLevels(l, r float32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mainLR = [2]float32{l, r}
 }
 
 // SetInputLevels sets the linear meter levels of input channels 1..n (1.0 = 0 dBFS, X32-F54).

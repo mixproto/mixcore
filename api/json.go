@@ -25,6 +25,9 @@ const (
 	cmdSet          = "set"
 	cmdHoldBegin    = "holdBegin"
 	cmdHoldEnd      = "holdEnd"
+	cmdToggle       = "toggle"
+	fieldEffective  = "effectiveMute"
+	maxGroupNumber  = 32 // largest group number a membership list may name
 	familyX32       = "x32"
 	maxClientIDLen  = 128
 )
@@ -116,7 +119,7 @@ func parseCommand(data string) (command, error) {
 	if c.Version == nil || *c.Version != contractVersion {
 		return command{}, codeErr(CodeInvalidCommand, errVersion)
 	}
-	if c.Type != cmdSet && c.Type != cmdHoldBegin && c.Type != cmdHoldEnd {
+	if c.Type != cmdSet && c.Type != cmdHoldBegin && c.Type != cmdHoldEnd && c.Type != cmdToggle {
 		return command{}, codeErr(CodeInvalidCommand, fmt.Errorf("type %q", c.Type))
 	}
 	p, err := parseParam(c.Param)
@@ -130,7 +133,7 @@ func parseCommand(data string) (command, error) {
 	cmd := command{kind: c.Type, param: p, origin: o}
 	if c.Type != cmdSet {
 		if len(c.Value) != 0 {
-			return command{}, codeErr(CodeInvalidCommand, errors.New("hold commands carry no value"))
+			return command{}, codeErr(CodeInvalidCommand, errors.New("hold and toggle commands carry no value"))
 		}
 		return cmd, nil
 	}
@@ -150,7 +153,7 @@ func parseParam(p paramJSON) (model.ParamRef, error) {
 		return model.ParamRef{}, codeErr(CodeInvalidCommand, err)
 	}
 	ref := model.StripRef{Kind: kind, Index: p.Strip.Index}
-	if (kind == model.StripInput && p.Strip.Index < 1) || (kind == model.StripMain && p.Strip.Index != 0) {
+	if (kind != model.StripMain && p.Strip.Index < 1) || (kind == model.StripMain && p.Strip.Index != 0) {
 		return model.ParamRef{}, codeErr(CodeInvalidCommand, fmt.Errorf("strip %s index %d", kind, p.Strip.Index))
 	}
 	return model.ParamRef{Strip: ref, Field: field}, nil
@@ -180,6 +183,13 @@ func parseValue(f model.Field, raw json.RawMessage) (model.Value, error) {
 		var b bool
 		if err = json.Unmarshal(raw, &b); err == nil {
 			v = model.Bool(b)
+		}
+	case model.FieldMuteGroups, model.FieldDCAs:
+		var list []int
+		if err = json.Unmarshal(raw, &list); err == nil {
+			var m uint32
+			m, err = model.MaskOf(list, maxGroupNumber)
+			v = model.Mask(m)
 		}
 	default:
 		var s string
@@ -223,6 +233,9 @@ func valueJSON(v model.Value) any {
 	if b, ok := v.Bool(); ok {
 		return b
 	}
+	if m, ok := v.Mask(); ok {
+		return model.MaskMembers(m)
+	}
 	s, _ := v.Text()
 	return s
 }
@@ -240,6 +253,11 @@ type stripStateJSON struct {
 	Name    string `json:"name"`
 	FaderDB any    `json:"faderDB"`
 	Mute    bool   `json:"mute"`
+	// v0.1: membership (absent when the console has no such groups) and the
+	// derived effective mute.
+	MuteGroups    *[]int             `json:"muteGroups,omitempty"`
+	DCAs          *[]int             `json:"dcas,omitempty"`
+	EffectiveMute *effectiveMuteJSON `json:"effectiveMute,omitempty"`
 }
 
 type changeJSON struct {
@@ -248,55 +266,70 @@ type changeJSON struct {
 	Origin originJSON `json:"origin"`
 }
 
+// eventJSON is one entry of events: a hold event (param, clientId, ...) or,
+// v0.1, a scene recall (confidence, signals, highlightedScene).
 type eventJSON struct {
-	Type     string      `json:"type"`
-	Param    paramJSON   `json:"param"`
-	ClientID string      `json:"clientId"`
-	Value    any         `json:"value,omitempty"`
-	Origin   *originJSON `json:"origin,omitempty"`
-	Reason   string      `json:"reason,omitempty"`
+	Type             string      `json:"type"`
+	Param            *paramJSON  `json:"param,omitempty"`
+	ClientID         *string     `json:"clientId,omitempty"`
+	Value            any         `json:"value,omitempty"`
+	Origin           *originJSON `json:"origin,omitempty"`
+	Reason           string      `json:"reason,omitempty"`
+	Confidence       string      `json:"confidence,omitempty"`
+	Signals          []string    `json:"signals,omitempty"`
+	HighlightedScene *int        `json:"highlightedScene,omitempty"`
 }
 
 type stateJSON struct {
-	Version int              `json:"version"`
-	Type    string           `json:"type"`
-	Seq     uint64           `json:"seq"`
-	Status  string           `json:"status"`
-	Reason  string           `json:"reason,omitempty"`
-	Console *consoleJSON     `json:"console,omitempty"`
-	Strips  []stripStateJSON `json:"strips,omitempty"`
-	Changes *[]changeJSON    `json:"changes,omitempty"` // present (maybe empty) in every diff
-	Events  []eventJSON      `json:"events,omitempty"`
+	Version int    `json:"version"`
+	Type    string `json:"type"`
+	Seq     uint64 `json:"seq"`
+	Status  string `json:"status"`
+	Reason  string `json:"reason,omitempty"`
+	// v0.1 connection fields, in every message.
+	StaleSinceMs  int64            `json:"staleSinceMs,omitempty"`
+	Offline       bool             `json:"offline,omitempty"`
+	Limited       bool             `json:"limited,omitempty"`
+	LimitedReason string           `json:"limitedReason,omitempty"`
+	Console       *consoleJSON     `json:"console,omitempty"`
+	Strips        []stripStateJSON `json:"strips,omitempty"`
+	MuteGroups    []groupStateJSON `json:"muteGroups,omitempty"` // v0.1, snapshot only
+	DCAs          []groupStateJSON `json:"dcas,omitempty"`       // v0.1, snapshot only
+	Changes       *[]changeJSON    `json:"changes,omitempty"`    // present (maybe empty) in every diff
+	Events        []eventJSON      `json:"events,omitempty"`
 }
 
 // encodeUpdate renders a supervisor update as a state message with sequence seq.
 func encodeUpdate(u console.Update, seq uint64, full bool) ([]byte, error) {
-	out := stateJSON{Version: contractVersion, Seq: seq, Status: u.Status.String(), Reason: u.Reason, Events: eventsJSON(u.Events)}
+	out := stateJSON{Version: contractVersion, Seq: seq, Status: u.Status.String(), Reason: u.Reason,
+		Events:  append(eventsJSON(u.Events), sceneEventsJSON(u.Scenes)...),
+		Offline: u.Offline, Limited: u.Limited, LimitedReason: u.LimitedReason}
+	if !u.StaleSince.IsZero() {
+		out.StaleSinceMs = u.StaleSince.UnixMilli()
+	}
 	if !full {
 		out.Type = "diff"
-		changes := make([]changeJSON, 0, len(u.Changes))
+		changes := make([]changeJSON, 0, len(u.Changes)+len(u.Effective))
 		for _, c := range u.Changes {
 			changes = append(changes, changeJSON{Param: paramToJSON(c.Param), Value: valueJSON(c.Value), Origin: originToJSON(c.Origin)})
 		}
+		changes = append(changes, effectiveChangesJSON(u.Effective)...)
 		out.Changes = &changes
 		return json.Marshal(out)
 	}
 	out.Type = "snapshot"
 	id := u.Identity
 	out.Console = &consoleJSON{Address: id.Address, Name: id.Name, Model: id.Model, Firmware: id.Firmware}
-	out.Strips = make([]stripStateJSON, 0, len(u.State.Inputs())+1)
-	for _, st := range u.State.Strips() {
-		out.Strips = append(out.Strips, stripStateJSON{
-			Kind: st.Ref.Kind.String(), Index: st.Ref.Index, Name: st.Name, FaderDB: levelJSON(st.FaderDB), Mute: st.Muted,
-		})
-	}
+	out.Strips = stripsJSON(u.State)
+	out.MuteGroups, out.DCAs = groupStatesJSON(u.State.MuteGroups()), groupStatesJSON(u.State.DCAs())
 	return json.Marshal(out)
 }
 
 func eventsJSON(evs []console.HoldEvent) []eventJSON {
 	out := make([]eventJSON, 0, len(evs))
 	for _, ev := range evs {
-		e := eventJSON{Type: ev.Kind.String(), Param: paramToJSON(ev.Param), ClientID: ev.ClientID, Reason: ev.Reason}
+		p, client := paramToJSON(ev.Param), ev.ClientID
+		e := eventJSON{Type: ev.Kind.String(), Param: &p, ClientID: &client, Reason: ev.Reason}
 		if ev.Kind == console.HoldExternalChange {
 			o := originToJSON(ev.Origin)
 			e.Value, e.Origin = valueJSON(ev.Value), &o

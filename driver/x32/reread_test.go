@@ -21,7 +21,7 @@ import (
 )
 
 // rereadPassTime covers a full pass: one batch at once, then one per ping.
-var rereadPassTime = time.Duration((3*inputChannels+2)/rereadBatch+2) * DefaultTiming.PingEvery
+var rereadPassTime = time.Duration(len(newParamTable(inputChannels).all)/rereadBatch+2) * DefaultTiming.PingEvery
 
 func reads(sim *simx32.Sim, addr string) []simx32.Entry {
 	var out []simx32.Entry

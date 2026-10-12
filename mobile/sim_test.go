@@ -120,7 +120,7 @@ func TestSimLoopback_BindingCallCost(t *testing.T) {
 		}
 		applies[i] = time.Since(start)
 		start = time.Now()
-		if b := MeterFrame(); len(b) != 24+32*4 {
+		if b := MeterFrame(); len(b) != 24+34*4 {
 			t.Fatalf("frame of %d bytes", len(b))
 		}
 		frames[i] = time.Since(start)

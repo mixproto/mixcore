@@ -17,7 +17,6 @@ package console
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"math/rand/v2"
 	"sync"
@@ -36,6 +35,9 @@ const (
 	// maxPendingChanges bounds changes kept between two Drain calls; beyond it
 	// the next Drain returns a full snapshot instead.
 	maxPendingChanges = 1024
+	// OfflineAfter: a stale console is labelled offline after this long
+	// (design 8.1, decision D5). A label only: retries keep their pace.
+	OfflineAfter = 30 * time.Second
 	// stableAfter: a session that lived shorter than this counts as a failed
 	// attempt, so a console that accepts and drops us at once still gets backoff
 	// (and does not burn a push-client slot per retry). Design target.
@@ -71,14 +73,26 @@ type Change struct {
 // the previous Drain. Full means the state was replaced (connect, reconnect,
 // or too many changes to list). Events are never folded into Full.
 type Update struct {
-	Seq      uint64
-	Status   Status
-	Reason   string // why the status last changed (empty when live)
-	Identity driver.Identity
-	State    model.State
-	Full     bool
-	Changes  []Change
-	Events   []HoldEvent
+	Seq        uint64
+	Status     Status
+	Reason     string    // why the status last changed (empty when live)
+	StaleSince time.Time // when the status became stale; zero unless stale
+	Offline    bool      // stale for at least OfflineAfter
+	// Limited: live, but the console does not send us updates (client slots
+	// full). Input is locked like stale; LimitedReason says why we think so.
+	Limited       bool
+	LimitedReason string
+	Identity      driver.Identity
+	State         model.State
+	Full          bool
+	Changes       []Change
+	// Effective lists strips whose effective mute changed (diffs only; a full
+	// update carries every strip's effective mute in State).
+	Effective []EffectiveChange
+	Events    []HoldEvent
+	// Scenes are scene recalls detected at the console since the last Drain
+	// (never folded into Full, like Events).
+	Scenes []driver.SceneRecalled
 }
 
 // Config configures a Supervisor.
@@ -101,18 +115,29 @@ type Supervisor struct {
 	notify chan struct{}
 	life   sync.Mutex // serialises Start and Stop, including Stop's wait
 
-	mu      sync.Mutex
-	status  Status
-	reason  string
-	ident   driver.Identity
-	state   model.State
-	sess    driver.Session
-	holds   holds
-	changes []Change
-	full    bool
-	seq     uint64
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
+	mu         sync.Mutex
+	status     Status
+	reason     string
+	staleSince time.Time
+	offline    bool
+	limited    string // reason while the console does not send us updates
+	offlineT   *time.Timer
+	ident      driver.Identity
+	state      model.State
+	sess       driver.Session
+	holds      holds
+	changes    []Change
+	eff        effective
+	scenes     []driver.SceneRecalled
+	full       bool
+	seq        uint64
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
+
+	// link is the long-lived transport of drivers that implement
+	// driver.LinkOpener. Only the run goroutine uses it; Stop closes it after
+	// joining that goroutine, Pause keeps it for the next Start.
+	link driver.Link
 }
 
 // New validates cfg and returns a stopped supervisor.
@@ -159,23 +184,33 @@ func (s *Supervisor) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop ends the connect loop and closes the session. Last values stay.
-func (s *Supervisor) Stop() {
+// Stop ends the connect loop, closes the session and the link. Last values stay.
+func (s *Supervisor) Stop() { s.halt(true) }
+
+// Pause ends the connect loop and closes the session like Stop, but keeps the
+// link: a Start soon after reuses the same sockets, so the console does not see
+// a new client (X32-F28). Last values stay; the status is stopped.
+func (s *Supervisor) Pause() { s.halt(false) }
+
+func (s *Supervisor) halt(closeLink bool) {
 	s.life.Lock()
 	defer s.life.Unlock()
 	s.mu.Lock()
 	cancel := s.cancel
 	s.cancel = nil
 	s.mu.Unlock()
-	if cancel == nil {
-		return
+	if cancel != nil {
+		cancel()
+		s.wg.Wait()
+		s.mu.Lock()
+		s.holds.cancelAll(StatusStopped.String())
+		s.setStatusLocked(StatusStopped, "stopped")
+		s.mu.Unlock()
 	}
-	cancel()
-	s.wg.Wait()
-	s.mu.Lock()
-	s.holds.cancelAll(StatusStopped.String())
-	s.setStatusLocked(StatusStopped, "stopped")
-	s.mu.Unlock()
+	if closeLink && s.link != nil {
+		_ = s.link.Close()
+		s.link = nil
+	}
 }
 
 // Notify is signalled (capacity 1) whenever Drain has something new.
@@ -188,10 +223,10 @@ func (s *Supervisor) Drain() Update {
 	u := s.snapshotLocked()
 	u.Full = s.full
 	if !s.full {
-		u.Changes = s.changes
+		u.Changes, u.Effective = s.changes, s.eff.changes
 	}
-	u.Events = s.holds.events
-	s.changes, s.full, s.holds.events = nil, false, nil
+	u.Events, u.Scenes = s.holds.events, s.scenes
+	s.changes, s.full, s.holds.events, s.eff.changes, s.scenes = nil, false, nil, nil, nil
 	return u
 }
 
@@ -206,7 +241,8 @@ func (s *Supervisor) Snapshot() Update {
 
 func (s *Supervisor) snapshotLocked() Update {
 	s.seq++
-	return Update{Seq: s.seq, Status: s.status, Reason: s.reason, Identity: s.ident, State: s.state}
+	return Update{Seq: s.seq, Status: s.status, Reason: s.reason, StaleSince: s.staleSince, Offline: s.offline,
+		Limited: s.limited != "", LimitedReason: s.limited, Identity: s.ident, State: s.state}
 }
 
 func (s *Supervisor) signal() {
@@ -217,7 +253,32 @@ func (s *Supervisor) signal() {
 }
 
 func (s *Supervisor) setStatusLocked(st Status, reason string) {
+	s.limited = "" // every status change starts a new session's evidence
+	if st == StatusStale && s.status != StatusStale {
+		s.staleSince = time.Now()
+		s.offlineT = time.AfterFunc(OfflineAfter, s.markOffline)
+	}
+	if st != StatusStale {
+		s.staleSince, s.offline = time.Time{}, false
+		if s.offlineT != nil {
+			s.offlineT.Stop()
+			s.offlineT = nil
+		}
+	}
 	s.status, s.reason = st, reason
+	s.full = true
+	s.signal()
+}
+
+// markOffline labels a console that has been stale for OfflineAfter.
+func (s *Supervisor) markOffline() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.status != StatusStale || s.offline || time.Since(s.staleSince) < OfflineAfter {
+		return // went live (or stopped) meanwhile
+	}
+	s.offline = true
+	s.cfg.Logger.Info("console: offline", "endpoint", s.cfg.Endpoint.Host)
 	s.full = true
 	s.signal()
 }
@@ -244,7 +305,7 @@ func (s *Supervisor) run(ctx context.Context) {
 func (s *Supervisor) connectAndRun(ctx context.Context) (lived time.Duration, err error) {
 	defer safe.RecoverAsError(&err)
 	started := time.Now()
-	sess, err := s.cfg.Driver.Connect(ctx, s.cfg.Endpoint, s.cfg.Options)
+	sess, err := s.connect(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -254,6 +315,28 @@ func (s *Supervisor) connectAndRun(ctx context.Context) (lived time.Duration, er
 	s.cfg.Logger.Info("console: live", "endpoint", s.cfg.Endpoint.Host, "connect_ms", live.Sub(started).Milliseconds())
 	err = s.runSession(ctx, sess)
 	return time.Since(live), err
+}
+
+// connect makes one session: over the long-lived link when the driver has
+// one (opened on first use, reopened only after it broke), else directly.
+func (s *Supervisor) connect(ctx context.Context) (driver.Session, error) {
+	opener, ok := s.cfg.Driver.(driver.LinkOpener)
+	if !ok {
+		return s.cfg.Driver.Connect(ctx, s.cfg.Endpoint, s.cfg.Options)
+	}
+	if s.link != nil && s.link.Err() != nil {
+		s.cfg.Logger.Info("console: reopening sockets", "endpoint", s.cfg.Endpoint.Host, "err", s.link.Err())
+		_ = s.link.Close()
+		s.link = nil
+	}
+	if s.link == nil {
+		l, err := opener.OpenLink(ctx, s.cfg.Endpoint, s.cfg.Options)
+		if err != nil {
+			return nil, err
+		}
+		s.link = l
+	}
+	return s.link.Connect(ctx)
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) bool {
@@ -275,6 +358,7 @@ func (s *Supervisor) adopt(sess driver.Session) {
 	s.ident = sess.Identity()
 	s.state = sess.Snapshot()
 	s.changes = nil
+	s.eff.reset(s.state)
 	s.setStatusLocked(StatusLive, "")
 	// SetMeters never blocks; calling it under mu orders it with SetMeters below.
 	if err := sess.SetMeters(s.cfg.Meters); err != nil {
@@ -339,12 +423,27 @@ func (s *Supervisor) handleEvent(ev driver.Event) {
 		s.applyChangeLocked(Change{Param: e.Param, Value: e.Value, Origin: e.Origin})
 	case driver.StateReplaced:
 		s.state = e.State
+		s.eff.reset(s.state)
 		s.endHeldOnReplaceLocked()
 		s.full = true
 		s.signal()
 	case driver.ClientLimitHit:
-		s.cfg.Logger.Info("console: client limit hit, no updates", "limit", e.Limit)
-		s.reason = fmt.Sprintf("console client limit (%d) reached", e.Limit)
+		s.cfg.Logger.Info("console: client limit hit, no updates", "limit", e.Limit, "reason", e.Reason)
+		s.limited = e.Reason
+		s.holds.cancelAll(ReasonLimited)
+		s.full = true
+		s.signal()
+	case driver.SceneRecalled:
+		// SR-15: a recall at the desk ends every held fader, even one whose own
+		// update has not arrived (or was lost); the driver re-reads meanwhile.
+		s.endHeldOnReplaceLocked()
+		if len(s.scenes) < maxPendingEvents {
+			s.scenes = append(s.scenes, e)
+		}
+		s.signal()
+	case driver.ClientLimitCleared:
+		s.cfg.Logger.Info("console: updates arrive again")
+		s.limited = ""
 		s.full = true
 		s.signal()
 	}
@@ -360,10 +459,13 @@ func (s *Supervisor) applyChangeLocked(c Change) {
 	}
 	s.state = next
 	s.holds.external(c)
-	if len(s.changes) >= maxPendingChanges {
+	if len(s.changes)+len(s.eff.changes) >= maxPendingChanges {
 		s.full = true
 	} else if !s.full {
 		s.changes = append(s.changes, c)
+	}
+	if affectsMute(c.Param.Field) {
+		s.eff.update(s.state, c.Origin, !s.full)
 	}
 	s.signal()
 }
@@ -376,10 +478,10 @@ func (s *Supervisor) Apply(cmd driver.Command) error {
 		return driver.ErrNotUserOrigin // rule 2
 	}
 	s.mu.Lock()
-	sess, status := s.sess, s.status
+	sess, status, limited := s.sess, s.status, s.limited != ""
 	ended := s.holds.isEnded(cmd.Param, cmd.Origin.ClientID)
 	s.mu.Unlock()
-	if status != StatusLive || sess == nil {
+	if status != StatusLive || sess == nil || limited {
 		return driver.ErrStale
 	}
 	if ended {

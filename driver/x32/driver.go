@@ -14,10 +14,22 @@
 // write (EchoesOwnWrites = true). Nothing in this package writes in response
 // to a received packet.
 //
-// Client limit: four /xremote clients (X32-F21). Subscriptions last 10 s and
-// are renewed every Timing.RenewEvery. Liveness is the time of the last packet
-// received, kept fresh by an /xinfo poll (X32-F25). A scene recall arrives as
-// ordinary pushes (no StateReplaced yet).
+// Sockets: OpenLink opens both sockets once; every session of a supervisor
+// runs over them, so reconnects never change our source ports (the console
+// counts each new port as a new client, X32-F28).
+//
+// Client limit: four /xremote clients (X32-F21). The console says nothing
+// when we are not served; three unechoed value-changing writes, or two
+// re-read passes with unpushed changes, raise ClientLimitHit; any push
+// clears it (ClientLimitCleared). Subscriptions last 10 s and
+// are renewed every Timing.RenewEvery. Liveness (X32-F25): any packet from the
+// console counts; after StaleAfter without one the session is lost. A quiet
+// console is probed with /xinfo after QuietProbeAfter, and one /xinfo per
+// PingEvery checks the uplink (lost after DeadAfter without a reply).
+//
+// Scene recall (X32-F60..F62): no dedicated message exists; a burst of
+// console pushes and the scene markers, if pushed, raise SceneRecalled with a
+// confidence, and a background re-read starts at once.
 //
 // Background re-read (driver.Rereader): on request, one read-only pass over
 // every parameter, paced at one batch of reads per PingEvery, recovers changes
@@ -38,7 +50,6 @@ import (
 
 	"github.com/mixproto/mixcore/driver"
 	"github.com/mixproto/mixcore/internal/safe"
-	"github.com/mixproto/mixcore/model"
 )
 
 // Family is the family name of this driver.
@@ -47,22 +58,46 @@ const Family driver.Family = "x32"
 // Timing holds every interval of the session. Defaults are documented in
 // docs/protocols/x32.md (X32-F20, X32-F25, X32-F27, X32-F50); tests scale them down.
 type Timing struct {
-	RenewEvery     time.Duration // /xremote and /meters renewal, <= TTL/3 (X32-F27)
-	PingEvery      time.Duration // /xinfo liveness poll (X32-F25)
-	DeadAfter      time.Duration // silence after which the console is lost (X32-F25)
-	ConnectTimeout time.Duration // identify + full initial read
-	ReadRetryEvery time.Duration // re-send unanswered reads and /xinfo during connect (X32-F07)
-	EchoWindow     time.Duration // how long a sent value is matched against pushes
+	RenewEvery      time.Duration // /xremote and /meters renewal, <= TTL/3 (X32-F27)
+	PingEvery       time.Duration // uplink /xinfo probe and re-read pacing (X32-F25)
+	DeadAfter       time.Duration // no /xinfo reply for this long: the uplink is lost (X32-F25)
+	StaleAfter      time.Duration // no packet at all for this long: the console is lost (X32-F25, SR-05)
+	QuietProbeAfter time.Duration // send /xinfo when nothing arrived for this long (X32-F25)
+	LivenessTick    time.Duration // how often the liveness rules above are checked
+	ConnectTimeout  time.Duration // identify + full initial read
+	ReadRetryEvery  time.Duration // re-send unanswered reads and /xinfo during connect (X32-F07)
+	EchoWindow      time.Duration // how long a sent value is matched against pushes
 }
 
-// DefaultTiming is used when Config.Timing is zero.
+// DefaultTiming is used for every zero field of Config.Timing.
 var DefaultTiming = Timing{
-	RenewEvery:     3 * time.Second,
-	PingEvery:      time.Second,
-	DeadAfter:      3 * time.Second,
-	ConnectTimeout: 5 * time.Second,
-	ReadRetryEvery: 300 * time.Millisecond,
-	EchoWindow:     2 * time.Second,
+	RenewEvery:      3 * time.Second,
+	PingEvery:       time.Second,
+	DeadAfter:       3 * time.Second,
+	StaleAfter:      1500 * time.Millisecond,
+	QuietProbeAfter: 400 * time.Millisecond,
+	LivenessTick:    100 * time.Millisecond,
+	ConnectTimeout:  5 * time.Second,
+	ReadRetryEvery:  300 * time.Millisecond,
+	EchoWindow:      2 * time.Second,
+}
+
+// withDefaults fills every zero field from DefaultTiming.
+func (t Timing) withDefaults() Timing {
+	or := func(v, def time.Duration) time.Duration {
+		if v == 0 {
+			return def
+		}
+		return v
+	}
+	d := DefaultTiming
+	return Timing{
+		RenewEvery: or(t.RenewEvery, d.RenewEvery), PingEvery: or(t.PingEvery, d.PingEvery),
+		DeadAfter: or(t.DeadAfter, d.DeadAfter), StaleAfter: or(t.StaleAfter, d.StaleAfter),
+		QuietProbeAfter: or(t.QuietProbeAfter, d.QuietProbeAfter), LivenessTick: or(t.LivenessTick, d.LivenessTick),
+		ConnectTimeout: or(t.ConnectTimeout, d.ConnectTimeout), ReadRetryEvery: or(t.ReadRetryEvery, d.ReadRetryEvery),
+		EchoWindow: or(t.EchoWindow, d.EchoWindow),
+	}
 }
 
 // Config configures the driver.
@@ -81,13 +116,9 @@ var _ driver.Driver = (*Driver)(nil)
 // ErrBadEndpoint is returned for an endpoint that is not an IP address.
 var ErrBadEndpoint = errors.New("x32: endpoint must be an IP address")
 
-// New returns a driver. A zero Config.Timing means DefaultTiming.
+// New returns a driver. Zero fields of Config.Timing take DefaultTiming.
 func New(cfg Config) *Driver {
-	t := cfg.Timing
-	if t == (Timing{}) {
-		t = DefaultTiming
-	}
-	return &Driver{timing: t, params: newParamTable(inputChannels)}
+	return &Driver{timing: cfg.Timing.withDefaults(), params: newParamTable(inputChannels)}
 }
 
 // Family implements driver.Driver.
@@ -96,37 +127,23 @@ func (d *Driver) Family() driver.Family { return Family }
 // FaderLaw implements driver.Driver (X32-F40).
 func (d *Driver) FaderLaw() driver.FaderLaw { return faderLaw{} }
 
-// Capabilities of every X32-family console as far as this driver supports them.
-func capabilities() model.Capabilities {
-	return model.Capabilities{
-		InputCount: inputChannels, HasMain: true, InputMeters: true,
-		EchoesOwnWrites: true, MaxPushClients: maxPushClients,
-	}
-}
-
 // Connect implements driver.Driver. It identifies the console with /xinfo,
 // registers /xremote and reads every parameter. It never writes a parameter.
+// The session owns its sockets and closes them on Close; a supervisor uses
+// OpenLink instead so that reconnects keep the same sockets (X32-F28).
 func (d *Driver) Connect(ctx context.Context, ep driver.Endpoint, opts driver.Options) (_ driver.Session, err error) {
 	defer safe.RecoverAsError(&err)
-	console, err := resolve(ep)
+	l, err := d.openLink(ctx, ep, opts)
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, d.timing.ConnectTimeout)
-	defer cancel()
-	c, err := openConn(ctx, console, opts)
+	sess, err := l.Connect(ctx)
 	if err != nil {
+		_ = l.Close()
 		return nil, err
 	}
-	s := newSession(d, c, opts)
-	defer func() {
-		if err != nil {
-			_ = s.Close() // also after a recovered panic
-		}
-	}()
-	if err := s.connect(ctx); err != nil {
-		return nil, fmt.Errorf("x32: connect %s: %w", console, err)
-	}
+	s := sess.(*session)
+	s.ownLink = l
 	return s, nil
 }
 
