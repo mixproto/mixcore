@@ -393,7 +393,7 @@ func TestTCPRelaySurvivesATransientAcceptError(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("relay did not accept after a transient error")
 	}
-	app := net.Conn(client)
+	app := client
 	if _, err := app.Write([]byte("x")); err != nil {
 		t.Fatal(err)
 	}
