@@ -53,7 +53,7 @@ func (e *Engine) deliver(sup *console.Supervisor, seq *uint64) {
 		return
 	}
 	*seq++
-	b, err := encodeUpdate(u, *seq, full)
+	b, err := encodeUpdate(u, *seq, full, e.demo.session.Load())
 	if err != nil {
 		e.opts.Logger.Error("api: encode state", "err", err)
 		return

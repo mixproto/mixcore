@@ -77,11 +77,11 @@ func stateExamples(t *testing.T) [][]byte {
 				Value: lv, Origin: driver.Origin{Kind: driver.OriginConsole}},
 			{Kind: console.HoldCancelled, Param: model.ParamRef{Strip: model.MainRef, Field: model.FieldFader}, ClientID: "ios-2", Reason: "stale"},
 		}}
-	snap, err := encodeUpdate(u, 1, true)
+	snap, err := encodeUpdate(u, 1, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	diff, err := encodeUpdate(u, 2, false)
+	diff, err := encodeUpdate(u, 2, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}

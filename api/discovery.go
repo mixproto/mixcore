@@ -165,6 +165,7 @@ func (e *Engine) runDiscovery(req discoverRequest) {
 		targets = append(targets, broadcastTargets(req.family)...)
 	}
 	found, err := x32.Probe(e.disc.ctx, e.opts.ListenPacket, targets, req.wait) // the same /xinfo probe for both families
+	found = e.demo.withoutDemo(found)                                           // the demo is never a real console
 	msg := encodeDiscovery(req.family, found, err)
 	if err != nil {
 		e.opts.Logger.Info("api: discovery failed", "err", err)

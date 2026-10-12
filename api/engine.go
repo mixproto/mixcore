@@ -50,6 +50,9 @@ type Options struct {
 	WriteAudit func(driver.WriteRecord)
 	// RereadEvery is the background re-read interval (console.Config); zero: default.
 	RereadEvery time.Duration
+	// DemoListenPacket opens the demo mixer's socket and the sockets of a
+	// session to it, always on loopback; nil: OS sockets without the binder.
+	DemoListenPacket driver.ListenPacketFunc
 }
 
 type listenerBox struct{ l StateListener }
@@ -67,6 +70,7 @@ type Engine struct {
 	logs     *logPump
 	binder   atomic.Pointer[binderBox]
 	disc     discovery
+	demo     demoSlot
 
 	mu       sync.Mutex
 	sup      *console.Supervisor
@@ -109,6 +113,7 @@ type sessionJSON struct {
 		Port int    `json:"port"`
 	} `json:"endpoint"`
 	FaderLaw string `json:"faderLaw"`
+	Demo     bool   `json:"demo,omitempty"`
 }
 
 // Start begins connecting to the console described by configJSON and returns
@@ -129,10 +134,14 @@ func (e *Engine) Start(configJSON string) (out string, err error) {
 	if e.sup != nil {
 		return "", codeErr(CodeAlreadyStarted, nil)
 	}
+	isDemo, err := e.demo.targetsDemo(cfg)
+	if err != nil {
+		return "", err
+	}
 	sup, err := console.New(console.Config{
 		Driver:      drv,
 		Endpoint:    driver.Endpoint{Host: cfg.Host, Port: cfg.Port},
-		Options:     driver.Options{Logger: e.opts.Logger, Meters: e.slot, ListenPacket: e.opts.ListenPacket, WriteAudit: e.opts.WriteAudit},
+		Options:     driver.Options{Logger: e.opts.Logger, Meters: e.slot, ListenPacket: e.sessionListen(isDemo), WriteAudit: e.opts.WriteAudit},
 		Meters:      driver.MeterRequest{Inputs: cfg.Meters.Inputs},
 		Logger:      e.opts.Logger,
 		RereadEvery: e.opts.RereadEvery,
@@ -143,6 +152,7 @@ func (e *Engine) Start(configJSON string) (out string, err error) {
 	}
 	e.law.Store(&lawBox{law: drv.FaderLaw()})
 	e.sup, e.cfg = sup, cfg
+	e.demo.session.Store(isDemo)
 	e.startDispatcher(sup)
 	if err := sup.Start(context.Background()); err != nil {
 		e.stopDisp()
@@ -150,12 +160,12 @@ func (e *Engine) Start(configJSON string) (out string, err error) {
 		e.sup, e.stopDisp = nil, nil
 		return "", err
 	}
-	return describe(cfg, drv)
+	return describe(cfg, drv, isDemo)
 }
 
-func describe(cfg configJSON, drv driver.Driver) (string, error) {
+func describe(cfg configJSON, drv driver.Driver, isDemo bool) (string, error) {
 	var d sessionJSON
-	d.Family, d.FaderLaw = cfg.Family, string(drv.Family())
+	d.Family, d.FaderLaw, d.Demo = cfg.Family, string(drv.Family()), isDemo
 	d.Endpoint.Host, d.Endpoint.Port = cfg.Host, cfg.Port
 	if d.Endpoint.Port == 0 {
 		d.Endpoint.Port = familyPorts[cfg.Family]
@@ -167,18 +177,28 @@ func describe(cfg configJSON, drv driver.Driver) (string, error) {
 // Stop disconnects and forgets the console. Start may be called again.
 func (e *Engine) Stop() (err error) {
 	defer safe.RecoverAsError(&err)
-	e.mu.Lock()
-	sup, stopDisp := e.sup, e.stopDisp
-	e.sup, e.stopDisp = nil, nil
-	e.mu.Unlock()
-	if sup == nil {
+	if !e.stopSession(false) {
 		return codeErr(CodeNotStarted, nil)
 	}
+	return nil
+}
+
+// stopSession stops the session, if there is one (and, with onlyDemo, only
+// when it targets the demo mixer), and reports whether it stopped one.
+func (e *Engine) stopSession(onlyDemo bool) bool {
+	e.mu.Lock()
+	sup, stopDisp := e.sup, e.stopDisp
+	if sup == nil || (onlyDemo && !e.demo.session.Load()) {
+		e.mu.Unlock()
+		return false
+	}
+	e.sup, e.stopDisp = nil, nil
+	e.mu.Unlock()
 	sup.Stop()
 	stopDisp()
 	e.dispWG.Wait()
 	e.slot.Reset()
-	return nil
+	return true
 }
 
 // Pause ends subscriptions and meters (app going to the background). The last
@@ -357,10 +377,12 @@ func (e *Engine) SetLogSink(sink LogSink, minLevel int) {
 	e.logs.set(sink, minLevel)
 }
 
-// Close stops the session, a running discovery and the log goroutine, and
-// waits for them (Go hosts and tests; apps keep one engine for the process).
+// Close stops the session, the demo mixer, a running discovery and the log
+// goroutine, and waits for them (Go hosts and tests; apps keep one engine for
+// the process).
 func (e *Engine) Close() {
 	_ = e.Stop()
+	_ = e.StopDemo()
 	e.disc.stop()
 	e.logs.set(nil, LogInfo)
 }
