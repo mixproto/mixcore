@@ -7,6 +7,7 @@ package console
 import (
 	"fmt"
 	"maps"
+	"math"
 	"slices"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 const (
 	unlockIdle = 20 * time.Second // an unlock ends after 20 s without a command on it
 	undoGrace  = 10 * time.Second // an undo of an unlock entry stays allowed this long after the relock
+	maxUndoTo  = 32               // values before entries remembered per unlock (the first ones are kept)
 )
 
 // Unlock end reasons (state event gainUnlockEnded).
@@ -36,20 +38,26 @@ type UnlockEvent struct {
 }
 
 type unlockEntry struct {
-	last    time.Time // last command on the headamp
-	entries bool      // a Gain value changed during the unlock
-	timer   *time.Timer
+	last   time.Time // last command on the headamp
+	undoTo []float64 // Gain before each entry of this unlock (dB, distinct)
+	timer  *time.Timer
+}
+
+// relocked is the undo grace of an unlock that made entries.
+type relocked struct {
+	at     time.Time
+	undoTo []float64
 }
 
 // unlocks are the active Gain unlocks of show mode. Guarded by Supervisor.mu.
 type unlocks struct {
-	active     map[int]*unlockEntry
-	relockedAt map[int]time.Time // relock time of unlocks that made an entry (undo grace)
-	events     []UnlockEvent
+	active   map[int]*unlockEntry
+	relocked map[int]relocked // per headamp: the last unlock that made an entry
+	events   []UnlockEvent
 }
 
 func newUnlocks() unlocks {
-	return unlocks{active: map[int]*unlockEntry{}, relockedAt: map[int]time.Time{}}
+	return unlocks{active: map[int]*unlockEntry{}, relocked: map[int]relocked{}}
 }
 
 func (u *unlocks) touch(h int) {
@@ -58,20 +66,29 @@ func (u *unlocks) touch(h int) {
 	}
 }
 
-func (u *unlocks) noteEntry(h int) {
-	if e, ok := u.active[h]; ok {
-		e.entries = true
+// noteEntry records an accepted Gain write during an unlock and the value
+// Gain had before it, the only value an undo may return to after the relock.
+func (u *unlocks) noteEntry(h int, before float64) {
+	e, ok := u.active[h]
+	if !ok || len(e.undoTo) >= maxUndoTo || slices.ContainsFunc(e.undoTo, near(before)) {
+		return
 	}
+	e.undoTo = append(slices.Clip(e.undoTo), before)
 }
 
 // allowsRaise: the headamp is unlocked, or this is an undo within the grace
-// after the relock of an unlock that made an entry.
-func (u *unlocks) allowsRaise(h int, undo bool) bool {
+// after the relock, back to a value Gain had before an entry of that unlock.
+func (u *unlocks) allowsRaise(h int, undo bool, v float64) bool {
 	if _, ok := u.active[h]; ok {
 		return true
 	}
-	at, ok := u.relockedAt[h]
-	return undo && ok && time.Since(at) <= undoGrace
+	r, ok := u.relocked[h]
+	return undo && ok && time.Since(r.at) <= undoGrace && slices.ContainsFunc(r.undoTo, near(v))
+}
+
+// near matches a Gain value within half a step of the coarsest law (0.5 dB).
+func near(v float64) func(float64) bool {
+	return func(x float64) bool { return math.Abs(x-v) <= pendingMatchDB }
 }
 
 func (u *unlocks) end(h int, reason string) {
@@ -81,8 +98,8 @@ func (u *unlocks) end(h int, reason string) {
 	}
 	e.timer.Stop()
 	delete(u.active, h)
-	if e.entries {
-		u.relockedAt[h] = time.Now()
+	if len(e.undoTo) > 0 {
+		u.relocked[h] = relocked{at: time.Now(), undoTo: e.undoTo}
 	}
 	if len(u.events) < maxPendingEvents {
 		u.events = append(u.events, UnlockEvent{Headamp: h, Reason: reason})

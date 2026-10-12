@@ -47,7 +47,7 @@
     },
     "undo": {
       "type": "boolean",
-      "description": "v0.3, set only: this write undoes an earlier entry. In show mode an undo that raises Gain is allowed for 10 s after the relock of the unlock it was made in (SR-27); it is still bounded to 6 dB unless typed and confirmed (SR-31)."
+      "description": "v0.3, set only: this write undoes an earlier entry. In show mode an undo that raises Gain is allowed for 10 s after the relock of the unlock it was made in, only back to a value Gain had before an entry of that unlock (SR-27); it is still bounded to 6 dB unless typed and confirmed (SR-31)."
     }
   },
   "allOf": [

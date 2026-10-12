@@ -63,13 +63,19 @@ func TestShowMode_UnlockIdleRelockAndUndoGrace(t *testing.T) {
 		if u := sup.Drain(); !slices.Equal(u.Unlocked, []int{3}) {
 			t.Fatalf("unlocked %v", u.Unlocked)
 		}
+		echo := func(db float64) {
+			drv.session(0).push <- driver.ParamChanged{Param: gain3, Value: lvl(t, db), Origin: gesture}
+			synctest.Wait()
+		}
 		if _, err := sup.Write(set(gain3, lvl(t, 33.5), gesture)); err != nil || lastWrite(drv) != 33.5 {
 			t.Fatalf("+1 while unlocked: %v", err)
 		}
+		echo(33.5)
 		time.Sleep(19 * time.Second)
-		if _, err := sup.Write(set(gain3, lvl(t, 34.5), gesture)); err != nil { // a touch restarts the 20 s
+		if _, err := sup.Write(set(gain3, lvl(t, 31.5), gesture)); err != nil { // a touch restarts the 20 s
 			t.Fatalf("still unlocked: %v", err)
 		}
+		echo(31.5)
 		time.Sleep(20*time.Second + time.Millisecond)
 		synctest.Wait()
 		u := sup.Drain()
@@ -79,11 +85,11 @@ func TestShowMode_UnlockIdleRelockAndUndoGrace(t *testing.T) {
 		if _, err := sup.Write(set(gain3, lvl(t, 35.5), gesture)); !errors.Is(err, ErrShowMode) {
 			t.Fatalf("raise after relock: %v", err)
 		}
-		if _, err := sup.Write(undo(t, 35.5)); err != nil {
+		if _, err := sup.Write(undo(t, 33.5)); err != nil || lastWrite(drv) != 33.5 { // the value before the second entry
 			t.Fatalf("undo within 10 s of the relock: %v", err)
 		}
 		time.Sleep(11 * time.Second)
-		if _, err := sup.Write(undo(t, 36.5)); !errors.Is(err, ErrShowMode) {
+		if _, err := sup.Write(undo(t, 33.5)); !errors.Is(err, ErrShowMode) {
 			t.Fatalf("undo after 10 s: %v", err)
 		}
 	})
@@ -177,17 +183,44 @@ func TestMonitorCeiling_NeverLowersAValue(t *testing.T) {
 }
 
 // An entry made during an unlock keeps its undo grace even when the write
-// left before the echo of the previous one (the value we knew was stale).
+// left before the echo of the previous one: the value it undoes to is the
+// one in flight, not the stale console value.
 func TestShowMode_UndoGraceWithoutEcho(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		sup, _ := startSafe(t, SafetyConfig{ShowMode: true}, safetyState(-6))
 		_ = sup.Unlock(gain3, gesture)
-		if _, err := sup.Write(set(gain3, lvl(t, 32.5), gesture)); err != nil { // equal to what we know
-			t.Fatal(err)
+		for _, db := range []float64{30.5, 28.5} { // the second leaves before the echo of the first
+			if _, err := sup.Write(set(gain3, lvl(t, db), gesture)); err != nil {
+				t.Fatal(err)
+			}
 		}
 		_ = sup.Relock(gain3, gesture)
-		if _, err := sup.Write(undo(t, 33.5)); err != nil {
+		if _, err := sup.Write(undo(t, 30.5)); err != nil {
 			t.Fatalf("undo within the grace: %v", err)
+		}
+	})
+}
+
+// Review LOW 7: the undo grace after a relock only returns to a value Gain
+// had before an entry of that unlock; any other raise flagged undo is show
+// mode's refusal.
+func TestShowMode_UndoGraceOnlyToValuesBeforeTheEntries(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, drv := startSafe(t, SafetyConfig{ShowMode: true}, safetyState(-6))
+		_ = sup.Unlock(gain3, gesture)
+		if _, err := sup.Write(set(gain3, lvl(t, 30.5), gesture)); err != nil {
+			t.Fatal(err)
+		}
+		drv.session(0).push <- driver.ParamChanged{Param: gain3, Value: lvl(t, 30.5), Origin: gesture} // the echo
+		synctest.Wait()
+		_ = sup.Relock(gain3, gesture)
+		for _, db := range []float64{36.5, 33} {
+			if _, err := sup.Write(undo(t, db)); !errors.Is(err, ErrShowMode) {
+				t.Fatalf("undo to %v, never a value before an entry: %v", db, err)
+			}
+		}
+		if _, err := sup.Write(undo(t, 32.5)); err != nil || lastWrite(drv) != 32.5 {
+			t.Fatalf("undo to the value before the entry: %v", err)
 		}
 	})
 }

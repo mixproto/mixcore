@@ -137,7 +137,9 @@ behave the same and a UI bug cannot bypass them:
 10. **Show mode (CR-24, SR-27).** `setShowMode` writes nothing. While on, raising Gain is `ERR_SHOW_MODE` (lowering stays
     live, also inside a hold: the window stops at the start with state `locked`). `unlock` (after the UI's 1 s hold)
     allows raising Gain on that headamp until `relock`, 20 s without a command on it, stale, pause or stop
-    (event `gainUnlockEnded`). An `undo` set that raises Gain on that headamp stays allowed for 10 s after the relock.
+    (event `gainUnlockEnded`). For 10 s after the relock an `undo` set may raise Gain on that headamp, but only back
+    to a value Gain had before an entry of that unlock (within 0.25 dB: the start of the hold, else the value in
+    flight, else the console value); any other raise is `ERR_SHOW_MODE`.
     Show mode survives reconnects; the UI restores it at `Start` from `safety.showMode`. Future gates (no such command
     exists in the core yet, each gets `ERR_SHOW_MODE` when added): 48 V phantom, polarity, EQ/GEQ `Flat`, `Mute all in
     this bank`, scene store, overwrite and delete, routing. Scene recall stays live.
@@ -149,6 +151,10 @@ behave the same and a UI bug cannot bypass them:
     several monitor devices on one bus that are not behind one hub, one device's writes count as the engineer's for
     the others. The hub must add: a `clientId` per paired device on every write, the role and `monitorCeiling` per
     client from the pairing token (`SetClientSafety` in Go), and all monitor devices of a bus behind it.
+12. **Scope: one engine.** Client ids, show mode, unlocks and their undo grace, holds and the monitor ceiling live in
+    one engine (one `Start`). The core does not authenticate `clientId`: any caller of the engine may name any id.
+    Until the hub binds each `clientId` to a paired session (hub requirement, ADR-0008), these are per-device rules,
+    not per-person ones; two apps on two devices connected directly to one console each have their own show mode.
 
 ## Error codes
 `Apply`, `Start`, `Stop`, `Pause`, `Resume` and `RequestSnapshot` return an error whose message is exactly one of

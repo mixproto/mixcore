@@ -210,7 +210,7 @@ func (s *Supervisor) gainRulesLocked(w Write, cur, v float64, st GestureState, w
 	if hasPend {
 		floor = math.Min(cur, pend)
 	}
-	if s.safe.showMode && v > floor && !s.safe.unlocks.allowsRaise(h, w.Undo) {
+	if s.safe.showMode && v > floor && !s.safe.unlocks.allowsRaise(h, w.Undo, v) {
 		if win == nil {
 			return 0, 0, nil, fmt.Errorf("%w: raising %s", ErrShowMode, w.Param)
 		}
@@ -222,8 +222,20 @@ func (s *Supervisor) gainRulesLocked(w Write, cur, v float64, st GestureState, w
 		}
 		v, st = math.Min(math.Max(v, lo), math.Max(lo, hi)), StateAtCap
 	}
-	s.safe.unlocks.noteEntry(h) // any accepted Gain write during an unlock is an entry (undo grace)
+	s.safe.unlocks.noteEntry(h, entryBase(cur, pend, hasPend, win)) // any accepted Gain write during an unlock is an entry (undo grace)
 	return v, st, windowOf(win), nil
+}
+
+// entryBase is the Gain an undo of this entry returns to: the start of the
+// hold, else the value in flight, else the console value.
+func entryBase(cur, pend float64, hasPend bool, win *window) float64 {
+	switch {
+	case win != nil:
+		return win.Start
+	case hasPend:
+		return pend
+	}
+	return cur
 }
 
 func windowOf(w *window) *Window {
