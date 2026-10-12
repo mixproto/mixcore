@@ -189,6 +189,8 @@ until the console answers `ERROR`, a reply times out (`-timeout 2s`) or `-max` e
 - A flow decoded as `binary` that you know is OSC or text: force it with `-decoder <port>=osc` and run `report`.
 - Too many candidates per mark: shorten `-window`, or touch one control per mark.
 - Binary keys too coarse or too fine: change `-bin-key` and run `report` again.
+- "frames were too many for the live view": analysis fell behind. Recording never waits for analysis (relay and
+  live), so nothing is lost from `capture.pcap`; run `mixcapture report -session <dir>` for the complete report.
 
 ## Not verified without hardware
 - Every setup was exercised against the simulators on loopback only (`make sim-test`); Internet Sharing, relaying a

@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/mixproto/mixcore/internal/capture/flow"
 	"github.com/mixproto/mixcore/internal/capture/pcapfile"
@@ -107,29 +108,64 @@ func liveSession(ctx context.Context, o liveOptions, rec *recording, e *engine, 
 	}
 	fmt.Fprintf(out, "recording on %s with %q. Type a label and Enter to mark, :help for commands.\n", o.iface, o.filter)
 	frames := make(chan flow.Frame, frameQueue)
+	sink := newFrameSink(frames)
+	defer reportDrops(out, sink)
 	srcDone := make(chan error, 1)
 	var wg sync.WaitGroup
+	var ended atomic.Bool // tcpdump's output ended before we stopped it
 	safe.Go(&wg, func(err error) { srcDone <- err }, func() {
-		srcDone <- readFrames(ctx, io.TeeReader(stdout, capFile), frames)
+		err := pumpCapture(ctx, stdout, capFile, sink)
+		ended.Store(ctx.Err() == nil)
+		srcDone <- err
 	})
 	cmds := make(chan command)
 	go readCommands(ctx, in, cmds) // ends with stdin (see readCommands)
 	runErr := e.liveLoop(ctx, frames, cmds, srcDone)
+	var waitErr error
+	byItself := ended.Load()
+	if byItself { // tcpdump stopped on its own: its exit status matters (collect it before cancelling)
+		waitErr = cmd.Wait()
+	}
 	cancel()
 	wg.Wait()
 	e.drain(frames)
-	waitErr := cmd.Wait()
-	if runErr != nil || (waitErr != nil && ctx.Err() == nil) {
+	if !byItself {
+		_ = cmd.Wait() // we stopped tcpdump: its exit status is ours, not an error
+	}
+	if runErr != nil || waitErr != nil {
 		return tcpdumpError(errors.Join(runErr, waitErr), stderr.String())
 	}
 	return nil
 }
 
-// readFrames decodes a pcap stream into frames until it ends.
-func readFrames(ctx context.Context, r io.Reader, frames chan<- flow.Frame) error {
+// pumpCapture copies tcpdump's pcap stream byte for byte into file in its
+// own goroutine (evidence offsets stay valid) and decodes a copy of the
+// stream into frames for the live view. Neither ever waits on analysis: the
+// copier is coupled only to the decoder, which only parses and hands frames
+// to sink without blocking (a full queue counts a drop; the frame is still
+// in the file). If the stream cannot be decoded, the copy goes on.
+func pumpCapture(ctx context.Context, src io.Reader, file io.Writer, sink *frameSink) error {
+	pr, pw := io.Pipe()
+	var wg sync.WaitGroup
+	var copyErr error
+	safe.Go(&wg, func(err error) { copyErr = err; _ = pw.CloseWithError(err) }, func() {
+		_, copyErr = io.Copy(io.MultiWriter(file, pw), src)
+		_ = pw.CloseWithError(copyErr) // nil: the decoder sees EOF
+	})
+	parseErr := parseFrames(ctx, pr, sink)
+	_, _ = io.Copy(io.Discard, pr) // decoder stopped early: keep the copier flowing
+	wg.Wait()
+	if copyErr != nil {
+		return fmt.Errorf("live: copy tcpdump output: %w", copyErr)
+	}
+	return parseErr
+}
+
+// parseFrames decodes a pcap stream and hands each packet to sink.
+func parseFrames(ctx context.Context, r io.Reader, sink *frameSink) error {
 	rd, err := pcapfile.NewReader(bufio.NewReader(r))
 	if err != nil {
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || errors.Is(err, io.EOF) {
 			return nil
 		}
 		return fmt.Errorf("live: tcpdump output: %w", err)
@@ -142,13 +178,8 @@ func readFrames(ctx context.Context, r io.Reader, frames chan<- flow.Frame) erro
 		if err != nil {
 			return fmt.Errorf("live: tcpdump output: %w", err)
 		}
-		fr := flow.Frame{At: rec.At, LinkType: rec.LinkType, Data: bytes.Clone(rec.Data),
-			Evidence: flow.Evidence{File: session.FileCapture, Offset: rec.Offset, Packet: rec.Index}}
-		select {
-		case frames <- fr:
-		case <-ctx.Done():
-			return nil
-		}
+		sink.put(flow.Frame{At: rec.At, LinkType: rec.LinkType, Data: bytes.Clone(rec.Data),
+			Evidence: flow.Evidence{File: session.FileCapture, Offset: rec.Offset, Packet: rec.Index}})
 	}
 }
 
