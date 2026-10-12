@@ -65,10 +65,16 @@ func TestSafety_GestureResultsAtTheWall(t *testing.T) {
 		wall := fmt.Sprintf(`"state":"atWall","value":%v,"written":true`, *hold.Window.WallUpDB)
 		for _, step := range []struct{ cmd, want string }{
 			{cmdJSON("set", vox1, `,"value":3`), wall},
+			{cmdJSON("openWall", vox1, ""), `"state":"atWall"`}, // no rest yet: refused (wall.dwell)
+			{"rest", ""},
 			{cmdJSON("openWall", vox1, ""), `"state":"free"`},
 			{cmdJSON("holdBegin", gain3, ""), `"window":{"startDB":32.5,"capUpDB":35.5,"capDownDB":26.5,"opensByRest":false}`},
 			{cmdJSON("set", gain3, `,"value":60`), `"state":"atCap","value":35.5,"written":true`},
 		} {
+			if step.cmd == "rest" {
+				time.Sleep(300 * time.Millisecond)
+				continue
+			}
 			got, err := e.eng.Gesture(step.cmd)
 			if err != nil || !strings.Contains(got, step.want) {
 				t.Fatalf("%s\n got %s %v\nwant %s", step.cmd, got, err, step.want)

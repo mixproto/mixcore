@@ -120,7 +120,8 @@ behave the same and a UI bug cannot bypass them:
    one write, whatever the UI computed:
    - **Slip guard** (faders, when `slipGuard` is on for the client, SR-26): the value stops at `max(start, -16) + 6` dB
      (from `-inf` the first stop is -10 dB); downward is never stopped. After the UI measured a 300 ms rest at the wall it
-     sends `openWall`: accepted only while the last set stopped at the wall; the core re-anchors (the next upward move
+     sends `openWall`: accepted only while the value has stood at the wall for 300 ms (`wall.dwell`, checked in the core;
+     earlier the result stays `atWall`); the core re-anchors (the next upward move
      continues from the wall value, no jump) and sets the next wall 6 dB higher. Show mode never changes it.
    - **Gain caps** (headamp gain, every client, SR-24): `[start - 6, start + 3]` dB within the range; never opens.
    - **Monitor ceiling** (`safety.monitorCeiling`, SR-28): every level write of this engine stops at the engineer's

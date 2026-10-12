@@ -6,6 +6,7 @@ package console
 
 import (
 	"math"
+	"time"
 
 	"github.com/mixproto/mixcore/driver"
 )
@@ -21,6 +22,9 @@ const (
 	gainBoundDB       = 6.0   // SR-31: no Gain write moves more than 6 dB from the console value
 	bigRaiseDB        = 6.0   // SR-30: a typed raise of more than 6 dB asks once
 	defaultHeadroomDB = 6.0   // SR-28: monitor ceiling headroom default
+	// wallDwell is how long the value must stand at a slip-guard wall before
+	// openWall is accepted (tokens.md wall.dwell, SR-26; review MEDIUM 4).
+	wallDwell = 300 * time.Millisecond
 )
 
 // GestureState is what the core did with a candidate (CR-22).
@@ -58,7 +62,8 @@ type window struct {
 	law    driver.FaderLaw // nil: re-anchor in dB (Gain, or a driver without a law)
 	offset float64         // re-anchoring after openWall, in fader positions
 	state  GestureState
-	lastAt float64 // fader position of the candidate that stopped at the wall
+	lastAt float64   // fader position of the candidate that stopped at the wall
+	wallAt time.Time // when the value arrived at the wall (zero: not at it)
 }
 
 // slipWall is the first slip-guard stop above start (SR-26).
@@ -75,6 +80,11 @@ func (w *window) clampFader(candidate float64) (float64, GestureState) {
 	st := StateFree
 	if w.HasWall && v >= w.WallUp { // arriving at the wall counts (one rigid haptic, SR-26)
 		v, st, w.lastAt = w.WallUp, StateAtWall, pos
+		if w.wallAt.IsZero() {
+			w.wallAt = time.Now()
+		}
+	} else {
+		w.wallAt = time.Time{}
 	}
 	if w.HasCeiling && v > w.Ceiling {
 		v, st = w.Ceiling, StateAtCeiling
@@ -98,12 +108,14 @@ func (w *window) clampGain(candidate float64) (float64, GestureState) {
 
 // openWall re-anchors after a rest at the wall: the next upward move
 // continues from the wall value (no jump) and the next wall is 6 dB higher.
-// It reports false where walls do not open by rest or the value is not at
-// the wall.
+// It reports false where walls do not open by rest, the value is not at the
+// wall, or it has stood there for less than wallDwell (the core checks the
+// rest itself, so a UI bug cannot open walls at will).
 func (w *window) openWall() bool {
-	if !w.OpensByRest || w.state != StateAtWall {
+	if !w.OpensByRest || w.state != StateAtWall || time.Since(w.wallAt) < wallDwell {
 		return false
 	}
+	w.wallAt = time.Time{}
 	// lastAt is the raw finger position (no offset applied), so the new
 	// offset replaces the old one: adding them counted the first twice
 	// (review HIGH 2).

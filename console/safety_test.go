@@ -116,6 +116,7 @@ func TestSlipGuard_OpenWallContinuesWithoutJump(t *testing.T) {
 			t.Fatal("a wall opens only while the value stands at it")
 		}
 		_, _ = sup.Write(set(ch1Fader, lvl(t, 3), gesture)) // the finger is 3 dB past the wall
+		time.Sleep(300 * time.Millisecond)                  // wall.dwell
 		r, err := sup.OpenWall(ch1Fader, gesture)
 		if err != nil || r.Window.WallUp != 6 {
 			t.Fatalf("open: %+v %v", r.Window, err)
@@ -333,6 +334,35 @@ func TestSlipGuard_OpenSeveralWallsWithoutJump(t *testing.T) {
 		push(21, 13, StateFree)
 		if max := maxWrite(drv); max != 13 {
 			t.Fatalf("highest write %v", max)
+		}
+	})
+}
+
+// Review MEDIUM 4: the core refuses openWall until the value has stood at
+// the wall for wall.dwell (300 ms), so a buggy UI cannot turn the guard off.
+func TestSlipGuard_OpenWallNeedsTheRest(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, _ := startSafe(t, SafetyConfig{Client: ClientSafety{SlipGuard: true}}, safetyState(-6))
+		_, _ = sup.HoldWindow(ch1Fader, gesture, true)
+		_, _ = sup.Write(set(ch1Fader, lvl(t, 3), gesture))
+		for _, wait := range []time.Duration{0, 299 * time.Millisecond} {
+			time.Sleep(wait)
+			r, err := sup.OpenWall(ch1Fader, gesture)
+			if err != nil || r.State != StateAtWall || r.Window.WallUp != 0 {
+				t.Fatalf("open after %s: %s wall %v %v; must stay at the wall", wait, r.State, r.Window.WallUp, err)
+			}
+		}
+		_, _ = sup.Write(set(ch1Fader, lvl(t, 4), gesture)) // still at the wall: the rest keeps counting
+		time.Sleep(time.Millisecond)
+		if r, _ := sup.OpenWall(ch1Fader, gesture); r.State != StateFree || r.Window.WallUp != 6 {
+			t.Fatalf("open after 300 ms: %s wall %v", r.State, r.Window.WallUp)
+		}
+		_, _ = sup.Write(set(ch1Fader, lvl(t, 10), gesture)) // the next wall
+		_, _ = sup.Write(set(ch1Fader, lvl(t, 0), gesture))  // leaves the wall
+		_, _ = sup.Write(set(ch1Fader, lvl(t, 10), gesture)) // back at the wall: a new rest starts
+		time.Sleep(200 * time.Millisecond)
+		if r, _ := sup.OpenWall(ch1Fader, gesture); r.State != StateAtWall {
+			t.Fatal("a new arrival needs a new 300 ms rest")
 		}
 	})
 }
