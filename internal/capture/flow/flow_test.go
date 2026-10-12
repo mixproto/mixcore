@@ -198,3 +198,18 @@ func TestSameHostAppToldApartByConsolePort(t *testing.T) {
 		t.Fatalf("observations:\n%s", got)
 	}
 }
+
+// Regression (go-reviewer H1): a segment exactly 2^31 bytes behind the next
+// expected sequence number made -diff overflow and panicked the slice. It is
+// a gap now: the decoder resynchronizes on it.
+func TestTCPDir_MinInt32DistanceIsAGap(t *testing.T) {
+	var d tcpDir
+	if chunks, _ := d.accept(1000, netpkt.FlagACK, []byte("abc")); len(chunks) != 1 {
+		t.Fatalf("first segment: %d chunks", len(chunks))
+	}
+	far := uint32(1003) + 1<<31 // int32(far - next) == math.MinInt32 (mod 2^32)
+	chunks, gap := d.accept(far, netpkt.FlagACK, []byte("x"))
+	if !gap || len(chunks) != 1 || string(chunks[0]) != "x" || d.next != far+1 {
+		t.Fatalf("chunks %q, gap %t, next %d", chunks, gap, d.next)
+	}
+}

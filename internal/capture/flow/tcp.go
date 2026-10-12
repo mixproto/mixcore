@@ -12,8 +12,12 @@ import (
 	"github.com/mixproto/mixcore/internal/capture/netpkt"
 )
 
-// maxOutOfOrder bounds the segments held while waiting for a missing one.
-const maxOutOfOrder = 64
+// maxOutOfOrder bounds the segments held while waiting for a missing one;
+// halfSpace splits the sequence space into "ahead" and "behind" (RFC 9293).
+const (
+	maxOutOfOrder = 64
+	halfSpace     = 1 << 31
+)
 
 type pendingChunk struct {
 	at   time.Time
@@ -70,22 +74,25 @@ func (d *tcpDir) accept(seq uint32, flags uint8, payload []byte) (chunks [][]byt
 	if !d.synced { // capture started mid-connection
 		*d = tcpDir{next: seq, synced: true}
 	}
-	diff := int32(seq - d.next)
+	// Distances in uint32 (sequence numbers wrap): ahead < 2^31 is future data,
+	// behind < 2^31 is a retransmission, exactly 2^31 is neither: a gap. No
+	// signed negation, so no overflow on a crafted sequence number.
+	ahead, behind := seq-d.next, d.next-seq
 	switch {
-	case diff < 0:
-		if int(-diff) >= len(payload) {
+	case ahead == 0:
+	case behind < halfSpace:
+		if uint64(behind) >= uint64(len(payload)) {
 			return nil, false // retransmission of data already seen
 		}
-		payload = payload[-diff:]
-	case diff > 0:
-		if len(d.ooo) < maxOutOfOrder {
-			if d.ooo == nil {
-				d.ooo = map[uint32][]byte{}
-			}
-			d.ooo[seq] = bytes.Clone(payload)
-			return nil, false
+		payload = payload[behind:]
+	case ahead < halfSpace && len(d.ooo) < maxOutOfOrder:
+		if d.ooo == nil {
+			d.ooo = map[uint32][]byte{}
 		}
-		d.next, d.ooo, gap = seq, nil, true // give up on the missing segment
+		d.ooo[seq] = bytes.Clone(payload)
+		return nil, false
+	default: // too far ahead to wait for, or 2^31 away: resynchronize here
+		d.next, d.ooo, gap = seq, nil, true
 	}
 	chunks = append(chunks, bytes.Clone(payload))
 	d.next += uint32(len(payload))
