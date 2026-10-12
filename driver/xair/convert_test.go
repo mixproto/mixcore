@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mixproto/mixcore/driver"
+	"github.com/mixproto/mixcore/driver/internal/xosc"
 	"github.com/mixproto/mixcore/meters"
 	"github.com/mixproto/mixcore/model"
 	simxair "github.com/mixproto/mixcore/sim/xair"
@@ -144,15 +145,30 @@ func FuzzDecodeBank1(f *testing.F) {
 	})
 }
 
-// FuzzMeterPacket runs whole packets through the codec as the reader does.
+// FuzzMeterPacket feeds whole packets to the meter sink exactly as the
+// subscription reader does (xosc.MeterSink.Handle): it must never panic, and
+// every frame it publishes has 18 levels that are finite dB or -inf.
 func FuzzMeterPacket(f *testing.F) {
 	f.Add(meterPacket(f))
 	f.Add([]byte("/meters/1\x00\x00\x00,b\x00\x00\x00\x00\x00\x04\x28\x00\x00\x00"))
+	f.Add([]byte("/meters/1\x00\x00\x00,i\x00\x00\x00\x00\x00\x01"))
+	now := time.Now()
 	f.Fuzz(func(t *testing.T, pkt []byte) {
+		slot := &meters.Slot{}
+		sink := xosc.NewMeterSink(meterCodec{}, slot)
+		sink.SwitchOn(true)
+		sink.Handle(pkt, now)
 		var fr meters.Frame
-		c := meterCodec{}
-		if bank, ok := c.Bank(pkt); ok {
-			_ = c.Decode(bank, pkt, &fr) // a raw packet is not a blob: must reject or decode, never panic
+		if !slot.CopyLatest(&fr) {
+			return // nothing published: rejected or not a meter packet
+		}
+		if fr.Count != meterLevels {
+			t.Fatalf("published %d levels", fr.Count)
+		}
+		for i := range fr.Count {
+			if l := float64(fr.Levels[i]); math.IsNaN(l) || math.IsInf(l, 1) {
+				t.Fatalf("level %d = %v", i, l)
+			}
 		}
 	})
 }
