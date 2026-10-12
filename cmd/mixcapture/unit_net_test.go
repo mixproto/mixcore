@@ -124,88 +124,116 @@ func (a memClient) drain(ctx context.Context) {
 	}
 }
 
-// TestRelay_UnitMemnet drives the relay command over the in-memory network:
-// UDP to the X Air simulator, TCP to the fake RCP console, every terminal
-// command, and the safety checks (only the app's own traffic reaches the
-// consoles).
-func TestRelay_UnitMemnet(t *testing.T) {
-	r := newMemRig(t)
-	simPC, err := r.n.ListenPacket(memConsole + ":10024")
+// relayRig is a relay command running on the in-memory network, with the
+// X Air simulator as the UDP console and the fake RCP console over TCP.
+type relayRig struct {
+	t     *testing.T
+	r     *memRig
+	sim   *simxair.Sim
+	out   *syncBuf
+	stdin *io.PipeWriter
+	dir   string
+	done  chan error
+	pos   int
+	ctx   context.Context
+}
+
+func startMemRelay(t *testing.T) *relayRig {
+	t.Helper()
+	m := &relayRig{t: t, r: newMemRig(t), sim: simxair.New(simxair.Options{}), out: &syncBuf{},
+		dir: filepath.Join(t.TempDir(), "s"), done: make(chan error, 1)}
+	simPC, err := m.r.n.ListenPacket(memConsole + ":10024")
 	if err != nil {
 		t.Fatal(err)
 	}
-	sim := simxair.New(simxair.Options{})
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	r.wg.Go(func() { _ = sim.Serve(ctx, simPC) })
-	defer func() { _ = simPC.Close() }()
-	out := &syncBuf{}
+	m.ctx = ctx
 	stdinR, stdinW := io.Pipe()
-	defer func() { _ = stdinW.Close() }()
-	dir := filepath.Join(t.TempDir(), "s")
-	done := make(chan error, 1)
-	r.wg.Go(func() {
-		done <- runWith(ctx, []string{"relay", "-console", memConsole, "-listen", memRelay, "-app", memApp,
-			"-udp", "19024:10024", "-tcp", "49280", "-window", "300ms", "-quiet", "300ms", "-out", dir}, stdinR, out, r.ops())
+	m.stdin = stdinW
+	t.Cleanup(func() { cancel(); _ = stdinW.Close(); m.r.wg.Wait(); _ = simPC.Close() })
+	m.r.wg.Go(func() { _ = m.sim.Serve(ctx, simPC) })
+	m.r.wg.Go(func() {
+		m.done <- runWith(ctx, []string{"relay", "-console", memConsole, "-listen", memRelay, "-app", memApp,
+			"-udp", "19024:10024", "-tcp", "49280", "-window", "300ms", "-quiet", "300ms", "-out", m.dir}, stdinR, m.out, m.r.ops())
 	})
-	pos := out.waitFor(t, "recording;", 0, outputWait)
-	ln := <-r.lns
-	appPC, err := r.n.ListenPacket(memApp + ":0")
-	if err != nil {
-		t.Fatal(err)
+	m.wait("recording;")
+	return m
+}
+
+func (m *relayRig) wait(text string) {
+	m.t.Helper()
+	m.pos = m.out.waitFor(m.t, text, m.pos, outputWait)
+}
+
+// say types a terminal line and waits for its output.
+func (m *relayRig) say(line, want string) {
+	m.t.Helper()
+	if _, err := io.WriteString(m.stdin, line+"\n"); err != nil {
+		m.t.Fatal(err)
 	}
-	defer func() { _ = appPC.Close() }()
-	app := memClient{t: t, pc: appPC, to: net.UDPAddrFromAddrPort(netip.MustParseAddrPort(memRelay + ":19024"))}
-	r.wg.Go(func() { app.drain(ctx) })
-	app.send("/xinfo")
-	app.send("/xremote")
-	for _, a := range []string{"/ch/01/mix/fader", "/ch/01/mix/on", "/ch/02/mix/fader"} {
+	m.wait(want)
+}
+
+// connectApps plays the vendor apps: OSC reads over UDP, one RCP get over TCP.
+func (m *relayRig) connectApps() memClient {
+	m.t.Helper()
+	ln := <-m.r.lns
+	pc, err := m.r.n.ListenPacket(memApp + ":0")
+	if err != nil {
+		m.t.Fatal(err)
+	}
+	m.t.Cleanup(func() { _ = pc.Close() })
+	app := memClient{t: m.t, pc: pc, to: net.UDPAddrFromAddrPort(netip.MustParseAddrPort(memRelay + ":19024"))}
+	m.r.wg.Go(func() { app.drain(m.ctx) })
+	for _, a := range []string{"/xinfo", "/xremote", "/ch/01/mix/fader", "/ch/01/mix/on", "/ch/02/mix/fader"} {
 		app.send(a)
 	}
 	tcpApp := ln.dialFrom(memApp + ":40000")
-	defer func() { _ = tcpApp.Close() }()
+	m.t.Cleanup(func() { _ = tcpApp.Close() })
 	if _, err := io.WriteString(tcpApp, "get MIXER:Current/InCh/Fader/Level 0 0\n"); err != nil {
-		t.Fatal(err)
+		m.t.Fatal(err)
 	}
 	if _, err := bufio.NewReader(tcpApp).ReadString('\n'); err != nil {
-		t.Fatal(err)
+		m.t.Fatal(err)
 	}
-	pos = out.waitFor(t, "harvest 1:", pos, outputWait)
-	say := func(line, want string) {
-		t.Helper()
-		if _, err := io.WriteString(stdinW, line+"\n"); err != nil {
-			t.Fatal(err)
-		}
-		pos = out.waitFor(t, want, pos, outputWait)
-	}
-	say("", `mark 1 "mark 1"`)
-	say(":s a", `snapshot 1 "a"`)
+	return app
+}
+
+// TestRelay_UnitMemnet drives the relay command over the in-memory network
+// with every terminal command, and checks that only the apps' own traffic
+// reaches the consoles.
+func TestRelay_UnitMemnet(t *testing.T) {
+	m := startMemRelay(t)
+	app := m.connectApps()
+	m.wait("harvest 1:")
+	m.say("", `mark 1 "mark 1"`)
+	m.say(":s a", `snapshot 1 "a"`)
 	for i, step := range []struct {
 		db float64
 		f  float32
 	}{{-10, 0.5}, {0, 0.75}} {
 		label := fmt.Sprintf("ch1 fader = %g dB", step.db)
-		say(label, fmt.Sprintf("mark %d %q", i+2, label))
+		m.say(label, fmt.Sprintf("mark %d %q", i+2, label))
 		app.send("/ch/01/mix/fader", osc.Float(step.f))
-		pos = out.waitFor(t, fmt.Sprintf("mark %d %q closed: 1 candidate(s)", i+2, label), pos, outputWait)
+		m.wait(fmt.Sprintf("mark %d %q closed: 1 candidate(s)", i+2, label))
 	}
-	say(":law /ch/01/mix/fader", "law /ch/01/mix/fader: linear: y = 40")
-	say(":law nope", `law: no key "nope"`)
-	say(":keys /ch/01/mix/f", "  /ch/01/mix/fader = ")
-	say(":harvest", "harvest 1 from 10.0.0.2:")
-	say(":help", "commands while recording:")
-	say(":s b", "diff snapshot 1 -> 2: 1 change(s)")
-	say(":q", "report: ")
-	if err := <-done; err != nil {
-		t.Fatalf("relay: %v\n%s", err, out.String())
+	m.say(":law /ch/01/mix/fader", "law /ch/01/mix/fader: linear: y = 40")
+	m.say(":law nope", `law: no key "nope"`)
+	m.say(":keys /ch/01/mix/f", "  /ch/01/mix/fader = ")
+	m.say(":harvest", "harvest 1 from 10.0.0.2:")
+	m.say(":help", "commands while recording:")
+	m.say(":s b", "diff snapshot 1 -> 2: 1 change(s)")
+	m.say(":q", "report: ")
+	if err := <-m.done; err != nil {
+		t.Fatalf("relay: %v\n%s", err, m.out.String())
 	}
-	if w := sim.Writes(); len(w) != 2 {
+	if w := m.sim.Writes(); len(w) != 2 {
 		t.Fatalf("console received %d writes, the app sent 2", len(w))
 	}
-	if got := r.rcp.received(); len(got) != 1 || got[0] != "get MIXER:Current/InCh/Fader/Level 0 0" {
+	if got := m.r.rcp.received(); len(got) != 1 || got[0] != "get MIXER:Current/InCh/Fader/Level 0 0" {
 		t.Fatalf("TCP console received %q", got)
 	}
-	if keys := readFile(t, filepath.Join(dir, "keys.csv")); !strings.Contains(keys, "MIXER:Current/InCh/Fader/Level 0 0,text,text,,both,") {
+	if keys := readFile(t, filepath.Join(m.dir, "keys.csv")); !strings.Contains(keys, "MIXER:Current/InCh/Fader/Level 0 0,text,text,,both,") {
 		t.Fatalf("keys.csv lacks the TCP text key:\n%s", keys)
 	}
 }

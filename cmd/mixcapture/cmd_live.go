@@ -94,17 +94,10 @@ func liveSession(ctx context.Context, o liveOptions, rec *recording, e *engine, 
 	defer func() { _ = capFile.Close() }()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	// -U: write each packet as it arrives; -w -: pcap to stdout; -s 0: whole
-	// packets; "--" ends the options, so the filter can never be read as one.
-	cmd := exec.CommandContext(ctx, o.tcpdump, "-i", o.iface, "-U", "-w", "-", "-s", "0", "--", o.filter) //nolint:gosec // G204: the operator chooses tcpdump and its filter
 	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	stdout, err := cmd.StdoutPipe()
+	cmd, stdout, err := startTcpdump(ctx, o, &stderr)
 	if err != nil {
-		return fmt.Errorf("live: %w", err)
-	}
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("live: start %s: %w (install tcpdump or pass -tcpdump)", o.tcpdump, err)
+		return err
 	}
 	fmt.Fprintf(out, "recording on %s with %q. Type a label and Enter to mark, :help for commands.\n", o.iface, o.filter)
 	frames := make(chan flow.Frame, frameQueue)
@@ -136,6 +129,22 @@ func liveSession(ctx context.Context, o liveOptions, rec *recording, e *engine, 
 		return tcpdumpError(errors.Join(runErr, waitErr), stderr.String())
 	}
 	return nil
+}
+
+// startTcpdump starts tcpdump writing pcap to its stdout. -U: write each
+// packet as it arrives; -w -: pcap to stdout; -s 0: whole packets; "--" ends
+// the options, so the filter can never be read as one.
+func startTcpdump(ctx context.Context, o liveOptions, stderr io.Writer) (*exec.Cmd, io.Reader, error) {
+	cmd := exec.CommandContext(ctx, o.tcpdump, "-i", o.iface, "-U", "-w", "-", "-s", "0", "--", o.filter) //nolint:gosec // G204: the operator chooses tcpdump and its filter
+	cmd.Stderr = stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, nil, fmt.Errorf("live: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, nil, fmt.Errorf("live: start %s: %w (install tcpdump or pass -tcpdump)", o.tcpdump, err)
+	}
+	return cmd, stdout, nil
 }
 
 // pumpCapture copies tcpdump's pcap stream byte for byte into file in its
