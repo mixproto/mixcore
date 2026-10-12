@@ -25,10 +25,13 @@ import (
 
 // TestSimSessionSafety_Log shows the phone safety rules of core-api v0.3
 // against sim/xair on real loopback UDP with the default timing: a slip
-// stopped at the wall and continued after a rest, a pull down never
-// stopped, the Gain cap and per-write bound, show mode refusals with an
-// unlock, and the typed-raise confirm. It writes a timestamped log when
-// MIXCORE_SAFETY_SESSION_LOG names the file:
+// stopped at the wall and continued after a rest, two walls opened in one
+// hold without a jump, a pull down never stopped, the Gain cap and
+// per-write bound (also against the value in flight), show mode refusals
+// with an unlock and the undo grace of its entries, the typed-raise
+// confirm and its gesture-only origin, the per-headamp Gain law on X Air
+// and, against sim/x32, the X32 headamps and a patch change. It writes a
+// timestamped log when MIXCORE_SAFETY_SESSION_LOG names the file:
 //
 //	MIXCORE_SAFETY_SESSION_LOG=/tmp/safety.log go test -tags=sim -run TestSimSessionSafety_Log -v ./api/
 func TestSimSessionSafety_Log(t *testing.T) {
@@ -43,11 +46,15 @@ func TestSimSessionSafety_Log(t *testing.T) {
 	defer f.Close()
 	s := newSafetySession(t, io.MultiWriter(f, testWriter{t}))
 	s.slip(t)
+	s.twoWalls(t)
 	s.pullDown(t)
 	s.gain(t)
 	s.showMode(t)
 	s.typedRaise(t)
+	s.originsAndConfig(t)
+	s.headampsXAir(t)
 	s.audit(t)
+	s.logX32Headamps(t)
 }
 
 type safetySession struct {
@@ -73,6 +80,7 @@ func newSafetySession(t *testing.T, out io.Writer) *safetySession {
 	s := &safetySession{out: out, start: time.Now(), sim: simxair.New(simxair.Options{Name: "XR18-SAFE"})}
 	_ = s.sim.SurfaceSet("/ch/01/mix/fader", osc.Float(0.6))      // Vox1 -6 dB (XA-F40)
 	_ = s.sim.SurfaceSet("/ch/02/mix/fader", osc.Float(0.375))    // Vox2 -20 dB
+	_ = s.sim.SurfaceSet("/ch/03/mix/fader", osc.Float(0.25))     // Keys -30 dB
 	_ = s.sim.SurfaceSet("/headamp/03/gain", osc.Float(89.0/144)) // Gain +32.5 dB
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
@@ -94,7 +102,7 @@ func newSafetySession(t *testing.T, out io.Writer) *safetySession {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	s.logf("live; fixture Vox1 -6.0 dB, Vox2 -20.0 dB, headamp 3 Gain +32.5 dB")
+	s.logf("live; fixture Vox1 -6.0 dB, Vox2 -20.0 dB, Keys -30.0 dB, headamp 3 Gain +32.5 dB")
 	return s
 }
 
@@ -178,6 +186,8 @@ func (s *safetySession) slowDrag(t *testing.T, vox1 string) {
 		s.logf("finger %3.0f pt up: candidate %+.2f dB -> applied %+.2f dB, state %s", finger, s.eng.FaderDB(math.Min(p0+finger/490, 1)), r.Value, r.State)
 	}
 	move(85) // past the wall (about 73 pt at 0.082 dB/pt)
+	r = s.gesture(t, gcmd("openWall", vox1, ""))
+	s.logf("openWall at once, before the rest (review MEDIUM 4) -> state %s (the core checks the 300 ms itself)", r.State)
 	time.Sleep(300 * time.Millisecond)
 	r = s.gesture(t, gcmd("openWall", vox1, ""))
 	s.logf("rested 300 ms at the wall -> openWall: state %s, next wall %+.2f dB (light tick)", r.State, *r.Window.WallUpDB)
@@ -229,6 +239,13 @@ func (s *safetySession) gain(t *testing.T) {
 	s.logf("typed +45.0 dB, confirmed -> %q; mixer Gain %+.1f dB", CodeOf(err), s.mixerGain())
 	_ = s.eng.Apply(gcmd("set", gain3, `,"value":32.5,"typed":true`)) // back to the fixture
 	time.Sleep(100 * time.Millisecond)                                // its echo
+	_ = s.eng.Apply(strings.Replace(gcmd("set", gain3, `,"value":26.5`), `"gesture"`, `"macro"`, 1))
+	err = s.eng.Apply(strings.Replace(gcmd("set", gain3, `,"value":38.5`), `"gesture"`, `"macro"`, 1))
+	time.Sleep(100 * time.Millisecond)
+	s.logf("a macro sets +26.5 then at once +38.5 (+6 from the console, +12 from the value in flight; review HIGH 1) -> %s; mixer Gain %+.1f dB",
+		CodeOf(err), s.mixerGain())
+	_ = s.eng.Apply(gcmd("set", gain3, `,"value":32.5,"typed":true`))
+	time.Sleep(100 * time.Millisecond)
 }
 
 // showMode: refusals, lowering, unlock and relock, undo grace.
@@ -245,24 +262,35 @@ func (s *safetySession) showMode(t *testing.T) {
 	s.logf("Gain -1 (31.5) -> %q (lowering stays live)", CodeOf(s.eng.Apply(gcmd("set", gain3, `,"value":31.5`))))
 	time.Sleep(100 * time.Millisecond)
 	s.logf("Vox1 fader -10 dB -> %q (faders stay live)", CodeOf(s.eng.Apply(gcmd("set", `{"strip":{"kind":"input","index":1},"field":"fader"}`, `,"value":-10`))))
+	_ = s.eng.Apply(gcmd("set", gain3, `,"value":30.5`))
+	s.logf("Gain lowered to 30.5, then at once +1 (31.5) -> %s (a raise above the value in flight; review HIGH 1)",
+		CodeOf(s.eng.Apply(gcmd("set", gain3, `,"value":31.5`))))
+	time.Sleep(100 * time.Millisecond)
 	_ = s.eng.Apply(gcmd("unlock", gain3, ""))
-	s.logf("unlock (after the UI's 1 s hold); Gain +1 (32.5) -> %q", CodeOf(s.eng.Apply(gcmd("set", gain3, `,"value":32.5`))))
+	s.logf("unlock (after the UI's 1 s hold); Gain +1 (31.5) -> %q", CodeOf(s.eng.Apply(gcmd("set", gain3, `,"value":31.5`))))
+	time.Sleep(100 * time.Millisecond)
+	s.logf("while unlocked, Gain -2 (29.5) -> %q", CodeOf(s.eng.Apply(gcmd("set", gain3, `,"value":29.5`))))
+	time.Sleep(100 * time.Millisecond)
 	_ = s.eng.Apply(gcmd("relock", gain3, ""))
 	time.Sleep(100 * time.Millisecond)
-	s.logf("relock (sheet closed): event in state %t; Gain +1 (33.5) -> %s", s.has(`"type":"gainUnlockEnded","reason":"relock","index":3`),
-		CodeOf(s.eng.Apply(gcmd("set", gain3, `,"value":33.5`))))
-	_ = s.eng.Apply(gcmd("set", gain3, `,"value":31.5`))
+	s.logf("relock (sheet closed): event in state %t; Gain +1 (30.5) -> %s", s.has(`"type":"gainUnlockEnded","reason":"relock","index":3`),
+		CodeOf(s.eng.Apply(gcmd("set", gain3, `,"value":30.5`))))
+	s.logf("undo raising to 36.5 within 10 s, never a value of that unlock (review LOW 7) -> %s",
+		CodeOf(s.eng.Apply(gcmd("set", gain3, `,"value":36.5,"undo":true`))))
+	err := s.eng.Apply(gcmd("set", gain3, `,"value":31.5,"undo":true`))
 	time.Sleep(100 * time.Millisecond)
-	s.logf("undo of the unlock entry within 10 s (Gain 31.5 -> 32.5) -> %q", CodeOf(s.eng.Apply(gcmd("set", gain3, `,"value":32.5,"undo":true`))))
+	s.logf("undo of the last unlock entry within 10 s (29.5 back to 31.5) -> %q; mixer Gain %+.1f dB", CodeOf(err), s.mixerGain())
 	_ = s.eng.Apply(gcmd("setShowMode", "", `,"value":false`))
+	_ = s.eng.Apply(gcmd("set", gain3, `,"value":32.5,"typed":true`))
+	time.Sleep(100 * time.Millisecond)
 }
 
 // typedRaise: AC-PS-16 on Vox2.
 func (s *safetySession) typedRaise(t *testing.T) {
-	s.logf("== typed raises (SR-30, CR-26) on Vox2 at %.1f dB", s.mixerFader(2))
 	vox2 := `{"strip":{"kind":"input","index":2},"field":"fader"}`
-	_ = s.eng.Apply(gcmd("set", vox2, `,"value":-20,"typed":true`))
+	_ = s.eng.Apply(gcmd("set", vox2, `,"value":-20,"typed":true,"confirmed":true`)) // back to the fixture
 	time.Sleep(100 * time.Millisecond)
+	s.logf("== typed raises (SR-30, CR-26) on Vox2 at %.1f dB", s.mixerFader(2))
 	s.logf("typed 0.0 from -20.0 -> %s (zero writes; UI: 'Raise Vox2 fader from -20.0 to 0.0 dB?')", CodeOf(s.eng.Apply(gcmd("set", vox2, `,"value":0,"typed":true`))))
 	err := s.eng.Apply(gcmd("set", vox2, `,"value":0,"typed":true,"confirmed":true`))
 	time.Sleep(100 * time.Millisecond)
