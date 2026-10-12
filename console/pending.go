@@ -42,6 +42,18 @@ func (s *safety) notePending(p model.ParamRef, db float64) {
 	s.pending[p] = pendingValue{db: db, at: time.Now()}
 }
 
+// forgetPending drops the value in flight when its send failed (only if no
+// later write replaced it meanwhile).
+func (s *safety) forgetPending(p model.ParamRef, db float64) {
+	if v, ok := s.pending[p]; ok && v.db == db {
+		delete(s.pending, p)
+	}
+}
+
+// dropAllPending forgets every value in flight: they belonged to a session
+// that is gone (stale) or was replaced by a fresh read (adopt).
+func (s *safety) dropAllPending() { clear(s.pending) }
+
 // clearPending forgets the write in flight once its echo arrived.
 func (s *safety) clearPending(c Change) {
 	v, ok := s.pending[c.Param]

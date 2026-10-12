@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mixproto/mixcore/driver"
+	"github.com/mixproto/mixcore/internal/backoff"
 	"github.com/mixproto/mixcore/meters"
 	"github.com/mixproto/mixcore/model"
 )
@@ -414,6 +415,45 @@ func TestHeadamp_NewHeadampMakesTheNextUpdateASnapshot(t *testing.T) {
 		synctest.Wait()
 		if u := sup.Drain(); u.Full || len(u.Changes) != 1 {
 			t.Fatalf("a known headamp is a diff: full %v changes %d", u.Full, len(u.Changes))
+		}
+	})
+}
+
+// Re-review MEDIUM A: the value in flight belongs to the session that sent
+// it. A write of 33.5 lost with its session, then a reconnect that reads
+// 32.5: tapping 33.5 again is sent (it was a no-op with written false).
+func TestGain_InFlightValueDroppedOnStaleAndReconnect(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, drv := startSafe(t, SafetyConfig{}, safetyState(-6))
+		if _, err := sup.Write(set(gain3, lvl(t, 33.5), gesture)); err != nil {
+			t.Fatal(err)
+		}
+		drv.setDown(true)
+		drv.session(0).lose() // before the echo
+		synctest.Wait()
+		drv.setDown(false)
+		time.Sleep(backoff.Default.Max)
+		synctest.Wait()
+		r, err := sup.Write(set(gain3, lvl(t, 33.5), gesture))
+		if s := drv.session(1); err != nil || !r.Written || s == nil || len(s.writes()) != 1 {
+			t.Fatalf("33.5 after the reconnect: written %v, %v", r.Written, err)
+		}
+	})
+}
+
+// Re-review MEDIUM A: a write the session failed to send is not in flight.
+func TestGain_FailedApplyIsNotInFlight(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, drv := startSafe(t, SafetyConfig{}, safetyState(-6))
+		sendErr := errors.New("send failed")
+		drv.session(0).failApplies(sendErr)
+		if _, err := sup.Write(set(gain3, lvl(t, 33.5), gesture)); !errors.Is(err, sendErr) {
+			t.Fatalf("failed send: %v", err)
+		}
+		drv.session(0).failApplies(nil)
+		r, err := sup.Write(set(gain3, lvl(t, 33.5), gesture))
+		if err != nil || !r.Written || len(drv.session(0).writes()) != 1 {
+			t.Fatalf("33.5 again: written %v, %v", r.Written, err)
 		}
 	})
 }

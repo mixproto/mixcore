@@ -38,6 +38,11 @@ func (s *Supervisor) Write(w Write) (Result, error) {
 		return res, err
 	}
 	err = sess.Apply(w.Command)
+	if err != nil && w.Param.Field == model.FieldGain {
+		s.mu.Lock()
+		s.safe.forgetPending(w.Param, dbOf(w.Value)) // never sent: not in flight (re-review MEDIUM A)
+		s.mu.Unlock()
+	}
 	if errors.Is(err, driver.ErrClosed) {
 		return Result{}, driver.ErrStale // the session died between the check and the call
 	}

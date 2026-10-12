@@ -373,6 +373,7 @@ func (s *Supervisor) adopt(sess driver.Session) {
 	s.ident = sess.Identity()
 	s.caps = sess.Capabilities()
 	s.safe.adoptState(s.state, sess.Snapshot())
+	s.safe.dropAllPending() // the fresh read is the console's value (re-review MEDIUM A)
 	s.state = sess.Snapshot()
 	s.changes = nil
 	s.eff.reset(s.state)
@@ -392,6 +393,7 @@ func (s *Supervisor) markStale(ctx context.Context, cause error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sess = nil
+	s.safe.dropAllPending() // writes of a lost session are not in flight any more (re-review MEDIUM A)
 	if ctx.Err() != nil {
 		return // stopping: Stop sets the final status and cancels holds
 	}

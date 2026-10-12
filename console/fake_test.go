@@ -92,6 +92,14 @@ type fakeSession struct {
 	meters  driver.MeterRequest
 	rereads int
 	skips   [][]model.ParamRef // RereadExcept calls (selective sessions)
+	failing error              // Apply returns it (a send that failed)
+}
+
+// failApplies makes Apply return err (nil: succeed again).
+func (s *fakeSession) failApplies(err error) {
+	s.mu.Lock()
+	s.failing = err
+	s.mu.Unlock()
 }
 
 // selectiveSession is a fakeSession that can leave held parameters out of a re-read.
@@ -133,6 +141,9 @@ func (s *fakeSession) Apply(cmd driver.Command) error {
 	defer s.mu.Unlock()
 	if s.closed {
 		return driver.ErrClosed
+	}
+	if s.failing != nil {
+		return s.failing
 	}
 	s.applied = append(s.applied, cmd)
 	return nil
