@@ -166,7 +166,8 @@ func (s *session) rereadReply(idx int, v model.Value, at time.Time) (driver.Para
 	if !unchanged {
 		s.lim.passFound = true // the push of this change never reached us
 	}
-	return driver.ParamChanged{Param: s.params.all[idx].ref, Value: v, Origin: driver.Origin{Kind: driver.OriginConsole}, At: at}, true
+	return driver.ParamChanged{Param: s.params.all[idx].ref, Value: v, Origin: driver.Origin{Kind: driver.OriginConsole}, At: at,
+		Authoritative: wrote}, true
 }
 
 // remember records the newest value seen for idx.

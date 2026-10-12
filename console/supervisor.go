@@ -67,6 +67,9 @@ type Change struct {
 	Param  model.ParamRef
 	Value  model.Value
 	Origin driver.Origin
+	// Authoritative: the driver's re-read of a parameter with unconfirmed
+	// writes (driver.ParamChanged); it ends every Gain value in flight.
+	Authoritative bool
 }
 
 // Update is what Drain returns: the current state plus what changed since
@@ -217,6 +220,7 @@ func (s *Supervisor) halt(closeLink bool) {
 		s.mu.Lock()
 		s.holds.cancelAll(StatusStopped.String())
 		s.safe.unlocks.endAll(UnlockStopped)
+		s.safe.dropAllPending() // nothing of the closed session is in flight
 		s.setStatusLocked(StatusStopped, "stopped")
 		s.mu.Unlock()
 	}
@@ -440,7 +444,7 @@ func (s *Supervisor) handleEvent(ev driver.Event) {
 	defer s.mu.Unlock()
 	switch e := ev.(type) {
 	case driver.ParamChanged:
-		s.applyChangeLocked(Change{Param: e.Param, Value: e.Value, Origin: e.Origin})
+		s.applyChangeLocked(Change{Param: e.Param, Value: e.Value, Origin: e.Origin, Authoritative: e.Authoritative})
 	case driver.StateReplaced:
 		s.state = e.State
 		s.eff.reset(s.state)
@@ -482,6 +486,9 @@ func (s *Supervisor) applyChangeLocked(c Change) {
 	s.state = next
 	s.holds.external(c)
 	s.safe.noteChange(c)
+	if c.Param.Field == model.FieldGain {
+		s.safe.noteReport(c, s.halfStepDB(c.Param.Strip.Index)) // review pass 3, HIGH 1
+	}
 	if !known || len(s.changes)+len(s.eff.changes) >= maxPendingChanges { // a new headamp (x32 patch change) needs its snapshot entry
 		s.full = true
 	} else if !s.full {

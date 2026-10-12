@@ -67,13 +67,13 @@ type safety struct {
 	windows  map[holdKey]*window
 	showMode bool
 	unlocks  unlocks
-	engineer map[model.ParamRef]float64 // latest value not from a monitor client (SR-28)
-	pending  map[model.ParamRef]float64 // Gain writes in flight, dB (pending.go)
+	engineer map[model.ParamRef]float64   // latest value not from a monitor client (SR-28)
+	pending  map[model.ParamRef][]float64 // Gain values in flight, dB (pending.go)
 }
 
 func newSafety(cfg SafetyConfig) safety {
 	return safety{cfg: cfg, clients: map[string]ClientSafety{}, windows: map[holdKey]*window{}, showMode: cfg.ShowMode,
-		unlocks: newUnlocks(), engineer: map[model.ParamRef]float64{}, pending: map[model.ParamRef]float64{}}
+		unlocks: newUnlocks(), engineer: map[model.ParamRef]float64{}, pending: map[model.ParamRef][]float64{}}
 }
 
 func (s *safety) client(id string) ClientSafety {
@@ -120,9 +120,6 @@ func (s *safety) isMonitorOrigin(o driver.Origin) bool {
 // noteChange keeps the engineer's latest value (SR-28): every level value
 // except the writes of a monitor client.
 func (s *safety) noteChange(c Change) {
-	if c.Param.Field == model.FieldGain {
-		s.clearPending(c)
-	}
 	if c.Param.Field == model.FieldFader && !s.isMonitorOrigin(c.Origin) {
 		s.engineer[c.Param] = dbOf(c.Value)
 	}
@@ -206,11 +203,8 @@ func (s *Supervisor) clampLocked(w Write, cur float64) (float64, GestureState, *
 func (s *Supervisor) gainRulesLocked(w Write, cur, v float64, st GestureState, win *window) (float64, GestureState, *Window, error) {
 	h := w.Param.Strip.Index
 	s.safe.unlocks.touch(h)
-	pend, hasPend := s.safe.pendingOf(w.Param)
-	floor := cur // a raise above the console value or above the value in flight is a raise
-	if hasPend {
-		floor = math.Min(cur, pend)
-	}
+	inFlight := s.safe.inFlightOf(w.Param)
+	floor := raiseFloor(cur, inFlight) // a raise above the console value or any value in flight is a raise
 	tol := s.halfStepDB(h)
 	if s.safe.showMode && v > floor && !s.safe.unlocks.allowsRaise(h, w.Undo, v, tol) {
 		if win == nil {
@@ -218,13 +212,13 @@ func (s *Supervisor) gainRulesLocked(w Write, cur, v float64, st GestureState, w
 		}
 		v, st = floor, StateLocked
 	}
-	if lo, hi := gainBounds(cur, pend, hasPend); !w.Typed && (v < lo || v > hi) {
+	if lo, hi := gainBounds(cur, inFlight); !w.Typed && (v < lo || v > hi) {
 		if win == nil {
-			return 0, 0, nil, fmt.Errorf("%w: %s %.1f to %.1f dB (console %.1f, in flight %.1f)", ErrGainBound, w.Param, cur, v, cur, pend)
+			return 0, 0, nil, fmt.Errorf("%w: %s %.1f to %.1f dB (console %.1f, in flight %v)", ErrGainBound, w.Param, cur, v, cur, inFlight)
 		}
 		v, st = math.Min(math.Max(v, lo), math.Max(lo, hi)), StateAtCap
 	}
-	s.safe.unlocks.noteEntry(h, entryBase(cur, pend, hasPend, win), tol) // any accepted Gain write during an unlock is an entry (undo grace)
+	s.safe.unlocks.noteEntry(h, entryBase(cur, inFlight, win), tol) // any accepted Gain write during an unlock is an entry (undo grace)
 	return v, st, windowOf(win), nil
 }
 
@@ -237,13 +231,13 @@ func (s *Supervisor) halfStepDB(h int) float64 {
 }
 
 // entryBase is the Gain an undo of this entry returns to: the start of the
-// hold, else the value in flight, else the console value.
-func entryBase(cur, pend float64, hasPend bool, win *window) float64 {
+// hold, else the latest value in flight, else the console value.
+func entryBase(cur float64, inFlight []float64, win *window) float64 {
 	switch {
 	case win != nil:
 		return win.Start
-	case hasPend:
-		return pend
+	case len(inFlight) > 0:
+		return inFlight[len(inFlight)-1]
 	}
 	return cur
 }

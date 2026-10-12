@@ -198,10 +198,14 @@ func TestGain_GestureCaps(t *testing.T) {
 			st         GestureState
 		}{{33.5, 33.5, StateFree}, {60, 35.5, StateAtCap}, {0, 29.5, StateAtCap}, {0, 26.5, StateAtCap}} {
 			// From +35.5 a pull to 0 first stops 6 dB lower (the per-write bound,
-			// review HIGH 1), then at the -6 dB cap of the gesture.
-			if r, _ := sup.Write(set(gain3, lvl(t, tc.cand), gesture)); dbIn(t, r) != tc.want || r.State != tc.st {
+			// review HIGH 1), then at the -6 dB cap of the gesture. Each write is
+			// echoed, as by a console that echoes, so it leaves the in-flight set.
+			r, _ := sup.Write(set(gain3, lvl(t, tc.cand), gesture))
+			if dbIn(t, r) != tc.want || r.State != tc.st {
 				t.Fatalf("candidate %v: %v %s", tc.cand, dbIn(t, r), r.State)
 			}
+			drv.session(0).push <- driver.ParamChanged{Param: gain3, Value: lvl(t, tc.want), Origin: gesture}
+			synctest.Wait()
 		}
 		if _, err := sup.OpenWall(gain3, gesture); !errors.Is(err, driver.ErrUnsupported) {
 			t.Fatalf("a Gain cap must never open: %v", err)
@@ -294,8 +298,8 @@ func TestGain_BoundAgainstThePendingValue(t *testing.T) {
 			t.Fatalf("drag up with 26.5 pending applied %v, more than 6 dB above it", dbIn(t, r))
 		}
 		_, _ = sup.HoldWindow(gain3, gesture, false)
-		drv.session(0).push <- driver.ParamChanged{Param: gain3, Value: lvl(t, 32.5), Origin: driver.Origin{Kind: driver.OriginConsole}}
-		synctest.Wait() // the console reports 32.5: the 26.5 never landed
+		drv.session(0).push <- driver.ParamChanged{Param: gain3, Value: lvl(t, 32.5), Origin: driver.Origin{Kind: driver.OriginConsole}, Authoritative: true}
+		synctest.Wait() // the re-read reports 32.5: the 26.5 never landed
 		if _, err := sup.Write(set(gain3, lvl(t, 38.5), macro)); err != nil {
 			t.Fatalf("after the console's report only its value counts: %v", err)
 		}
@@ -330,10 +334,10 @@ func TestGain_InFlightBoundHoldsWithoutEcho(t *testing.T) {
 	})
 }
 
-// Re-review MEDIUM B with echo: any console report for the parameter ends
-// the value in flight and its value is the reference from then on; a tap
-// of the value in flight while the console still reports another is sent
-// again, never skipped as a no-op.
+// Re-review MEDIUM B with echo: the echo ends the value it matches, an
+// authoritative re-read ends them all and its value is the reference from
+// then on; a tap of the value in flight while the console still reports
+// another is sent again, never skipped as a no-op.
 func TestGain_ConsoleReportEndsTheInFlightValue(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		sup, drv := startSafe(t, SafetyConfig{}, safetyState(-6))
@@ -349,7 +353,8 @@ func TestGain_ConsoleReportEndsTheInFlightValue(t *testing.T) {
 		if _, err := sup.Write(set(gain3, lvl(t, 44.5), gesture)); err != nil {
 			t.Fatalf("+6 from the echoed 38.5: %v", err)
 		}
-		push(38.5, driver.Origin{Kind: driver.OriginConsole}) // the desk says 38.5: 44.5 never landed
+		drv.session(0).push <- driver.ParamChanged{Param: gain3, Value: lvl(t, 38.5), Origin: driver.Origin{Kind: driver.OriginConsole}, Authoritative: true}
+		synctest.Wait() // the re-read says 38.5: 44.5 never landed
 		if _, err := sup.Write(set(gain3, lvl(t, 32.5), gesture)); err != nil {
 			t.Fatalf("-6 from the reported 38.5: %v", err)
 		}

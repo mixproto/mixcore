@@ -229,7 +229,7 @@ func TestHeadamp_RereadReportsGainWithAnUnconfirmedWrite(t *testing.T) {
 				t.Fatal("the re-read never reported headamp 1 Gain")
 			}
 			if ev.Param == headamp(1, model.FieldGain) {
-				if !ev.Value.Equal(level(t, 0)) || ev.Origin.Kind != driver.OriginConsole {
+				if !ev.Value.Equal(level(t, 0)) || ev.Origin.Kind != driver.OriginConsole || !ev.Authoritative {
 					t.Fatalf("report %+v, want the console's 0 dB", ev)
 				}
 				break

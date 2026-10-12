@@ -7,6 +7,7 @@ package console
 import (
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/mixproto/mixcore/driver"
 	"github.com/mixproto/mixcore/model"
@@ -40,7 +41,7 @@ func (s *Supervisor) Write(w Write) (Result, error) {
 	err = sess.Apply(w.Command)
 	if err != nil && w.Param.Field == model.FieldGain {
 		s.mu.Lock()
-		s.safe.forgetPending(w.Param, dbOf(w.Value)) // never sent: not in flight (re-review MEDIUM A)
+		s.safe.forgetSent(w.Param, dbOf(w.Value)) // never sent: not in flight (re-review MEDIUM A)
 		s.mu.Unlock()
 	}
 	if errors.Is(err, driver.ErrClosed) {
@@ -90,11 +91,10 @@ func (s *Supervisor) prepareLocked(w *Write) (driver.Session, Result, error) {
 	w.Value = lv
 	written := v != cur
 	if w.Param.Field == model.FieldGain {
-		if pend, hasPend := s.safe.pendingOf(w.Param); hasPend && v != pend {
-			written = true // back to the console value while another is in flight: a real write
-		}
-		if written {
-			s.safe.notePending(w.Param, v)
+		others := slices.ContainsFunc(s.safe.inFlightOf(w.Param), func(x float64) bool { return x != v })
+		written = written || others // back to the console value while others are in flight: a real write
+		if written && !s.safe.noteSent(w.Param, v) {
+			return nil, Result{}, fmt.Errorf("%w: %s: %d values in flight", ErrGainBound, w.Param, maxInFlight)
 		}
 	}
 	return s.sess, Result{Value: lv, State: st, Written: written, Window: win}, nil
