@@ -1,4 +1,4 @@
-# mixcore core API, contract v0.1
+# mixcore core API, contract v0.2
 
 The in-process API that every app uses to drive a console (`api.Engine` in Go; the `mobile` gomobile wrapper and the
 `capi` c-shared wrapper expose the same calls). Structured data crosses the boundary as JSON strings (schemas in this
@@ -17,6 +17,27 @@ working unchanged. What v0.1 adds:
 | Scene recall | event `sceneRecalledAtConsole` with `confidence` and `signals`; ends every held fader; background re-read starts | SR-15, CR-03, CR-08 |
 | Meter read | `ReadMeterFrame(dst)` in the gomobile binding: the frame is written into a buffer the app keeps (no new `Data`/`ByteArray` per frame) | S2 finding |
 | Fader steps | `FaderStep(db, deltaDB)`: the bottom-of-scale rule (`-inf` <-> -60 dB) for keyboard, screen reader and +/- buttons | CR-21, OQ 26 |
+
+**v0.2 is backwards compatible with v0.1** in the same way (only additions). What v0.2 adds, for the X Air / M Air
+family (`docs/protocols/xair.md`); no call, binding signature or error code changes:
+
+| Area | Addition | Protocol ref |
+|---|---|---|
+| Family | `xair` in `config`, `discover`, `discovery` and `session`; default port 10024; `faderLaw` `xair` is the x32 law | XA-F01, XA-F40 |
+| Discovery | the family of a reply is told apart by its source port and model string | XA-F12..F14, XA-F70 |
+| Meters | per-family channel map; xair `n` = 18 (16 inputs, Main L/R), always "inputs, then Main L, Main R" | XA-F51..F53 |
+| Groups | xair: 4 mute groups, 4 DCAs; the main strip has no mute-group membership, so its `muteGroups` field is absent | XA section 3.1, 3.2 |
+| Scene recall | signal `snapshotIndex` and field `loadedScene` (1..64) of `sceneRecalledAtConsole` | XA-F60..F62 |
+| Client limit | `limited` with the xair limit of 8 push clients | XA-F21 |
+
+Per-family facts the apps need (no field carries them yet):
+- **Send on/off is absent on xair**: the console has no per-send on/off (XA section 3.3). Sends are not in this contract
+  yet; when they are added, an xair send has no `on` field and the UI shows no send on/off button.
+- **Snapshots**: xair has 64 (`/-snap/index`, XA-F60). The core reads the loaded one only from the console's own push
+  (`loadedScene`); it never loads, saves, names or deletes a snapshot, and no command here can make it do so, so slot 64
+  (another app's data, XA-F63) is never touched.
+- **Small models**: an XR12 or XR16 that does not answer for an input strip connects with fewer input strips (XA-F72);
+  the UI takes the number of strips from the snapshot, never from the model name.
 
 ## Calls
 
@@ -41,7 +62,7 @@ working unchanged. What v0.1 adds:
 | `MeterScale()` (v0.1) | | `meter-scale.schema.json` | **never blocks**: constant |
 | `MeterPosition(dbfs)` (v0.1) | dBFS (`-inf` allowed) | position 0..1 on the meter scale | **never blocks**: pure |
 | `MeterRelease(shownDB, inputDB, elapsedMs)` (v0.1) | shown and new level in dBFS, ms since the last tick | level to show | **never blocks**: pure (`meter-frame.md`) |
-| `FaderStep(db, deltaDB)` (v0.1) | level (`-inf` allowed), step in dB (+1, -1, +0.1, +5, ...) | next level | **never blocks**: pure. Up from `-inf` gives -60 dB; down from -60 dB or below gives `-inf`; otherwise the level rounded to 0.1 dB plus the step, rounded to 0.1 dB, at most the top of the family's fader law (x32: +10 dB). A step of 0 or NaN returns the level unchanged |
+| `FaderStep(db, deltaDB)` (v0.1) | level (`-inf` allowed), step in dB (+1, -1, +0.1, +5, ...) | next level | **never blocks**: pure. Up from `-inf` gives -60 dB; down from -60 dB or below gives `-inf`; otherwise the level rounded to 0.1 dB plus the step, rounded to 0.1 dB, at most the top of the family's fader law (x32 and xair: +10 dB). A step of 0 or NaN returns the level unchanged |
 
 `FaderPosition`/`FaderDB` use 64-bit floats, which carry `-inf` natively (Swift `-Double.infinity`, Kotlin
 `Double.NEGATIVE_INFINITY`, C# `double.NegativeInfinity`). NaN input gives position 0 / `-inf`.
@@ -84,7 +105,7 @@ these codes (details go to the log, never to the user):
 |---|---|
 | `ERR_INVALID_CONFIG` | config JSON malformed, unknown family, bad host or port |
 | `ERR_INVALID_COMMAND` | command JSON malformed, wrong version, unknown type/field, value of the wrong type |
-| `ERR_INVALID_VALUE` | value outside what the console accepts (for x32: a name longer than 12 characters or not printable ASCII) |
+| `ERR_INVALID_VALUE` | value outside what the console accepts (x32 and xair: a name longer than 12 characters or not printable ASCII) |
 | `ERR_NOT_USER_ORIGIN` | origin kind is not `gesture` or `macro` |
 | `ERR_STALE` | not live: connecting, stale, limited (v0.1), paused or stopped |
 | `ERR_GESTURE_ENDED` | the hold this write belongs to was ended by an external change or cancelled by a connection loss; send `holdBegin` again |
@@ -100,6 +121,8 @@ these codes (details go to the log, never to the user):
 ## Bindings
 
 Both bindings expose the calls above and nothing else; behaviour is identical because both only translate types.
+
+Both bindings are unchanged by v0.2: the family is a string inside the config JSON, the meter frame carries its own `n`.
 
 **gomobile (`mobile/`, `make xcframework`, AAR by the Android build).** One package, one engine per process. Names:
 
