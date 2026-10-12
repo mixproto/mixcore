@@ -18,6 +18,17 @@ const (
 	muteGroupCount = 6
 	// dcaCount: /dca/1..8 (X32-F37).
 	dcaCount = 8
+	// Headamps (X32-F70): /headamp/NNN, three digits, 0-based; model index
+	// NNN + 1. 000..031 local, 032..079 AES50 A, 080..127 AES50 B (48 per
+	// port per S1; the B numbering is unverified, item 16).
+	localHeadamps  = 32
+	aes50Headamps  = 48
+	headampFormat  = "/headamp/%03d"
+	headampWireOff = -1 // wire NNN = model index - 1
+	// Gain law (X32-F71, X32-F72): dB = -12 + 72 f, f = k/144, 0.5 dB.
+	gainMinDB  = -12.0
+	gainStepDB = 0.5
+	gainSteps  = 144
 
 	meterBank1   = "/meters/1"             // X32-F51, X32-F52
 	meterBank2   = "/meters/2"             // X32-F55

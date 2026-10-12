@@ -351,3 +351,52 @@ func mustLevel(t *testing.T, db float64) model.Value {
 	}
 	return v
 }
+
+// FuzzHeadampFromWire: whatever the console sends for a headamp parameter,
+// the model gets a value of the documented law or nothing: Gain on the
+// grid of its own law within its range (X32-F72, XA-F111, XA-F112),
+// phantom only 0/1 (X32-F73), a /-ha index -1 or a known headamp
+// (X32-F74). A parsed Gain re-encodes to the same grid value.
+func FuzzHeadampFromWire(f *testing.F) {
+	f.Add(float32(0.5), int32(-1))
+	f.Add(float32(1), int32(127))
+	f.Add(float32(0.17), int32(128))
+	f.Add(float32(-0.01), int32(2))
+	t := newParamTable(Layout{
+		HeadampAddr: "/headamp/%03d", HeadampWireOffset: -1, HeadampIndexes: 2,
+		Headamps: []HeadampGroup{
+			{First: 1, Count: 2, Law: HeadampLaw{MinDB: -12, StepDB: 0.5, Steps: 144}, Phantom: true, Writable: true, Role: HeadampUnit},
+			{First: 3, Count: 126, Law: HeadampLaw{MinDB: -12, StepDB: 0.5, Steps: 64}, Role: HeadampPatched},
+		},
+	})
+	mic, _ := t.byRef(pref(model.StripRef{Kind: model.StripHeadamp, Index: 1}, model.FieldGain))
+	line, _ := t.byRef(pref(model.StripRef{Kind: model.StripHeadamp, Index: 3}, model.FieldGain))
+	ph, _ := t.byRef(pref(model.StripRef{Kind: model.StripHeadamp, Index: 1}, model.FieldPhantom))
+	ha, _ := t.byRef(pref(model.StripRef{Kind: model.StripInput, Index: 1}, model.FieldHeadamp))
+	f.Fuzz(func(tt *testing.T, fv float32, iv int32) {
+		for _, p := range []param{mic, line} {
+			v, err := fromWire(p, osc.Float(fv))
+			if err != nil {
+				continue
+			}
+			db, _ := v.DB()
+			top := p.gainMin + float64(p.gainSteps)*p.gainStep
+			if db < p.gainMin || db > top || math.Mod(db-p.gainMin, p.gainStep) != 0 {
+				tt.Fatalf("%s: wire %v -> %v dB off the law", p.addr, fv, db)
+			}
+			back, err := toWire(p, v)
+			if err != nil || !sameWire(p, back, osc.Float(float32(math.Round(float64(fv)*float64(p.gainSteps))/float64(p.gainSteps)))) {
+				tt.Fatalf("%s: %v dB re-encodes to %v, %v", p.addr, db, back.Float, err)
+			}
+		}
+		if v, err := fromWire(ph, osc.Int(iv)); err == nil && iv != 0 && iv != 1 {
+			tt.Fatalf("phantom %d accepted as %v", iv, v)
+		}
+		if v, err := fromWire(ha, osc.Int(iv)); err == nil {
+			n, _ := v.Index()
+			if (iv == -1) != (n == 0) || n < 0 || n > 128 {
+				tt.Fatalf("/-ha %d -> %d", iv, n)
+			}
+		}
+	})
+}
