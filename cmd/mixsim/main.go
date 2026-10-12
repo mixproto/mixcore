@@ -6,31 +6,35 @@
 // end-to-end tests. It is a test tool, not a console.
 //
 //	mixsim -listen 127.0.0.1:10023 -name X32-SIM -demo
+//	mixsim -family xair -demo                 # X Air on 127.0.0.1:10024
 //
-// Use -listen 0.0.0.0:10023 to reach it from a phone on the same LAN.
+// Use -listen 0.0.0.0:<port> to reach it from a phone on the same LAN.
 package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
-	"math"
 	"net"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"github.com/mixproto/mixcore/internal/osc"
 	simx32 "github.com/mixproto/mixcore/sim/x32"
+	simxair "github.com/mixproto/mixcore/sim/xair"
 )
 
 const (
-	demoTick     = 50 * time.Millisecond
-	demoChannels = 32
-	demoPeriod   = 4.0 // seconds per meter swing
+	demoTick   = 50 * time.Millisecond
+	demoPeriod = 4.0 // seconds per meter swing
+	familyX32  = "x32"
+	familyXAir = "xair"
 )
+
+var errFamily = errors.New("-family must be x32 or xair")
 
 func main() {
 	if err := run(); err != nil {
@@ -39,74 +43,96 @@ func main() {
 	}
 }
 
-func run() error {
-	listen := flag.String("listen", fmt.Sprintf("127.0.0.1:%d", simx32.DefaultPort), "UDP address to serve on")
-	name := flag.String("name", "X32-SIM", "network name reported by /xinfo")
-	model := flag.String("model", "X32", "model reported by /xinfo and /info")
-	firmware := flag.String("firmware", "4.06", "firmware version reported")
-	demo := flag.Bool("demo", false, "fill channel names and animate input meters")
-	verbose := flag.Bool("v", false, "debug logging")
-	flag.Parse()
+// flags are the parsed command line. Empty identity flags take the
+// simulator's documented defaults.
+type flags struct {
+	family, listen, name, model, firmware string
+	demo, verbose, pushSnapIndex          bool
+}
 
+func parseFlags() (flags, error) {
+	var f flags
+	flag.StringVar(&f.family, "family", familyX32, "console family: x32 or xair")
+	flag.StringVar(&f.listen, "listen", "", "UDP address to serve on (default 127.0.0.1:<family port>)")
+	flag.StringVar(&f.name, "name", "", "network name reported by /xinfo")
+	flag.StringVar(&f.model, "model", "", "model reported by /xinfo and /info")
+	flag.StringVar(&f.firmware, "firmware", "", "firmware version reported")
+	flag.BoolVar(&f.demo, "demo", false, "fill channel names and animate input meters")
+	flag.BoolVar(&f.pushSnapIndex, "push-snap-index", false, "xair: push /-snap/index on a snapshot load (unverified, XA-F62)")
+	flag.BoolVar(&f.verbose, "v", false, "debug logging")
+	flag.Parse()
+	if f.family != familyX32 && f.family != familyXAir {
+		return f, errFamily
+	}
+	if f.listen == "" {
+		port := simx32.DefaultPort
+		if f.family == familyXAir {
+			port = simxair.DefaultPort
+		}
+		f.listen = fmt.Sprintf("127.0.0.1:%d", port)
+	}
+	return f, nil
+}
+
+// server is the part of a family simulator mixsim needs.
+type server interface {
+	Serve(ctx context.Context, pc net.PacketConn) error
+	WriteCount() int
+}
+
+func run() error {
+	f, err := parseFlags()
+	if err != nil {
+		return err
+	}
 	level := slog.LevelInfo
-	if *verbose {
+	if f.verbose {
 		level = slog.LevelDebug
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-
-	pc, err := net.ListenPacket("udp4", *listen)
+	pc, err := net.ListenPacket("udp4", f.listen)
 	if err != nil {
-		return fmt.Errorf("listen %s: %w", *listen, err)
+		return fmt.Errorf("listen %s: %w", f.listen, err)
 	}
 	defer pc.Close()
-
-	sim := simx32.New(simx32.Options{Name: *name, Model: *model, Firmware: *firmware, Logger: log})
-	if *demo {
-		if err := fillDemoNames(sim); err != nil {
-			return err
-		}
-		go animateMeters(ctx, sim)
+	sim, err := newServer(ctx, f, log)
+	if err != nil {
+		return err
 	}
-	log.Info("mixsim: serving", "family", "x32", "addr", pc.LocalAddr().String(), "name", *name, "model", *model)
+	log.Info("mixsim: serving", "family", f.family, "addr", pc.LocalAddr().String())
 	if err := sim.Serve(ctx, pc); err != nil {
 		return err
 	}
-	log.Info("mixsim: stopped", "writes_received", len(sim.Writes()))
+	log.Info("mixsim: stopped", "writes_received", sim.WriteCount())
 	return nil
 }
 
-func fillDemoNames(sim *simx32.Sim) error {
-	for ch := 1; ch <= demoChannels; ch++ {
-		if err := sim.SurfaceSet(fmt.Sprintf("/ch/%02d/config/name", ch), osc.String(fmt.Sprintf("Input %d", ch))); err != nil {
-			return err
+func newServer(ctx context.Context, f flags, log *slog.Logger) (server, error) {
+	if f.family == familyXAir {
+		sim := simxair.New(simxair.Options{Name: f.name, Model: f.model, Firmware: f.firmware, PushSnapIndex: f.pushSnapIndex, Logger: log})
+		if f.demo {
+			if err := fillXAirDemo(sim); err != nil {
+				return nil, err
+			}
+			go animateXAir(ctx, sim)
 		}
-		if err := sim.SurfaceSet(fmt.Sprintf("/ch/%02d/mix/fader", ch), osc.Float(0.75)); err != nil {
-			return err
-		}
+		return sim, nil
 	}
-	return sim.SurfaceSet("/main/st/mix/fader", osc.Float(0.75))
+	sim := simx32.New(simx32.Options{Name: cmpOr(f.name, "X32-SIM"), Model: cmpOr(f.model, "X32"), Firmware: cmpOr(f.firmware, "4.06"), Logger: log})
+	if f.demo {
+		if err := fillDemoNames(sim); err != nil {
+			return nil, err
+		}
+		go animateMeters(ctx, sim)
+	}
+	return sim, nil
 }
 
-// animateMeters sweeps each input meter with a phase offset so a UI shows movement.
-func animateMeters(ctx context.Context, sim *simx32.Sim) {
-	t := time.NewTicker(demoTick)
-	defer t.Stop()
-	start := time.Now()
-	levels := make([]float32, demoChannels)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case now := <-t.C:
-			phase := now.Sub(start).Seconds() * 2 * math.Pi / demoPeriod
-			for i := range levels {
-				levels[i] = float32(0.5 + 0.5*math.Sin(phase+float64(i)*0.3))
-			}
-			sim.SetInputLevels(levels)
-			sim.SetMainLevels(levels[0], levels[1])
-		}
+func cmpOr(v, def string) string {
+	if v == "" {
+		return def
 	}
+	return v
 }
