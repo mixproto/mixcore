@@ -163,7 +163,8 @@ behave the same and a UI bug cannot bypass them:
    `confirmed` for a raise over 6 dB) may move further; scene recall happens at the console and is never refused.
    A Gain value outside the console's range is `ERR_INVALID_VALUE`, never clamped. The bound also holds against every
    Gain value in flight: each value sent that no console report has matched yet (at most 8 per headamp; a ninth is
-   `ERR_GAIN_BOUND`). Show mode's raise check uses the lowest of the console value and those values. There is no
+   `ERR_GAIN_BOUND`, but inside a hold the candidate stays at the latest value sent with state `atCap` and no write,
+   never an error mid-drag). Show mode's raise check uses the lowest of the console value and those values. There is no
    timer, because Gain echo is unverified (X32-F79, XA-F116): a report within half a step of an in-flight value ends
    that value; any other report only updates the console value; the core's own re-read of a Gain it wrote ends them
    all; stale, a reconnect, Stop, Pause or a failed send end them too. A set of the console value while other values

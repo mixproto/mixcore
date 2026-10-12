@@ -96,13 +96,30 @@ func (s *Supervisor) prepareLocked(w *Write) (driver.Session, Result, error) {
 		written = written || others // back to the console value while others are in flight: a real write
 		if written {
 			send, ok := s.safe.noteSent(w.Param, v, time.Now())
-			if !ok {
+			switch {
+			case !ok && win != nil: // a full set inside a hold is a wall: no write, no error mid-drag (lead decision, pass 4)
+				return s.sess, s.fullSetCapLocked(w, cur, win), nil
+			case !ok:
 				return nil, Result{}, fmt.Errorf("%w: %s: %d values in flight", ErrGainBound, w.Param, maxInFlight)
 			}
 			written = send // sent again at most once per echo window (LOW 5)
 		}
 	}
 	return s.sess, Result{Value: lv, State: st, Written: written, Window: win}, nil
+}
+
+// fullSetCapLocked answers a Gain candidate that would add a ninth value in
+// flight inside a hold: the value stays at the latest one sent, state atCap.
+func (s *Supervisor) fullSetCapLocked(w *Write, cur float64, win *Window) Result {
+	v := cur
+	if l, ok := s.safe.latest[w.Param]; ok {
+		v = l.db
+	} else if fl := s.safe.inFlightOf(w.Param); len(fl) > 0 {
+		v = fl[len(fl)-1]
+	}
+	lv, _ := model.Level(v) // finite: a Gain value already accepted
+	w.Value = lv
+	return Result{Value: lv, State: StateAtCap, Window: win}
 }
 
 // readOnlyLocked reports a parameter the core never writes, whatever the

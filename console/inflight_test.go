@@ -347,3 +347,22 @@ func TestSlipGuard_PushOpensNoWallWhateverTheTrack(t *testing.T) {
 		})
 	}
 }
+
+// Lead decision (review pass 4): a full in-flight set inside a hold is a
+// haptic wall, atCap with no write, never ERR_GAIN_BOUND mid-drag; outside
+// a hold it stays ERR_GAIN_BOUND (TestInFlight_BurstOfNineIsBounded).
+func TestInFlight_FullSetInsideAHoldIsACap(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, drv := startSafe(t, SafetyConfig{}, safetyState(-6))
+		_, _ = sup.HoldWindow(gain3, gesture, true)
+		for _, c := range []float64{33, 33.5, 34, 34.5, 35, 35.5, 32, 31.5} { // 8 distinct, no echo
+			if _, err := sup.Write(set(gain3, lvl(t, c), gesture)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		r, err := sup.Write(set(gain3, lvl(t, 31), gesture)) // a ninth value
+		if err != nil || r.State != StateAtCap || r.Written || len(gainWrites(drv)) != 8 {
+			t.Fatalf("ninth value in a hold: %v %s written %v, writes %v", err, r.State, r.Written, gainWrites(drv))
+		}
+	})
+}
