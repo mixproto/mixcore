@@ -71,6 +71,9 @@ type Engine struct {
 	binder   atomic.Pointer[binderBox]
 	disc     discovery
 	demo     demoSlot
+	// onStateGoroutine is the dispatcher's goroutine id while it is inside
+	// OnState, 0 otherwise (reentry.go).
+	onStateGoroutine atomic.Int64
 
 	mu       sync.Mutex
 	sup      *console.Supervisor
@@ -177,6 +180,9 @@ func describe(cfg configJSON, drv driver.Driver, isDemo bool) (string, error) {
 // Stop disconnects and forgets the console. Start may be called again.
 func (e *Engine) Stop() (err error) {
 	defer safe.RecoverAsError(&err)
+	if e.inOnState() {
+		return codeErr(CodeBusy, nil)
+	}
 	if !e.stopSession(false) {
 		return codeErr(CodeNotStarted, nil)
 	}
@@ -205,6 +211,9 @@ func (e *Engine) stopSession(onlyDemo bool) bool {
 // state stays, with status "stopped". It never writes.
 func (e *Engine) Pause() (err error) {
 	defer safe.RecoverAsError(&err)
+	if e.inOnState() {
+		return codeErr(CodeBusy, nil)
+	}
 	sup, err := e.current()
 	if err != nil {
 		return err

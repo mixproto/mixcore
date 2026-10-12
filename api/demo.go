@@ -98,6 +98,9 @@ func (e *Engine) StartDemo(requestJSON string) (out string, err error) {
 // waits until its port is free and its goroutines have ended.
 func (e *Engine) StopDemo() (err error) {
 	defer safe.RecoverAsError(&err)
+	if e.inOnState() {
+		return codeErr(CodeBusy, nil)
+	}
 	e.stopSession(true)
 	e.demo.mu.Lock()
 	m := e.demo.mixer

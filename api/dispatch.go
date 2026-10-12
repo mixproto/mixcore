@@ -63,6 +63,8 @@ func (e *Engine) deliver(sup *console.Supervisor, seq *uint64) {
 
 // callListener contains a panic in app code: the dispatcher keeps running.
 func (e *Engine) callListener(l StateListener, msg string) {
+	e.onStateGoroutine.Store(goroutineID()) // calls back into Stop, Pause, StopDemo get ERR_BUSY
+	defer e.onStateGoroutine.Store(0)
 	defer func() {
 		if r := recover(); r != nil {
 			e.opts.Logger.Error("api: state listener panicked", "panic", r)

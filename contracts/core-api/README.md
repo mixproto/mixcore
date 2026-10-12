@@ -120,7 +120,9 @@ behave the same and a UI bug cannot bypass them:
 - `Log` is called from the log goroutine only. Console and channel names are user content and appear only at debug level.
 - `OnState` is called from one dedicated goroutine, one message at a time, in `seq` order. A slow listener never
   slows the console connection: changes are coalesced, and if too many pile up the next message is a full snapshot.
-  The listener must not call `Stop` or `Pause` synchronously from inside `OnState`.
+  `Stop`, `Pause` and `StopDemo` called from inside `OnState` (on the goroutine that runs it) return `ERR_BUSY` at
+  once and change nothing: they would wait for that very goroutine. Call them from the app's own thread; there they
+  wait as usual, even while `OnState` runs on the dispatcher. (v0.3)
 - A panic inside the engine is recovered and returned as `ERR_INTERNAL`; it never crosses the boundary.
 
 ## Safety rules the API enforces (apps do not need to re-implement them)
@@ -221,7 +223,7 @@ these codes (details go to the log, never to the user):
 | `ERR_ALREADY_STARTED` | `Start` while started |
 | `ERR_INTERNAL` | a bug; recovered panic |
 | `ERR_ROLE` | reserved for MixLink roles (not emitted in v0) |
-| `ERR_BUSY` | `Discover` while a probe is running |
+| `ERR_BUSY` | `Discover` while a probe is running; v0.3: `Stop`, `Pause` or `StopDemo` called from inside `OnState` (nothing changed; call again from the app's thread) |
 | `ERR_NETWORK` | discovery result: no socket could be opened or every probe send was refused (e.g. Local Network access denied); `StartDemo`: the loopback socket could not be opened |
 | `ERR_INVALID_ARGUMENT` | C binding only: a NULL pointer or a negative length from native code |
 | `ERR_NEEDS_CONFIRM` | v0.3: a `typed` raise of more than 6 dB without `confirmed` (CR-26); nothing was written |
@@ -270,7 +272,7 @@ rule therefore behaves exactly as with a console; there is no fake UI path.
 |---|---|---|
 | 1 | `StartDemo({"version":0,"family":"xair"})` | returns `{"version":0,"family":"xair","host":"127.0.0.1","port":52113,"name":"Demo"}` |
 | 2 | `Start({"version":0,"family":"xair","host":"127.0.0.1","port":52113,"meters":{"inputs":true}})` | as for any console; the session description and **every state message** carry `"demo": true` |
-| 3 | `Stop()`, then `StopDemo()` | `StopDemo()` alone also stops a session that targets the demo; like `Stop`, never call it from inside `OnState` |
+| 3 | `Stop()`, then `StopDemo()` | `StopDemo()` alone also stops a session that targets the demo; from inside `OnState` it returns `ERR_BUSY`, like `Stop` |
 
 Rules the core keeps:
 - **Loopback only.** The demo's socket is bound to `127.0.0.1`; the session to it uses sockets bound to `127.0.0.1`

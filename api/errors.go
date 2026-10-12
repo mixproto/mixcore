@@ -27,7 +27,7 @@ const (
 	CodeAlreadyStarted = "ERR_ALREADY_STARTED"
 	CodeInternal       = "ERR_INTERNAL"
 	CodeRole           = "ERR_ROLE"             // reserved for MixLink roles, not emitted in v0
-	CodeBusy           = "ERR_BUSY"             // a discovery is already running
+	CodeBusy           = "ERR_BUSY"             // a discovery is already running, or Stop/Pause/StopDemo from inside OnState
 	CodeNetwork        = "ERR_NETWORK"          // no socket could be opened or no probe sent (discovery result)
 	CodeInvalidArg     = "ERR_INVALID_ARGUMENT" // bindings only: NULL pointer or bad length from native code
 	CodeNeedsConfirm   = "ERR_NEEDS_CONFIRM"    // v0.3: typed raise over 6 dB without confirmed (CR-26)

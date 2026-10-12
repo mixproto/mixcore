@@ -32,7 +32,7 @@ numbers are part of the ABI and never change; new codes get new numbers.
 | 9 | `MIX_ERR_ALREADY_STARTED` | `ERR_ALREADY_STARTED` |
 | 10 | `MIX_ERR_INTERNAL` | `ERR_INTERNAL` (also: a recovered Go panic) |
 | 11 | `MIX_ERR_ROLE` | `ERR_ROLE` (reserved) |
-| 12 | `MIX_ERR_BUSY` | `ERR_BUSY` |
+| 12 | `MIX_ERR_BUSY` | `ERR_BUSY` (also `MixStop`, `MixPause`, `MixStopDemo` from inside the state callback, v0.3) |
 | 13 | `MIX_ERR_NETWORK` | `ERR_NETWORK` (only inside discovery results) |
 | 14 | `MIX_ERR_INVALID_ARGUMENT` | NULL pointer or negative length |
 | 15 | `MIX_ERR_NEEDS_CONFIRM` | `ERR_NEEDS_CONFIRM` (v0.3) |
@@ -75,7 +75,7 @@ If `capacity` is smaller than the frame, nothing is written and the needed lengt
 ## Threading
 - Every call may come from any thread and returns quickly; none does network I/O on the calling thread.
 - Each callback kind is called from one Go-owned thread at a time (state: the dispatcher; discovery: the probe;
-  log: the log goroutine). They must not block and must not call `MixStop`/`MixPause` from inside the callback.
+  log: the log goroutine). They must not block. `MixStop`, `MixPause` and `MixStopDemo` called from inside the state callback return `MIX_ERR_BUSY` at once and change nothing (v0.3); call them from the app's thread.
 - A panic anywhere in Go is recovered; it never crosses into the host process.
 
 ## Build
