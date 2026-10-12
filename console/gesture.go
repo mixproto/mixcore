@@ -56,6 +56,9 @@ func (s *Supervisor) prepareLocked(w *Write) (driver.Session, Result, error) {
 	if s.status != StatusLive || s.sess == nil || s.limited != "" {
 		return nil, Result{}, driver.ErrStale
 	}
+	if s.readOnlyLocked(w.Param) {
+		return nil, Result{}, fmt.Errorf("console: %s is read-only: %w", w.Param, driver.ErrUnsupported)
+	}
 	k := holdKey{param: w.Param, client: w.Origin.ClientID}
 	if s.holds.isEnded(w.Param, w.Origin.ClientID) {
 		return nil, Result{}, ErrGestureEnded
@@ -92,6 +95,20 @@ func (s *Supervisor) prepareLocked(w *Write) (driver.Session, Result, error) {
 	return s.sess, Result{Value: lv, State: st, Written: written, Window: win}, nil
 }
 
+// readOnlyLocked reports a parameter the core never writes, whatever the
+// value: headamp phantom, an input's headamp, and the Gain of a headamp
+// whose law or ownership is unconfirmed (capabilities writable false).
+func (s *Supervisor) readOnlyLocked(p model.ParamRef) bool {
+	switch {
+	case p.Field == model.FieldPhantom || p.Field == model.FieldHeadamp:
+		return true
+	case p.Strip.Kind != model.StripHeadamp:
+		return false
+	}
+	info, ok := s.caps.Headamp(p.Strip.Index)
+	return !ok || !info.Writable
+}
+
 // Hold starts (held = true) or ends (false) a person's gesture on a level
 // parameter (a fader or Gain). See HoldWindow.
 func (s *Supervisor) Hold(p model.ParamRef, origin driver.Origin, held bool) error {
@@ -115,6 +132,9 @@ func (s *Supervisor) HoldWindow(p model.ParamRef, origin driver.Origin, held boo
 	defer s.mu.Unlock()
 	if held && (s.status != StatusLive || s.limited != "") {
 		return Result{}, driver.ErrStale
+	}
+	if held && s.readOnlyLocked(p) {
+		return Result{}, fmt.Errorf("console: hold %s: read-only: %w", p, driver.ErrUnsupported)
 	}
 	delete(s.holds.ended, k)
 	delete(s.safe.windows, k)

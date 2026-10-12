@@ -298,3 +298,32 @@ func TestShowMode_UnlockOfAReadOnlyHeadampRefused(t *testing.T) {
 		}
 	})
 }
+
+// A read-only headamp (x32 AES50, xair aux) is refused in the core before
+// any rule, also when the value equals the console's (no write would leave
+// anyway): the UI learns at once that it can never set it.
+func TestHeadamp_ReadOnlyGainRefusedWhateverTheValue(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		caps := gainCaps
+		caps.Headamps = micHeadamps(3)
+		caps.Headamps[2].Writable = false
+		drv := &fakeDriver{snapshot: safetyState(-6), caps: caps}
+		sup, err := New(Config{Driver: drv, Rand: func() float64 { return 0.5 }, Options: driver.Options{Meters: &meters.Slot{}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sup.Start(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(sup.Stop)
+		synctest.Wait()
+		for _, db := range []float64{32.5, 30} {
+			if _, err := sup.Write(set(gain3, lvl(t, db), gesture)); !errors.Is(err, driver.ErrUnsupported) {
+				t.Errorf("%v dB on a read-only headamp: %v", db, err)
+			}
+		}
+		if _, err := sup.HoldWindow(gain3, gesture, true); !errors.Is(err, driver.ErrUnsupported) {
+			t.Errorf("hold on a read-only headamp: %v", err)
+		}
+	})
+}
