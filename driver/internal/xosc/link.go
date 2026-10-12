@@ -24,6 +24,9 @@ type link struct {
 	mu     sync.Mutex
 	cur    *session
 	closed bool
+	// inputs is the input strip count the first successful session read;
+	// every later session requires exactly those strips (XA-F72).
+	inputs int
 }
 
 var _ driver.Link = (*link)(nil)
@@ -65,6 +68,11 @@ func (l *link) Connect(ctx context.Context) (_ driver.Session, err error) {
 	if err := s.connect(ctx); err != nil {
 		return nil, fmt.Errorf("%s: connect %s: %w", l.drv.prof.Family, l.c.console, err)
 	}
+	l.mu.Lock()
+	if l.inputs == 0 {
+		l.inputs = s.inputs
+	}
+	l.mu.Unlock()
 	return s, nil
 }
 
@@ -91,6 +99,7 @@ func (l *link) begin() (*session, error) {
 	if l.closed { // Close raced with us
 		return nil, driver.ErrClosed
 	}
+	s.knownInputs = l.inputs
 	l.cur = s
 	return s, nil
 }

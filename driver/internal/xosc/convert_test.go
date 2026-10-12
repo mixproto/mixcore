@@ -327,7 +327,7 @@ func TestParamTable_OptionalStripsAndMainWithoutMembership(t *testing.T) {
 	}
 	for addr, wantStrip := range map[string]int{"/ch/12/mix/fader": 0, "/ch/13/mix/fader": 13, "/ch/16/grp/dca": 16, "/lr/mix/on": 0} {
 		p, ok := ps.byAddress([]byte(addr))
-		if !ok || p.strip != wantStrip || p.optional() != (wantStrip != 0) {
+		if !ok || p.strip != wantStrip {
 			t.Fatalf("%s: %+v, %v", addr, p, ok)
 		}
 	}

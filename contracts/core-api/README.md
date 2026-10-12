@@ -27,6 +27,7 @@ family (`docs/protocols/xair.md`); no call, binding signature or error code chan
 | Discovery | the family of a reply is told apart by its source port and model string | XA-F12..F14, XA-F70 |
 | Meters | per-family channel map; xair `n` = 18 (16 inputs, Main L/R), always "inputs, then Main L, Main R" | XA-F51..F53 |
 | Groups | xair: 4 mute groups, 4 DCAs; the main strip has no mute-group membership, so its `muteGroups` field is absent | XA section 3.1, 3.2 |
+| Strips | `absentInputs` in snapshots: input strips the mixer did not answer | XA-F72 |
 | Scene recall | signal `snapshotIndex` and field `loadedScene` (1..64) of `sceneRecalledAtConsole` | XA-F60..F62 |
 | Client limit | `limited` with the xair limit of 8 push clients | XA-F21 |
 
@@ -38,7 +39,8 @@ Per-family facts the apps need (no field carries them yet):
   raises nothing); it never loads, saves, names or deletes a snapshot, and no command here can make it do so, so slot 64
   (another app's data, XA-F63) is never touched.
 - **Small models**: an XR12 or XR16 that does not answer for an input strip connects with fewer input strips (XA-F72);
-  the UI takes the number of strips from the snapshot, never from the model name.
+  the snapshot lists the missing ones in `absentInputs`. The UI takes the number of strips from the snapshot, never from
+  the model name. The first connect of an engine probes the optional strips once; reconnects reuse the answer.
 
 ## Calls
 

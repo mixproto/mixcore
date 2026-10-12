@@ -259,3 +259,26 @@ func TestXAir_LoneSnapshotIndexEndsNoHold(t *testing.T) {
 		}
 	})
 }
+
+// XA-F72: input strips the mixer did not answer are listed in the snapshot.
+func TestXAir_SnapshotListsAbsentInputs(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		e := newXAirEnv(t, simxair.Options{InputChannels: 12})
+		desc, err := e.eng.Start(configXAir)
+		if err != nil || desc == "" {
+			t.Fatal(err)
+		}
+		time.Sleep(3 * time.Second)
+		synctest.Wait()
+		if err := e.eng.RequestSnapshot(); err != nil {
+			t.Fatal(err)
+		}
+		synctest.Wait()
+		e.rec.mu.Lock()
+		raw := e.rec.raw[len(e.rec.raw)-1]
+		e.rec.mu.Unlock()
+		if !strings.Contains(raw, `"absentInputs":[13,14,15,16]`) || len(e.rec.last().Strips) != 13 {
+			t.Fatalf("snapshot %s", raw)
+		}
+	})
+}

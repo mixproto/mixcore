@@ -89,3 +89,12 @@ func sceneEventsJSON(scenes []driver.SceneRecalled) []eventJSON {
 	}
 	return out
 }
+
+// absentInputsJSON lists the input strips the console did not answer (XA-F72).
+func absentInputsJSON(c model.Capabilities) []int {
+	out := make([]int, 0, max(c.AbsentInputs, 0))
+	for i := 1; i <= c.AbsentInputs; i++ {
+		out = append(out, c.InputCount+i)
+	}
+	return out
+}

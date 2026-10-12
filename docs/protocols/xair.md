@@ -471,9 +471,13 @@ behaviour above and has a test that pins it, so a hardware result changes one de
   limit, re-read, scene heuristic, conversions, meter sink, discovery); `driver/x32` and `driver/xair` are profiles of
   it (port, address layout, meter codec, scene markers, push limit). The x32 wire trace is pinned byte for byte by
   `driver/x32/testdata/wire_trace.golden`, the xair one by `driver/xair/testdata/wire_trace.golden`.
-- **Strips.** Inputs 1..12 must answer (every source agrees on them); inputs 13..16 are optional strips: a model that
-  does not answer one connects with the inputs below it (XA-F72, test item 12). Group membership of a missing strip
-  does not switch mute groups or DCAs off. Main is `/lr` without `grp/mute`; the model reports no main membership
+- **Strips.** Inputs 1..12 must answer (every source agrees on them); inputs 13..16 are optional strips (XA-F72, test
+  item 12). The first connect of a link reads everything else first, then one fader read per optional strip (5 tries,
+  about 1.5 s when strips are missing), then the rest of the strips that answered. The link remembers the count: on
+  every reconnect exactly those strips are required, so packet loss can delay a reconnect but never drop a real strip,
+  and a 12-input mixer reconnects without dead reads. Missing strips are logged at Warn and listed in the snapshot
+  (`absentInputs`) until the engine restarts. Group membership of a missing strip does not switch mute groups or DCAs
+  off. Main is `/lr` without `grp/mute`; the model reports no main membership
   (capability `MainMuteGroups` false) and the core API omits the field. 90 reads per full pass (section 12 estimate).
 - **Echo.** Plain `/xremote`, two sockets, unchanged from X32 (section 2 "Echo design"); tests run H1, H2 and H3.
 - **Meters.** `/meters ,si "/meters/1" 0` (XA-F57) with every `/xremote` renewal (3 s). A bank 1 blob is accepted

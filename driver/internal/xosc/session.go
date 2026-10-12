@@ -61,6 +61,9 @@ type session struct {
 	caps     model.Capabilities
 	absent   map[feature]bool // set during connect, read-only afterwards
 	inputs   int              // input strips of this console (XA-F72), set during connect
+	// knownInputs is the strip count an earlier session of the same link
+	// read (0: first connect); those strips are required (XA-F72).
+	knownInputs int
 
 	mu      sync.Mutex
 	order   []int                // pending parameter indexes, first-seen order

@@ -121,6 +121,14 @@
         }
       }
     },
+    "absentInputs": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "description": "v0.2, snapshot only, xair: input strips the family documents (16, XA-F71) that this mixer did not answer when the engine first connected (a small model, or a link too lossy to probe, XA-F72). They stay absent until Stop and Start; strips that answered once are never dropped on a reconnect. Absent when every documented input answered. UI: 'Inputs 13-16 not found on this mixer'."
+    },
     "changes": {
       "type": "array",
       "description": "diff only; present (possibly empty) in every diff. v0.1: when a mute, a group state or a membership changes, the core also lists every strip whose effectiveMute changed, as field effectiveMute with the origin of the change that caused it.",

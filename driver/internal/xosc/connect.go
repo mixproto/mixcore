@@ -60,7 +60,7 @@ func (s *session) connect(ctx context.Context) error {
 func (s *session) capabilities() model.Capabilities {
 	l := s.params.layout
 	c := model.Capabilities{
-		InputCount: s.inputs, HasMain: true, InputMeters: true,
+		InputCount: s.inputs, AbsentInputs: l.Inputs - s.inputs, HasMain: true, InputMeters: true,
 		EchoesOwnWrites: true, MaxPushClients: s.prof.MaxPushClients,
 	}
 	if !s.absent[featureMuteGroups] {
@@ -128,105 +128,6 @@ func ParseXinfo(m *osc.Message) (driver.Identity, error) {
 	return driver.Identity{Address: f[0], Name: f[1], Model: f[2], Firmware: f[3]}, nil
 }
 
-// readState tracks the initial read.
-type readState struct {
-	values []model.Value
-	have   []bool
-	sentAt []time.Time
-	tries  []int
-	gaveUp []bool // optional parameter the console did not answer
-	next   int    // next parameter to request
-	left   int    // parameters still without a value
-	flight int    // requested, not yet answered
-}
-
-// readAll requests every parameter with at most readWindow in flight and
-// re-requests unanswered ones. Pushes that arrive meanwhile count as answers.
-func (s *session) readAll(ctx context.Context) (model.State, error) {
-	n := len(s.params.all)
-	rs := &readState{values: make([]model.Value, n), have: make([]bool, n), sentAt: make([]time.Time, n),
-		tries: make([]int, n), gaveUp: make([]bool, n), left: n}
-	for rs.left > 0 {
-		s.requestMore(rs)
-		p, ok, err := s.next(ctx, s.timing.ReadRetryEvery)
-		if err != nil {
-			return model.State{}, fmt.Errorf("initial read, %d of %d values missing: %w", rs.left, n, err)
-		}
-		if ok {
-			s.acceptRead(rs, p)
-		}
-		s.retryReads(rs) // also while pushes keep arriving, or a lost reply is never re-requested
-	}
-	s.known = rs.values
-	s.inputs = s.answeredInputs(rs)
-	s.absent = s.absentFeatures(rs)
-	return s.buildState(rs.values)
-}
-
-// answeredInputs is the number of input strips that answered: the inputs
-// below the first optional strip with an unanswered name, fader or mute
-// (XA-F72). Strips above it are absent for the session, so the model's
-// inputs stay numbered 1..n.
-func (s *session) answeredInputs(rs *readState) int {
-	n := s.params.layout.Inputs
-	for i, p := range s.params.all {
-		if rs.gaveUp[i] && p.strip != 0 && p.feature == featureCore {
-			n = min(n, p.strip-1)
-		}
-	}
-	if n < s.params.layout.Inputs {
-		s.log.Info(s.name+": console does not answer some input strips; they are absent for this session", "inputs", n)
-	}
-	return n
-}
-
-// absentFeatures lists the features with a parameter the console did not
-// answer. Parameters of absent input strips do not count: a missing strip
-// must not switch mute groups or DCAs off for the strips that exist.
-func (s *session) absentFeatures(rs *readState) map[feature]bool {
-	out := map[feature]bool{}
-	for i, p := range s.params.all {
-		if !rs.gaveUp[i] || out[p.feature] || p.feature == featureCore || p.strip > s.inputs {
-			continue
-		}
-		out[p.feature] = true
-		s.log.Info(s.name+": console does not answer a parameter; feature off for this session", "addr", p.addr)
-	}
-	return out
-}
-
-func (s *session) requestMore(rs *readState) {
-	for rs.flight < ReadWindow && rs.next < len(rs.have) {
-		i := rs.next
-		rs.next++
-		if rs.have[i] {
-			continue
-		}
-		s.sendSub(s.params.all[i].addr) // X32-F04: read = address without arguments
-		rs.sentAt[i] = time.Now()
-		rs.tries[i]++
-		rs.flight++
-	}
-}
-
-func (s *session) retryReads(rs *readState) {
-	now := time.Now()
-	for i := range rs.next {
-		if rs.have[i] || rs.sentAt[i].IsZero() || now.Sub(rs.sentAt[i]) < s.timing.ReadRetryEvery {
-			continue
-		}
-		if s.params.all[i].optional() && rs.tries[i] >= optionalReadTries {
-			rs.have[i], rs.gaveUp[i] = true, true // unknown to this console (X32-F06, XA-F72)
-			rs.left--
-			rs.flight--
-			continue
-		}
-		s.sendSub(s.params.all[i].addr)
-		rs.sentAt[i] = now
-		rs.tries[i]++
-	}
-}
-
 func (s *session) acceptRead(rs *readState, p inPacket) {
 	if p.viaCmd || osc.Decode(p.data, &s.msg) != nil { // viaCmd: a late re-read reply of an earlier session
 		return
@@ -249,8 +150,11 @@ func (s *session) acceptRead(rs *readState, p inPacket) {
 		return
 	}
 	rs.have[i] = true
+	if !rs.inPass[i] {
+		return // a push of a parameter a later pass would have asked for
+	}
 	rs.left--
-	if !rs.sentAt[i].IsZero() {
+	if rs.sentInPass[i] {
 		rs.flight--
 	}
 }

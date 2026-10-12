@@ -293,9 +293,10 @@ type stateJSON struct {
 	LimitedReason string           `json:"limitedReason,omitempty"`
 	Console       *consoleJSON     `json:"console,omitempty"`
 	Strips        []stripStateJSON `json:"strips,omitempty"`
-	MuteGroups    []groupStateJSON `json:"muteGroups,omitempty"` // v0.1, snapshot only
-	DCAs          []groupStateJSON `json:"dcas,omitempty"`       // v0.1, snapshot only
-	Changes       *[]changeJSON    `json:"changes,omitempty"`    // present (maybe empty) in every diff
+	AbsentInputs  []int            `json:"absentInputs,omitempty"` // v0.2, snapshot only
+	MuteGroups    []groupStateJSON `json:"muteGroups,omitempty"`   // v0.1, snapshot only
+	DCAs          []groupStateJSON `json:"dcas,omitempty"`         // v0.1, snapshot only
+	Changes       *[]changeJSON    `json:"changes,omitempty"`      // present (maybe empty) in every diff
 	Events        []eventJSON      `json:"events,omitempty"`
 }
 
@@ -321,6 +322,7 @@ func encodeUpdate(u console.Update, seq uint64, full bool) ([]byte, error) {
 	id := u.Identity
 	out.Console = &consoleJSON{Address: id.Address, Name: id.Name, Model: id.Model, Firmware: id.Firmware}
 	out.Strips = stripsJSON(u.State, u.Capabilities)
+	out.AbsentInputs = absentInputsJSON(u.Capabilities)
 	out.MuteGroups, out.DCAs = groupStatesJSON(u.State.MuteGroups()), groupStatesJSON(u.State.DCAs())
 	return json.Marshal(out)
 }

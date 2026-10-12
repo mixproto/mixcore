@@ -71,9 +71,6 @@ type param struct {
 	strip int
 }
 
-// optional reports whether the console may leave p unanswered.
-func (p param) optional() bool { return p.feature != featureCore || p.strip != 0 }
-
 // paramTable maps between model parameters and console addresses.
 type paramTable struct {
 	all    []param // fixed read order: inputs, main, mute groups, DCAs
