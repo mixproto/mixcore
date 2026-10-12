@@ -95,6 +95,11 @@ type Update struct {
 	// Scenes are scene recalls detected at the console since the last Drain
 	// (never folded into Full, like Events).
 	Scenes []driver.SceneRecalled
+	// ShowMode is on (SR-27); Unlocked lists the headamps whose Gain raise is
+	// unlocked; UnlockEnded are unlocks that ended since the last Drain.
+	ShowMode    bool
+	Unlocked    []int
+	UnlockEnded []UnlockEvent
 }
 
 // Config configures a Supervisor.
@@ -106,6 +111,9 @@ type Config struct {
 	Meters   driver.MeterRequest // re-applied after every connect
 	Logger   *slog.Logger
 	Rand     func() float64 // jitter source in [0, 1); nil: math/rand/v2
+	// Safety are the phone safety defaults (slip guard, monitor ceiling, show
+	// mode); see safety.go.
+	Safety SafetyConfig
 	// RereadEvery is the background re-read interval while live (sessions
 	// that implement driver.Rereader). Zero: DefaultRereadEvery; negative: off.
 	RereadEvery time.Duration
@@ -129,6 +137,7 @@ type Supervisor struct {
 	state      model.State
 	sess       driver.Session
 	holds      holds
+	safe       safety
 	changes    []Change
 	eff        effective
 	scenes     []driver.SceneRecalled
@@ -165,7 +174,7 @@ func New(cfg Config) (*Supervisor, error) {
 	}
 	return &Supervisor{
 		cfg: cfg, notify: make(chan struct{}, 1),
-		holds: newHolds(),
+		holds: newHolds(), safe: newSafety(cfg.Safety),
 	}, nil
 }
 
@@ -207,6 +216,7 @@ func (s *Supervisor) halt(closeLink bool) {
 		s.wg.Wait()
 		s.mu.Lock()
 		s.holds.cancelAll(StatusStopped.String())
+		s.safe.unlocks.endAll(UnlockStopped)
 		s.setStatusLocked(StatusStopped, "stopped")
 		s.mu.Unlock()
 	}
@@ -228,8 +238,9 @@ func (s *Supervisor) Drain() Update {
 	if !s.full {
 		u.Changes, u.Effective = s.changes, s.eff.changes
 	}
-	u.Events, u.Scenes = s.holds.events, s.scenes
+	u.Events, u.Scenes, u.UnlockEnded = s.holds.events, s.scenes, s.safe.unlocks.events
 	s.changes, s.full, s.holds.events, s.eff.changes, s.scenes = nil, false, nil, nil, nil
+	s.safe.unlocks.events = nil
 	return u
 }
 
@@ -245,7 +256,8 @@ func (s *Supervisor) Snapshot() Update {
 func (s *Supervisor) snapshotLocked() Update {
 	s.seq++
 	return Update{Seq: s.seq, Status: s.status, Reason: s.reason, StaleSince: s.staleSince, Offline: s.offline,
-		Limited: s.limited != "", LimitedReason: s.limited, Identity: s.ident, Capabilities: s.caps, State: s.state}
+		Limited: s.limited != "", LimitedReason: s.limited, Identity: s.ident, Capabilities: s.caps, State: s.state,
+		ShowMode: s.safe.showMode, Unlocked: s.safe.unlocks.list()}
 }
 
 func (s *Supervisor) signal() {
@@ -360,6 +372,7 @@ func (s *Supervisor) adopt(sess driver.Session) {
 	s.sess = sess
 	s.ident = sess.Identity()
 	s.caps = sess.Capabilities()
+	s.safe.adoptState(s.state, sess.Snapshot())
 	s.state = sess.Snapshot()
 	s.changes = nil
 	s.eff.reset(s.state)
@@ -383,6 +396,7 @@ func (s *Supervisor) markStale(ctx context.Context, cause error) {
 		return // stopping: Stop sets the final status and cancels holds
 	}
 	s.holds.cancelAll(StatusStale.String())
+	s.safe.unlocks.endAll(UnlockStale)
 	reason := "connection lost"
 	if cause != nil {
 		reason = cause.Error()
@@ -435,6 +449,7 @@ func (s *Supervisor) handleEvent(ev driver.Event) {
 		s.cfg.Logger.Info("console: client limit hit, no updates", "limit", e.Limit, "reason", e.Reason)
 		s.limited = e.Reason
 		s.holds.cancelAll(ReasonLimited)
+		s.safe.unlocks.endAll(UnlockStale) // limited is stale for input (SR-05)
 		s.full = true
 		s.signal()
 	case driver.SceneRecalled:
@@ -463,6 +478,7 @@ func (s *Supervisor) applyChangeLocked(c Change) {
 	}
 	s.state = next
 	s.holds.external(c)
+	s.safe.noteChange(c)
 	if len(s.changes)+len(s.eff.changes) >= maxPendingChanges {
 		s.full = true
 	} else if !s.full {
@@ -474,31 +490,6 @@ func (s *Supervisor) applyChangeLocked(c Change) {
 	s.signal()
 }
 
-// Apply sends one user write to the console. It never queues: while the
-// state is not live it returns driver.ErrStale (rule 3). A write for a fader
-// whose gesture was ended returns ErrGestureEnded until a new hold-begin.
-func (s *Supervisor) Apply(cmd driver.Command) error {
-	if !cmd.Origin.MayWrite() {
-		return driver.ErrNotUserOrigin // rule 2
-	}
-	s.mu.Lock()
-	sess, status, limited := s.sess, s.status, s.limited != ""
-	ended := s.holds.isEnded(cmd.Param, cmd.Origin.ClientID)
-	s.mu.Unlock()
-	if status != StatusLive || sess == nil || limited {
-		return driver.ErrStale
-	}
-	if ended {
-		return ErrGestureEnded
-	}
-	err := sess.Apply(cmd)
-	if errors.Is(err, driver.ErrClosed) {
-		return driver.ErrStale // the session died between the check and the call
-	}
-	return err
-}
-
-// SetMeters changes the meter request now and for every future connection.
 func (s *Supervisor) SetMeters(req driver.MeterRequest) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

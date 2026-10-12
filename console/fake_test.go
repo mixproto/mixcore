@@ -24,12 +24,14 @@ type fakeDriver struct {
 	down      bool
 	flaky     bool // sessions are lost right after connect
 	snapshot  model.State
+	caps      model.Capabilities
+	law       driver.FaderLaw
 	sessions  []*fakeSession
 	connectAt []time.Time
 }
 
 func (d *fakeDriver) Family() driver.Family     { return "fake" }
-func (d *fakeDriver) FaderLaw() driver.FaderLaw { return nil }
+func (d *fakeDriver) FaderLaw() driver.FaderLaw { return d.law }
 
 func (d *fakeDriver) Connect(ctx context.Context, _ driver.Endpoint, _ driver.Options) (driver.Session, error) {
 	d.mu.Lock()
@@ -38,7 +40,7 @@ func (d *fakeDriver) Connect(ctx context.Context, _ driver.Endpoint, _ driver.Op
 	if d.down {
 		return nil, errRefused
 	}
-	s := &fakeSession{snapshot: d.snapshot, lost: make(chan struct{}), push: make(chan driver.Event, 16)}
+	s := &fakeSession{snapshot: d.snapshot, caps: d.caps, lost: make(chan struct{}), push: make(chan driver.Event, 16)}
 	d.sessions = append(d.sessions, s)
 	if d.flaky {
 		s.lose()
@@ -75,6 +77,7 @@ func (d *fakeDriver) attempts() []time.Time {
 
 type fakeSession struct {
 	snapshot model.State
+	caps     model.Capabilities
 	lost     chan struct{}
 	lostOnce sync.Once
 	push     chan driver.Event
@@ -87,7 +90,7 @@ type fakeSession struct {
 }
 
 func (s *fakeSession) Identity() driver.Identity        { return driver.Identity{Name: "fake"} }
-func (s *fakeSession) Capabilities() model.Capabilities { return model.Capabilities{} }
+func (s *fakeSession) Capabilities() model.Capabilities { return s.caps }
 func (s *fakeSession) Snapshot() model.State            { return s.snapshot }
 
 func (s *fakeSession) Run(ctx context.Context, events chan<- driver.Event) error {
