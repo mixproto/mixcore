@@ -210,6 +210,9 @@ func TestSession_EndToEndAgainstTheSimulator(t *testing.T) {
 		}
 		l.assertSafeWrites(t)
 		l.assertRestored(t)
+		if _, err := os.Stat(filepath.Join(dir, "snapshot.json")); err != nil { //nolint:gosec // G703: the test's own temp dir
+			t.Fatalf("the snapshot must be on disk: %v", err)
+		}
 	})
 }
 
@@ -296,6 +299,8 @@ func TestGuard_RefusesLouderAndUnknownWrites(t *testing.T) {
 		{"/ch/01/mix/on", osc.Int(1), errUnsafe}, {"/config/mute/6", osc.Int(0), errUnsafe},
 		{"/ch/09/mix/on", osc.Int(0), errNotAllowed}, {"/ch/02/mix/on", osc.Int(0), errNoSnapshot},
 		{"/ch/01/mix/fader", osc.Int(0), errUnsafe},
+		{"/ch/01/mix/on", osc.Int(-1), errUnsafe}, {"/config/mute/6", osc.Int(5), errUnsafe},
+		{"/ch/01/mix/fader", osc.Float(-0.1), errUnsafe},
 	} {
 		if err := g.check(tc.addr, tc.a); !errors.Is(err, tc.want) {
 			t.Errorf("%s %v: err = %v, want %v", tc.addr, tc.a, err, tc.want)
@@ -398,6 +403,37 @@ func TestFindConsole_DiscoverAndHost(t *testing.T) {
 		l.sim.Pause()
 		if _, err := findConsole(context.Background(), options{discover: true}, l.net.Host(labIP), io.Discard); !errors.Is(err, errUsage) {
 			t.Fatalf("nothing found: %v", err)
+		}
+	})
+}
+
+// A restore that cannot be verified (the console stopped answering) is
+// retried and then reported as not restored, never as done.
+func TestRestore_ReportsWhatCouldNotBeVerified(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		l := newLab(t, simx32.Options{})
+		w, err := openRaw(context.Background(), l.net.Host(labIP), netip.MustParseAddrPort(consoleIP+":10023"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer w.close()
+		var out bytes.Buffer
+		p := &prober{cfg: config{out: &out}, guard: newGuard(w, []int{1}, 6)}
+		if err := p.guard.snapshot(replyWait); err != nil {
+			t.Fatal(err)
+		}
+		if err := p.guard.write("/ch/01/mix/on", osc.Int(0)); err != nil {
+			t.Fatal(err)
+		}
+		synctest.Wait()
+		l.sim.Pause()
+		res := p.restore()
+		if len(res) != 1 || res[0].OK || !strings.Contains(out.String(), "NOT RESTORED") {
+			t.Fatalf("results %+v, output %q", res, out.String())
+		}
+		l.sim.Resume()
+		if res := p.restore(); len(res) != 1 || !res[0].OK {
+			t.Fatalf("second restore: %+v", res)
 		}
 	})
 }

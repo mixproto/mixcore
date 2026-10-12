@@ -46,6 +46,7 @@ func (s *session) connect(ctx context.Context) error {
 	}
 	s.snapshot = state
 	s.caps = s.capabilities()
+	s.lastPong = time.Now() // the answered reads prove the uplink as well as an /xinfo reply
 	return nil
 }
 
@@ -192,7 +193,7 @@ func (s *session) retryReads(rs *readState) {
 }
 
 func (s *session) acceptRead(rs *readState, p inPacket) {
-	if osc.Decode(p.data, &s.msg) != nil {
+	if p.viaCmd || osc.Decode(p.data, &s.msg) != nil { // viaCmd: a late re-read reply of an earlier session
 		return
 	}
 	par, ok := s.params.byAddress(s.msg.Address)

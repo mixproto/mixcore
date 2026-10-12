@@ -78,6 +78,11 @@ func TestSceneRecall_MarkerAloneAndNonScenes(t *testing.T) {
 		if ev, ok := nextOf[driver.SceneRecalled](events, time.Second); ok {
 			t.Fatalf("no scene expected, got %+v", ev)
 		}
+		_ = r.sim.SurfaceSet("/-show/prepos/current", osc.Int(3)) // browsing the scene list loads nothing (X32-F61)
+		if ev, ok := nextOf[driver.SceneRecalled](events, time.Second); ok {
+			t.Fatalf("a highlight alone is no recall, got %+v", ev)
+		}
+		time.Sleep(time.Second) // the stale highlight is not attached to the next recall
 		_ = r.sim.SurfaceSet("/-undo/time", osc.String("12:00:01"))
 		ev, ok := nextOf[driver.SceneRecalled](events, time.Second)
 		if !ok || ev.Confidence != driver.ConfidenceMedium || ev.HighlightedScene != driver.NoScene {

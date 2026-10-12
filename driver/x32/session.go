@@ -34,10 +34,11 @@ type pendingWrite struct {
 }
 
 type sentWrite struct {
-	arg     osc.Arg
-	origin  driver.Origin
-	at      time.Time
-	changes bool // the value differed from the newest one seen (client-limit evidence)
+	arg      osc.Arg
+	origin   driver.Origin
+	at       time.Time
+	changes  bool // the value differed from the newest one seen
+	evidence bool // its missing echo counts as client-limit evidence
 }
 
 // session is one live connection. Apply, SetMeters and Close may be called from
@@ -150,7 +151,7 @@ func (s *session) SetMeters(req driver.MeterRequest) error {
 func (s *session) Close() error {
 	s.closeOnce.Do(func() {
 		s.stopped.Store(true)
-		s.c.meters.enabled.Store(false)
+		s.c.meters.switchOn(false)
 		close(s.done)
 		s.dropPending()
 		if l := s.ownLink; l != nil {
@@ -287,7 +288,8 @@ func (s *session) flushPending() {
 			continue
 		}
 		idx := s.params.index(w.param.ref)
-		s.rememberSent(idx, sentWrite{arg: w.arg, origin: w.origin, at: now, changes: s.changesKnown(idx, w)})
+		s.rememberSent(idx, sentWrite{arg: w.arg, origin: w.origin, at: now, changes: s.changesKnown(idx, w),
+			evidence: w.param.feature == featureCore})
 		s.markTouched(idx)
 		if s.audit != nil {
 			s.audit(driver.WriteRecord{Param: w.param.ref, Address: w.param.addr, Origin: w.origin, At: now})

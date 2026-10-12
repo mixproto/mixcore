@@ -50,7 +50,8 @@ const (
 var errUsage = errors.New("mixprobe: usage")
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// Every catchable way a terminal session ends restores the snapshot.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
 	defer stop()
 	if err := runMain(ctx, os.Args[1:], os.Stdin, os.Stdout, osListen); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -148,6 +149,7 @@ func runMain(ctx context.Context, args []string, in io.Reader, out io.Writer, li
 }
 
 func runAndReport(ctx context.Context, cfg config, outDir string) error {
+	cfg.outDir = outDir
 	rep, runErr := run(ctx, cfg)
 	if err := rep.write(outDir); err != nil {
 		return errors.Join(runErr, err)

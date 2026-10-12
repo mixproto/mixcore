@@ -5,6 +5,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -21,6 +22,9 @@ const (
 	downOnly direction = iota + 1 // fader level, mix/on (1 = on): never above the snapshot
 	upOnly                        // mute group state (1 = engaged = muting): never below it
 )
+
+// restoreRounds: a lost packet or a console still booting gets more tries.
+const restoreRounds = 3
 
 var (
 	errNotAllowed = errors.New("mixprobe: parameter is not in the allowed set")
@@ -107,6 +111,9 @@ func (g *guard) check(addr string, a osc.Arg) error {
 }
 
 func safeDirection(p *guarded, a osc.Arg) bool {
+	if !inDomain(a) {
+		return false
+	}
 	switch {
 	case a.Type == osc.TypeFloat && p.dir == downOnly:
 		return a.Float <= p.snap.Float
@@ -134,6 +141,40 @@ func (g *guard) touchAll() {
 	}
 }
 
+// inDomain: switches are 0 or 1 (X32-F33, X32-F35), levels 0..1 (X32-F32).
+func inDomain(a osc.Arg) bool {
+	switch a.Type {
+	case osc.TypeInt:
+		return a.Int == 0 || a.Int == 1
+	case osc.TypeFloat:
+		return a.Float >= 0 && a.Float <= 1 // false for NaN
+	default:
+		return false
+	}
+}
+
+// save writes the snapshot to dir/snapshot.json so a killed session can be
+// put back by hand.
+func (g *guard) save(dir string) error {
+	snap := map[string]string{}
+	for _, p := range g.params {
+		snap[p.addr] = argString(p.snap)
+	}
+	b, err := json.MarshalIndent(snap, "", "  ")
+	if err != nil {
+		return fmt.Errorf("mixprobe: encode snapshot: %w", err)
+	}
+	root, err := openReportDir(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	if err := root.WriteFile("snapshot.json", b, 0o600); err != nil {
+		return fmt.Errorf("mixprobe: write snapshot: %w", err)
+	}
+	return nil
+}
+
 // write sends a guarded write from the write socket.
 func (g *guard) write(addr string, a osc.Arg) error {
 	if err := g.check(addr, a); err != nil {
@@ -151,23 +192,39 @@ type restoreResult struct {
 }
 
 // restore writes the snapshot value of every parameter written since the
-// snapshot and reads it back. It is safe to call more than once.
+// snapshot and reads it back, in up to restoreRounds rounds. It returns one
+// result per parameter (the last attempt) and is safe to call more than once.
 func (g *guard) restore(wait time.Duration) []restoreResult {
-	var out []restoreResult
-	for _, p := range g.params {
-		if !p.dirty {
-			continue
-		}
-		r := restoreResult{Address: p.addr, Value: argString(p.snap)}
-		if err := g.w.send(p.addr, p.snap); err == nil {
-			if back, ok, _ := g.w.read(p.addr, wait); ok {
-				r.ReadBack, r.OK = argString(back), back.Equal(p.snap)
+	byAddr := map[string]restoreResult{}
+	var order []string
+	for range restoreRounds {
+		for _, p := range g.params {
+			if !p.dirty {
+				continue
 			}
+			if _, seen := byAddr[p.addr]; !seen {
+				order = append(order, p.addr)
+			}
+			byAddr[p.addr] = g.restoreOne(p, wait)
 		}
-		if r.OK {
-			p.dirty = false
-		}
-		out = append(out, r)
+	}
+	out := make([]restoreResult, 0, len(order))
+	for _, a := range order {
+		out = append(out, byAddr[a])
 	}
 	return out
+}
+
+func (g *guard) restoreOne(p *guarded, wait time.Duration) restoreResult {
+	r := restoreResult{Address: p.addr, Value: argString(p.snap)}
+	g.w.drain() // drop late replies, so the read-back is this one's
+	if err := g.w.send(p.addr, p.snap); err == nil {
+		if back, ok, _ := g.w.read(p.addr, wait); ok {
+			r.ReadBack, r.OK = argString(back), back.Equal(p.snap)
+		}
+	}
+	if r.OK {
+		p.dirty = false
+	}
+	return r
 }

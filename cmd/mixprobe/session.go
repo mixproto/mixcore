@@ -32,6 +32,7 @@ type config struct {
 	listen    driver.ListenPacketFunc
 	prompt    Prompter
 	out       io.Writer
+	outDir    string // report directory; the snapshot is written there before the first write
 }
 
 // prober runs the checks of one session.
@@ -56,10 +57,7 @@ func run(ctx context.Context, cfg config) (rep *Report, err error) {
 	}
 	defer w.close()
 	p := &prober{cfg: cfg, rep: rep, w: w, guard: newGuard(w, cfg.channels, cfg.muteGroup)}
-	defer func() {
-		rep.Restored = p.guard.restore(restoreWait)
-		p.say("Restored %d parameter(s) to their snapshot values.", len(rep.Restored))
-	}()
+	defer func() { rep.Restored = p.restore() }()
 	if err := p.preflight(ctx); err != nil {
 		rep.Aborted = err.Error()
 		return rep, err
@@ -87,8 +85,29 @@ func (p *prober) preflight(ctx context.Context) error {
 	if err := p.guard.snapshot(replyWait); err != nil {
 		return err
 	}
-	p.say("Snapshot taken of %d parameter(s); they are restored at the end and on Ctrl-C.", len(p.guard.params))
+	if err := p.guard.save(p.cfg.outDir); err != nil {
+		return errors.Join(errAborted, err) // nothing written yet: no restore possible without it on disk
+	}
+	p.say("Snapshot of %d parameter(s) saved to %s/snapshot.json; restored at the end and on Ctrl-C.", len(p.guard.params), p.cfg.outDir)
 	return nil
+}
+
+// restore puts back every written parameter and says loudly what failed.
+func (p *prober) restore() []restoreResult {
+	res := p.guard.restore(restoreWait)
+	var failed []string
+	for _, r := range res {
+		if !r.OK {
+			failed = append(failed, r.Address+" (snapshot "+r.Value+", read back "+r.ReadBack+")")
+		}
+	}
+	if len(failed) == 0 {
+		p.say("Restored %d parameter(s) to their snapshot values (verified by read-back).", len(res))
+		return res
+	}
+	p.say("\n!!! NOT RESTORED: %d parameter(s). Set them on the console by hand (values in snapshot.json):\n  %s",
+		len(failed), strings.Join(failed, "\n  "))
+	return res
 }
 
 func (p *prober) phases() []func(context.Context) error {

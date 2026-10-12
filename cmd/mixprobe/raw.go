@@ -138,6 +138,18 @@ func (c *rawClient) collect(d time.Duration) ([]rxMsg, error) {
 	return out, nil
 }
 
+// drainWait is how long drain waits for each queued packet.
+const drainWait = time.Millisecond
+
+// drain drops every packet already queued on the socket.
+func (c *rawClient) drain() {
+	for {
+		if _, ok, err := c.recv(drainWait); err != nil || !ok {
+			return
+		}
+	}
+}
+
 // waitFor returns the first message with address addr within wait.
 func (c *rawClient) waitFor(addr string, wait time.Duration) (rxMsg, bool, error) {
 	deadline := time.Now().Add(wait)

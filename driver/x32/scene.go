@@ -34,6 +34,7 @@ type sceneState struct {
 	first, last time.Time
 	burst, undo bool
 	scene       int // highlighted scene pushed, or driver.NoScene
+	sceneAt     time.Time
 }
 
 func newSceneState() sceneState {
@@ -61,11 +62,14 @@ func (s *session) onMarker(at time.Time) bool {
 	case s.msg.AddressIs(addrUndoTime):
 		s.scene.undo = true
 	case s.msg.AddressIs(addrPrepos):
-		v, ok := s.msg.IntArg(0)
-		if !ok {
-			return true
+		// X32-F61: the highlight moves while the engineer browses the scene
+		// list, so it is a hint for a recall the other signals found, never
+		// a signal of its own.
+		if v, ok := s.msg.IntArg(0); ok {
+			s.scene.scene, s.scene.sceneAt = int(v), at
 		}
-		s.scene.scene = int(v)
+		s.onPush()
+		return true
 	default:
 		return false
 	}
@@ -77,6 +81,9 @@ func (s *session) onMarker(at time.Time) bool {
 func (s *session) sceneSignal(at time.Time) {
 	if !s.scene.open {
 		s.scene.open, s.scene.first = true, at
+		if at.Sub(s.scene.sceneAt) > sceneMaxWindow {
+			s.scene.scene = driver.NoScene // a highlight from browsing long before
+		}
 	}
 	s.scene.last = at
 }
@@ -96,11 +103,10 @@ func (s *session) sceneTick(now time.Time) {
 }
 
 func sceneConfidence(sc *sceneState) string {
-	marker := sc.undo || sc.scene != driver.NoScene
 	switch {
-	case sc.burst && marker:
+	case sc.burst && sc.undo:
 		return driver.ConfidenceHigh
-	case marker:
+	case sc.undo:
 		return driver.ConfidenceMedium
 	default:
 		return driver.ConfidenceLow

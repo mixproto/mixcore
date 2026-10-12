@@ -99,9 +99,14 @@ func TestLimit_NoEchoOfOwnWrites(t *testing.T) {
 		}
 		stopOthers()
 		time.Sleep(simx32.DefaultSubscriptionTTL + DefaultTiming.RenewEvery) // their slots expire, our renewal gets one
+		before := len(reads(r.sim, "/ch/32/config/name"))
 		_ = r.sim.SurfaceSet("/ch/05/mix/on", osc.Int(0))
 		if _, ok := nextOf[driver.ClientLimitCleared](events, time.Second); !ok {
 			t.Fatal("a push must clear the limit")
+		}
+		time.Sleep(rereadPassTime)
+		if len(reads(r.sim, "/ch/32/config/name")) == before {
+			t.Fatal("clearing the limit must re-read what was never pushed")
 		}
 	})
 }
@@ -125,6 +130,26 @@ func TestLimit_UnchangedWritesDoNotCount(t *testing.T) {
 
 // passTime is longer than one paced re-read pass over every parameter.
 var passTime = rereadPassTime
+
+// Group and DCA mutes are not yet confirmed to be pushed on hardware
+// (X32-F35, X32-F37): their missing echoes never count.
+func TestLimit_GroupWritesDoNotCount(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t, simx32.Options{})
+		r.fillSlots(simx32.DefaultMaxPushClients)
+		sess := r.connect()
+		events, _ := r.run(sess)
+		for g := 1; g <= 4; g++ {
+			if err := sess.Apply(driver.Command{Param: grp(model.StripMuteGroup, g), Value: model.Bool(true), Origin: gesture}); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		if _, ok := nextOf[driver.ClientLimitHit](events, DefaultTiming.EchoWindow+time.Second); ok {
+			t.Fatal("group writes must not mark the session limited")
+		}
+	})
+}
 
 // Two re-read passes in a row that find changes no push announced.
 func TestLimit_RereadsFindUnpushedChanges(t *testing.T) {

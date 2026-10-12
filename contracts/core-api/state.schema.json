@@ -227,7 +227,7 @@
                   "medium",
                   "low"
                 ],
-                "description": "high: a burst and a scene marker; medium: a scene marker alone; low: a burst alone (another app changing many parameters at once looks the same)."
+                "description": "high: a burst and the console's undo checkpoint (/-undo/time); medium: the undo checkpoint alone; low: a burst alone (another app changing many parameters at once looks the same). The highlighted scene alone never raises the event."
               },
               "signals": {
                 "type": "array",

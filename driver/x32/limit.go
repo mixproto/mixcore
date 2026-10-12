@@ -38,6 +38,7 @@ func (s *session) onPush() {
 		s.lim.limited = false
 		s.log.Info("x32: updates arrive again")
 		s.emit(driver.ClientLimitCleared{})
+		s.startReread(time.Now()) // changes made while we were not served were never pushed
 	}
 }
 
@@ -51,7 +52,7 @@ func (s *session) expireUnechoed(now time.Time) {
 			switch {
 			case now.Sub(w.at) <= s.timing.EchoWindow:
 				keep = append(keep, w)
-			case w.changes:
+			case w.changes && w.evidence:
 				s.lim.unechoed++
 			}
 		}

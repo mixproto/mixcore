@@ -219,13 +219,13 @@ type ClientLimitCleared struct{}
 
 // Scene recall confidences and signals (SceneRecalled).
 const (
-	ConfidenceHigh   = "high"   // a burst and a scene marker
-	ConfidenceMedium = "medium" // a scene marker alone
+	ConfidenceHigh   = "high"   // a burst and the undo checkpoint
+	ConfidenceMedium = "medium" // the undo checkpoint alone
 	ConfidenceLow    = "low"    // a burst alone
 
 	SignalBurst            = "burst"            // many parameters pushed within a short window
 	SignalUndoTime         = "undoTime"         // the console's undo checkpoint changed
-	SignalHighlightedScene = "highlightedScene" // the highlighted scene changed
+	SignalHighlightedScene = "highlightedScene" // the highlighted scene changed (a hint, never a signal alone)
 
 	NoScene = -1 // HighlightedScene when the console did not report one
 )

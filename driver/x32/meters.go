@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"math"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -42,7 +43,10 @@ var (
 // meterSink decodes meter packets in the subscription reader goroutine and
 // publishes them. It owns its frame and message; nothing here allocates.
 type meterSink struct {
-	slot    *meters.Slot
+	slot *meters.Slot
+	// mu orders publishing with switching off: once switchOn(false) returns,
+	// no frame is published, so a Slot.Reset after it stays empty.
+	mu      sync.Mutex
 	enabled atomic.Bool
 	reset   atomic.Bool // set when meters are switched on: forget old levels first
 	frame   meters.Frame
@@ -53,6 +57,8 @@ func newMeterSink(slot *meters.Slot) *meterSink { return &meterSink{slot: slot} 
 
 // switchOn enables publishing; levels of a previous session are dropped.
 func (m *meterSink) switchOn(on bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if on {
 		m.reset.Store(true)
 	}
@@ -67,6 +73,11 @@ func (m *meterSink) handle(pkt []byte, at time.Time) bool {
 	}
 	if m.slot == nil || !m.enabled.Load() {
 		return true // meters keep arriving for up to 10 s after we stop renewing (X32-F50)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.enabled.Load() {
+		return true // switched off meanwhile
 	}
 	if m.reset.CompareAndSwap(true, false) {
 		m.silence()
