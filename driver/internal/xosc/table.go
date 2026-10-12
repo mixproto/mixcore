@@ -6,6 +6,7 @@ package xosc
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/mixproto/mixcore/internal/osc"
 	"github.com/mixproto/mixcore/model"
@@ -35,6 +36,22 @@ type Layout struct {
 	MainMuteGroups bool
 	MuteGroups     int // /config/mute/1..N (X32-F35, XA section 3.1)
 	DCAs           int // /dca/1..N/on (X32-F37, XA section 3.1)
+	// Headamps are /headamp/01../headamp/NN/gain with the linear law
+	// dB = HeadampMinDB + (HeadampMaxDB - HeadampMinDB) * f in steps of
+	// HeadampStepDB (xair: XA section 3.4 and 4). Each is an optional unit
+	// like inputs above RequiredInputs. 0: no Gain (x32, open question 44).
+	Headamps      int
+	HeadampMinDB  float64
+	HeadampMaxDB  float64
+	HeadampStepDB float64
+}
+
+// headampSteps is the number of wire steps of the Gain law (xair mic: 144).
+func (l Layout) headampSteps() int {
+	if l.HeadampStepDB <= 0 {
+		return 0
+	}
+	return int(math.Round((l.HeadampMaxDB - l.HeadampMinDB) / l.HeadampStepDB))
 }
 
 // conv is how a parameter's wire value maps to the model.
@@ -46,6 +63,7 @@ const (
 	convEngaged                  // int, 1 = engaged: model mute = wire 1 (X32-F35)
 	convName                     // string (X32-F31)
 	convMask                     // int bitmap 0..maxMask (X32-F36, X32-F38)
+	convGain                     // float 0..1, linear Gain law of the layout (XA section 4)
 )
 
 // feature groups parameters that only exist together; if the console does
@@ -69,6 +87,11 @@ type param struct {
 	readOnly bool
 	// strip is the input index of an optional strip (XA-F72), 0 otherwise.
 	strip int
+	// headamp is the index of a headamp (an optional unit), 0 otherwise.
+	headamp int
+	// gainMin, gainStep and gainSteps describe convGain.
+	gainMin, gainStep float64
+	gainSteps         int
 }
 
 // paramTable maps between model parameters and console addresses.
@@ -108,6 +131,11 @@ func newParamTable(l Layout) paramTable {
 	for d := 1; d <= l.DCAs; d++ {
 		t.add(param{ref: pref(model.StripRef{Kind: model.StripDCA, Index: d}, model.FieldMute),
 			addr: fmt.Sprintf("/dca/%d/on", d), typ: osc.TypeInt, conv: convOnSwitch, feature: featureDCAs})
+	}
+	for h := 1; h <= l.Headamps; h++ { // two digits (XA section 3.4)
+		t.add(param{ref: pref(model.StripRef{Kind: model.StripHeadamp, Index: h}, model.FieldGain),
+			addr: fmt.Sprintf("/headamp/%02d/gain", h), typ: osc.TypeFloat, conv: convGain, headamp: h,
+			gainMin: l.HeadampMinDB, gainStep: l.HeadampStepDB, gainSteps: l.headampSteps()})
 	}
 	return t
 }
@@ -162,3 +190,19 @@ func (d *Driver) Address(ref model.ParamRef) (string, bool) {
 	p, ok := d.params.byRef(ref)
 	return p.addr, ok
 }
+
+// Codec converts the values of one parameter to and from the wire, with the
+// driver's own conversions (round-trip tests at range ends, AC-PS-20).
+type Codec struct{ p param }
+
+// Codec returns the codec of a model parameter.
+func (d *Driver) Codec(ref model.ParamRef) (Codec, bool) {
+	p, ok := d.params.byRef(ref)
+	return Codec{p: p}, ok
+}
+
+// ToWire converts an engineering value to the wire argument.
+func (c Codec) ToWire(v model.Value) (osc.Arg, error) { return toWire(c.p, v) }
+
+// FromWire converts a wire argument to an engineering value.
+func (c Codec) FromWire(a osc.Arg) (model.Value, error) { return fromWire(c.p, a) }

@@ -515,6 +515,11 @@ behaviour above and has a test that pins it, so a hardware result changes one de
   (`absentInputs`) until the engine restarts. Group membership of a missing strip does not switch mute groups or DCAs
   off. Main is `/lr` without `grp/mute`; the model reports no main membership
   (capability `MainMuteGroups` false) and the core API omits the field. 90 reads per full pass (section 12 estimate).
+- **Gain (core API v0.3, CR-23).** `/headamp/01..16/gain` with the mic law of section 4 (dB = -12 + 72 f, 145 steps
+  of 0.5 dB), as headamp strips; each headamp is probed once per link like inputs 13..16, so an XR16 connects with 8
+  and an XR12 with 4 (XA-F73). A value outside -12..+60 dB is refused, never clamped, and only +60 dB encodes to the
+  wire maximum. Line inputs 17..24 (other law) and the channel-to-headamp routing (`insrc`, `[TO-VERIFY]`) are not
+  modelled yet, so Gain is per headamp, not per channel.
 - **Echo.** Plain `/xremote`, two sockets, unchanged from X32 (section 2 "Echo design"); tests run H1, H2 and H3.
 - **Meters.** `/meters ,si "/meters/1" 0` (XA-F57) with every `/xremote` renewal (3 s). A bank 1 blob is accepted
   only if its count fits the blob and reaches Main R (value 37); values 0..15 and 36/37 are converted (v/256 dBFS,

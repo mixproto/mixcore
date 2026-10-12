@@ -62,6 +62,7 @@ func (s *session) capabilities() model.Capabilities {
 	l := s.params.layout
 	c := model.Capabilities{
 		InputCount: s.inputs, AbsentInputs: l.Inputs - s.inputs, HasMain: true, InputMeters: true,
+		Headamps:        s.headamps,
 		EchoesOwnWrites: true, MaxPushClients: s.prof.MaxPushClients,
 	}
 	if !s.absent[featureMuteGroups] {
@@ -71,13 +72,17 @@ func (s *session) capabilities() model.Capabilities {
 	if !s.absent[featureDCAs] {
 		c.DCAs = l.DCAs
 	}
+	if s.headamps > 0 {
+		c.HeadampMinDB, c.HeadampMaxDB, c.HeadampStepDB = l.HeadampMinDB, l.HeadampMaxDB, l.HeadampStepDB
+	}
 	return c
 }
 
 // isAbsent reports whether p belongs to a feature or an input strip this
 // console did not answer for (never faked).
 func (s *session) isAbsent(p param) bool {
-	return s.absent[p.feature] || p.ref.Strip.Kind == model.StripInput && p.ref.Strip.Index > s.inputs
+	return s.absent[p.feature] || p.ref.Strip.Kind == model.StripInput && p.ref.Strip.Index > s.inputs ||
+		p.headamp > s.headamps
 }
 
 // next waits up to wait for a packet. ok is false on timeout.
@@ -174,6 +179,7 @@ func (s *session) buildState(values []model.Value) (model.State, error) {
 	}
 	l := s.params.layout
 	st = st.WithGroups(groupCount(s.absent[featureMuteGroups], l.MuteGroups), groupCount(s.absent[featureDCAs], l.DCAs))
+	st = st.WithHeadamps(make([]float64, s.headamps))
 	for i, p := range s.params.all {
 		if s.isAbsent(p) {
 			continue

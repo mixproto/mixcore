@@ -23,6 +23,12 @@ const (
 	dcaCount = 4
 	// snapshots: /-snap/index is 1..64 (XA-F60).
 	snapshots = 64
+	// micHeadamps: /headamp/01..16 are the mic preamps (XA-F73).
+	micHeadamps = 16
+	// Mic gain law (XA section 4): dB = -12 + 72 f, 145 steps of 0.5 dB.
+	micGainMinDB  = -12.0
+	micGainMaxDB  = 60.0
+	micGainStepDB = 0.5
 
 	meterBank1    = "/meters/1"    // XA-F53
 	addrSnapIndex = "/-snap/index" // XA-F60, XA-F61: the dashed path every client uses

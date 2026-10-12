@@ -398,3 +398,25 @@ func TestSim_SlotForAnySenderOption(t *testing.T) {
 		}
 	})
 }
+
+// XA section 3.4 and 4, XA-F73: mic headamps 01..16 (fewer on small models),
+// gain on 145 steps of 0.5 dB; no line headamps are modelled.
+func TestSim_HeadampGain(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := runSim(t, Options{MicHeadamps: 8})
+		c := h.client("10.0.0.2")
+		for addr, want := range map[string]bool{"/headamp/01/gain": true, "/headamp/08/gain": true, "/headamp/09/gain": false, "/headamp/17/gain": false} {
+			if _, ok := c.read(addr); ok != want {
+				t.Errorf("%s answered = %t", addr, ok)
+			}
+		}
+		c.send("/headamp/02/gain", osc.Float(0.6292)) // between steps 90 and 91 of 144
+		synctest.Wait()
+		if v, _ := h.sim.Value("/headamp/02/gain"); v.Float != float32(91.0/144) {
+			t.Fatalf("stored %v, want step 91", v.Float)
+		}
+		if v, _ := h.sim.Value("/headamp/01/gain"); v.Float != float32(24.0/144) {
+			t.Fatalf("initial gain %v, want 0 dB", v.Float)
+		}
+	})
+}

@@ -155,6 +155,10 @@ func toWire(p param, v model.Value) (osc.Arg, error) {
 		s, _ := v.Text()
 		n, err := nameToWire(s)
 		return osc.String(n), err
+	case convGain:
+		db, _ := v.DB()
+		f, err := gainToWire(p, db)
+		return osc.Float(f), err
 	default: // membership is read-only (Apply refuses it before)
 		return osc.Arg{}, fmt.Errorf("%s is read-only: %w", p.addr, model.ErrInvalidValue)
 	}
@@ -177,7 +181,39 @@ func fromWire(p param, a osc.Arg) (model.Value, error) {
 		return model.Bool(m), err
 	case convMask:
 		return maskFromWire(p, a.Int)
+	case convGain:
+		db, err := gainFromWire(p, a.Float)
+		if err != nil {
+			return model.Value{}, err
+		}
+		return model.Level(db)
 	default:
 		return model.Text(nameFromWire(a.Bytes))
 	}
+}
+
+// gainToWire converts Gain in dB to the wire float k/steps (XA section 4).
+// A value outside the range is an error, never clamped (phone-safety.md 5.1:
+// "Out of range: error, no clamp"). It rounds to the nearest console step,
+// except that only the range maximum itself encodes to the wire maximum
+// (AC-PS-20).
+func gainToWire(p param, db float64) (float32, error) {
+	top := p.gainMin + float64(p.gainSteps)*p.gainStep
+	if math.IsNaN(db) || db < p.gainMin || db > top {
+		return 0, fmt.Errorf("gain %v dB outside %v..%v: %w", db, p.gainMin, top, model.ErrInvalidValue)
+	}
+	k := int(math.Round((db - p.gainMin) / p.gainStep))
+	if k == p.gainSteps && db < top {
+		k--
+	}
+	return float32(float64(k) / float64(p.gainSteps)), nil
+}
+
+// gainFromWire converts a wire float to Gain in dB on the console's step.
+func gainFromWire(p param, f float32) (float64, error) {
+	if math.IsNaN(float64(f)) || f < 0 || f > 1 {
+		return 0, fmt.Errorf("gain wire %v: %w", f, errBadWire)
+	}
+	k := math.Round(float64(f) * float64(p.gainSteps))
+	return p.gainMin + k*p.gainStep, nil
 }

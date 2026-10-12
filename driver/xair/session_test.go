@@ -39,7 +39,7 @@ func TestConnect_ReadsFullStateAndSendsNoWrites(t *testing.T) {
 		if id.Model != "MR18V2" || id.Name != "XR18-1D-DA-B4" || id.Firmware != "1.22" || id.Address != mixerIP {
 			t.Fatalf("identity %+v", id)
 		}
-		want := model.Capabilities{InputCount: 16, HasMain: true, MuteGroups: 4, DCAs: 4, MainMuteGroups: false,
+		want := model.Capabilities{Headamps: 16, HeadampMinDB: -12, HeadampMaxDB: 60, HeadampStepDB: 0.5, InputCount: 16, HasMain: true, MuteGroups: 4, DCAs: 4, MainMuteGroups: false,
 			InputMeters: true, EchoesOwnWrites: true, MaxPushClients: 8}
 		if c := sess.Capabilities(); c != want {
 			t.Fatalf("capabilities %+v, want %+v", c, want)
@@ -95,8 +95,8 @@ func TestMain_HasNoMuteGroupMembership(t *testing.T) {
 				t.Errorf("%v -> %s, want %s", addr, got, want)
 			}
 		}
-		if n := len(r.drv.Addresses()); n != 16*5+2+4+4 {
-			t.Fatalf("%d addresses; xair.md section 12 estimates 90 reads for the v1 table", n)
+		if n := len(r.drv.Addresses()); n != 16*5+2+4+4+16 {
+			t.Fatalf("%d addresses; 90 reads of the v1 table (xair.md section 12) plus 16 headamp gains", n)
 		}
 	})
 }

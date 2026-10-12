@@ -28,6 +28,11 @@
 //   - Strips (section 3): 16 inputs /ch/01..16, main /lr with no mute-group
 //     membership, 4 mute groups, 4 DCAs. Inputs 13..16 are optional: a small
 //     model that does not answer them connects with fewer inputs (XA-F72).
+//   - Gain: /headamp/01..16/gain, the mic preamps, dB = -12 + 72 f in 145
+//     steps of 0.5 dB (XA section 3.4 and 4); fewer on XR16 (8) and XR12 (4),
+//     probed once per link (XA-F73). Line inputs 17..24 are not modelled.
+//     Which channel a headamp feeds (insrc) is unverified, so Gain is per
+//     headamp strip, not per channel.
 //   - Meters: one bank, /meters/1, int16 LE in 1/256 dB; frame = 16 inputs
 //     then Main L/R from values 36/37 (XA-F51..F53).
 //   - Scene recall: no dedicated message; a burst of pushes raises
@@ -85,6 +90,7 @@ var profile = xosc.Profile{
 	Layout: xosc.Layout{
 		Inputs: inputChannels, RequiredInputs: requiredInputs, MainRoot: "/lr", MainMuteGroups: false,
 		MuteGroups: muteGroupCount, DCAs: dcaCount,
+		Headamps: micHeadamps, HeadampMinDB: micGainMinDB, HeadampMaxDB: micGainMaxDB, HeadampStepDB: micGainStepDB,
 	},
 	Meters: meterCodec{},
 	Markers: []xosc.Marker{{

@@ -48,16 +48,16 @@ func (s *session) readAll(ctx context.Context) (model.State, error) {
 	l := s.params.layout
 	rs := newReadState(len(s.params.all))
 	switch {
-	case s.knownInputs > 0:
-		s.inputs = s.knownInputs
-		if err := s.readPass(ctx, rs, s.plan(func(p param) bool { return p.strip <= s.inputs })); err != nil {
+	case s.knownUnits != nil:
+		s.inputs, s.headamps = s.knownUnits.inputs, s.knownUnits.headamps
+		if err := s.readPass(ctx, rs, s.plan(func(p param) bool { return p.strip <= s.inputs && p.headamp <= s.headamps })); err != nil {
 			return model.State{}, err
 		}
-	case l.RequiredInputs < l.Inputs:
+	case l.RequiredInputs < l.Inputs || l.Headamps > 0:
 		if err := s.readPass(ctx, rs, s.probePlan(rs)); err != nil {
 			return model.State{}, err
 		}
-		s.inputs = s.probedInputs(rs)
+		s.inputs, s.headamps = s.probedInputs(rs), s.probedHeadamps(rs)
 		if err := s.readPass(ctx, rs, s.plan(func(p param) bool { return p.strip != 0 && p.strip <= s.inputs })); err != nil {
 			return model.State{}, err
 		}
@@ -83,18 +83,34 @@ func (s *session) plan(keep func(param) bool) []int {
 	return out
 }
 
-// probePlan: every parameter that is not on an optional strip (inputs,
-// main, groups, DCAs), then one fader read per optional strip, last, so dead
-// reads never hold up the read window.
+// probePlan: every parameter that is not on an optional unit (inputs,
+// main, groups, DCAs), then one fader read per optional strip and the gain
+// of every headamp (each a unit of one parameter), last, so dead reads never
+// hold up the read window.
 func (s *session) probePlan(rs *readState) []int {
-	out := s.plan(func(p param) bool { return p.strip == 0 })
+	out := s.plan(func(p param) bool { return p.strip == 0 && p.headamp == 0 })
 	for i, p := range s.params.all {
-		if p.strip != 0 && p.ref.Field == model.FieldFader {
+		if (p.strip != 0 && p.ref.Field == model.FieldFader) || p.headamp != 0 {
 			rs.probe[i] = true
 			out = append(out, i)
 		}
 	}
 	return out
+}
+
+// probedHeadamps is the number of headamps below the first one that did not
+// answer (xair: 16 on 18-channel models, 8 on XR16, 4 on XR12, XA-F73).
+func (s *session) probedHeadamps(rs *readState) int {
+	n := s.params.layout.Headamps
+	for i, p := range s.params.all {
+		if p.headamp != 0 && rs.gaveUp[i] {
+			n = min(n, p.headamp-1)
+		}
+	}
+	if n < s.params.layout.Headamps {
+		s.log.Info(s.name+": headamps did not answer; Gain absent for them until the engine is restarted", "headamps", n)
+	}
+	return n
 }
 
 // probedInputs is the number of input strips below the first optional strip
@@ -105,7 +121,7 @@ func (s *session) probedInputs(rs *readState) int {
 	l := s.params.layout
 	n := l.Inputs
 	for i, p := range s.params.all {
-		if rs.probe[i] && rs.gaveUp[i] {
+		if p.strip != 0 && rs.probe[i] && rs.gaveUp[i] {
 			n = min(n, p.strip-1)
 		}
 	}
@@ -147,7 +163,7 @@ func (s *session) readPass(ctx context.Context, rs *readState, order []int) erro
 func (s *session) absentFeatures(rs *readState) map[feature]bool {
 	out := map[feature]bool{}
 	for i, p := range s.params.all {
-		if !rs.gaveUp[i] || out[p.feature] || p.feature == featureCore || p.strip > s.inputs {
+		if !rs.gaveUp[i] || out[p.feature] || p.feature == featureCore || p.strip > s.inputs || p.headamp != 0 {
 			continue
 		}
 		out[p.feature] = true
