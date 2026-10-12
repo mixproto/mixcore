@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/state.schema.json",
-  "title": "mixcore core API v0.2: StateListener.OnState(stateJSON)",
+  "title": "mixcore core API v0.3: StateListener.OnState(stateJSON)",
   "description": "A snapshot replaces everything the UI holds; a diff lists changes since the previous message. seq grows by one per message; a gap never happens within one Start. Values are the console's, never the UI's. events report holds that ended without the user releasing them; they appear in snapshots and diffs and are never dropped by coalescing (up to 256 between two messages).",
   "type": "object",
   "additionalProperties": false,
@@ -57,6 +57,18 @@
       "type": "boolean",
       "description": "v0.1. True once status has been stale for 30 s (design 8.1 'Offline', a stronger label only: the core keeps retrying at the same pace). Absent means false."
     },
+    "showMode": {
+      "type": "boolean",
+      "description": "v0.3, every message: show mode is on (SR-27). Absent means off."
+    },
+    "unlockedHeadamps": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "description": "v0.3, every message while show mode is on: headamps whose Gain raise is unlocked ('Gain unlocked for ...'). An unlock ends on relock, 20 s without a command on it, stale, pause or stop (event gainUnlockEnded)."
+    },
     "console": {
       "type": "object",
       "additionalProperties": false,
@@ -92,7 +104,8 @@
             "enum": [
               "input",
               "main"
-            ]
+            ],
+            "description": "input and main only; headamps are in headamps (v0.3)."
           },
           "index": {
             "type": "integer",
@@ -128,6 +141,48 @@
         "minimum": 1
       },
       "description": "v0.2, snapshot only, xair: input strips the family documents (16, XA-F71) that this mixer did not answer when the engine first connected (a small model, or a link too lossy to probe, XA-F72). They stay absent until Stop and Start; strips that answered once are never dropped on a reconnect. Absent when every documented input answered. UI: 'Inputs 13-16 not found on this mixer'."
+    },
+    "headamps": {
+      "type": "array",
+      "description": "v0.3, snapshot only: Gain of every headamp the console answered for (xair: 1..16 mic preamps, fewer on XR16/XR12, XA-F73). Absent when the family has no Gain in the core yet (x32: open question 44). Changes arrive in diffs as param {strip: {kind: headamp, index}, field: gain}.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "index",
+          "gainDB"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "gainDB": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "headampRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "minDB",
+        "maxDB",
+        "stepDB"
+      ],
+      "description": "v0.3, snapshot with headamps: the Gain range and console step (xair mic preamps: -12 to +60 dB, 0.5 dB, XA section 4). UI step = max(1 dB, stepDB).",
+      "properties": {
+        "minDB": {
+          "type": "number"
+        },
+        "maxDB": {
+          "type": "number"
+        },
+        "stepDB": {
+          "type": "number"
+        }
+      }
     },
     "changes": {
       "type": "array",
@@ -259,6 +314,34 @@
                 "minimum": 1,
                 "maximum": 64,
                 "description": "v0.2, xair only. Present when the console pushed /-snap/index within 1 s of the burst that raised this event: the snapshot it reports as recently loaded or saved (XA-F60, 1..64). A lone /-snap/index push (for example after a save in another app) raises no event. Show it as a hint: 'Snapshot 12 at the mixer'."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "index",
+              "reason"
+            ],
+            "description": "v0.3: a Gain unlock in show mode ended (SR-27); raising Gain on that headamp is locked again. An undo of an entry made during the unlock stays allowed for 10 s.",
+            "properties": {
+              "type": {
+                "const": "gainUnlockEnded"
+              },
+              "index": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "reason": {
+                "enum": [
+                  "relock",
+                  "idle",
+                  "stale",
+                  "stopped",
+                  "showModeOff"
+                ]
               }
             }
           }

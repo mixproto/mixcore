@@ -1,9 +1,9 @@
-# mixcore core API v0.2: C ABI (`capi/`)
+# mixcore core API v0.3: C ABI (`capi/`)
 
 The c-shared build of the core API: `mixcore.dll` on Windows (P/Invoke from C#), `libmixcore.dylib` / `libmixcore.so`
 for interop tests on macOS and Linux. `go build -buildmode=c-shared` writes the header next to the library
 (`mixcore.h` / `libmixcore.h`); read names from that header, never from memory. Same calls and safety rules as
-`README.md`; this file only adds the C-level rules. v0.2 (family `xair`) changes no C signature, status code or memory rule.
+`README.md`; this file only adds the C-level rules. v0.2 (family `xair`) changes no C signature, status code or memory rule; v0.3 adds `MixGesture` and status codes 15 to 17.
 
 ## Memory and strings
 - Strings in are UTF-8, NUL-terminated `char*`. They are copied on entry; the caller may free them as soon as the call returns.
@@ -35,6 +35,9 @@ numbers are part of the ABI and never change; new codes get new numbers.
 | 12 | `MIX_ERR_BUSY` | `ERR_BUSY` |
 | 13 | `MIX_ERR_NETWORK` | `ERR_NETWORK` (only inside discovery results) |
 | 14 | `MIX_ERR_INVALID_ARGUMENT` | NULL pointer or negative length |
+| 15 | `MIX_ERR_NEEDS_CONFIRM` | `ERR_NEEDS_CONFIRM` (v0.3) |
+| 16 | `MIX_ERR_SHOW_MODE` | `ERR_SHOW_MODE` (v0.3) |
+| 17 | `MIX_ERR_GAIN_BOUND` | `ERR_GAIN_BOUND` (v0.3) |
 
 ## Functions
 
@@ -43,6 +46,7 @@ numbers are part of the ABI and never change; new codes get new numbers.
 | `int32_t MixStart(char* configJSON, char** outJSON, int32_t* outLen)` | `outJSON` = session description; `MixFree` it |
 | `int32_t MixStop(void)`, `MixPause(void)`, `MixResume(void)`, `MixRequestSnapshot(void)` | |
 | `int32_t MixApply(char* commandJSON)` | one gesture; returns at once |
+| `int32_t MixGesture(char* commandJSON, char** outJSON, int32_t* outLen)` (v0.3) | as `MixApply`; `outJSON` = `gesture-result.schema.json` on `MIX_OK`; `MixFree` it |
 | `int32_t MixMeterFrame(uint8_t* buf, int32_t capacity)` | see below |
 | `double MixFaderPosition(double db)`, `double MixFaderDB(double position)` | pure; `-inf` crosses as IEEE `-INFINITY` |
 | `int32_t MixMeterScale(char** outJSON, int32_t* outLen)` (v0.1) | `meter-scale.schema.json`; `MixFree` it |

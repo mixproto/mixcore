@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/gesture-result.schema.json",
+  "title": "mixcore core API v0.3: result of Gesture(commandJSON)",
+  "description": "Gesture takes the same command as Apply, enforces the same rules, and answers at once what the core did (CR-22): the UI draws the core's value and state instead of assuming its candidate was applied, and plays the haptic from state. On an error code (ERR_NEEDS_CONFIRM, ERR_SHOW_MODE, ERR_GAIN_BOUND, ...) there is no result.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "state",
+    "written"
+  ],
+  "properties": {
+    "version": {
+      "$ref": "common.schema.json#/$defs/version"
+    },
+    "state": {
+      "enum": [
+        "free",
+        "atWall",
+        "atCap",
+        "atCeiling",
+        "locked"
+      ],
+      "description": "free: applied as asked. atWall: stopped at the slip-guard wall (rigid haptic once per arrival; 'Pause to go further'; openWall after a 300 ms rest). atCap: stopped at a Gain cap of the gesture (+3 / -6 dB; never opens: 'Lift and drag again'). atCeiling: stopped at the monitor ceiling ('Max set by your engineer'; never opens). locked: show mode stopped a Gain raise ('Raising Gain is locked in show mode')."
+    },
+    "value": {
+      "$ref": "common.schema.json#/$defs/level",
+      "description": "The value the core applied (set, openWall) or the start (holdBegin). For set it may differ from the command's value."
+    },
+    "written": {
+      "type": "boolean",
+      "description": "A write left for the console (false for holdBegin, holdEnd, openWall, settings and a set that changed nothing)."
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The active gesture window (holdBegin, set within a hold, openWall). Absent outside a hold.",
+      "properties": {
+        "startDB": {
+          "$ref": "common.schema.json#/$defs/level"
+        },
+        "wallUpDB": {
+          "type": "number",
+          "description": "Slip guard: the next upward stop (max(start, -16) + 6 dB, then 6 dB more per openWall)."
+        },
+        "capUpDB": {
+          "type": "number",
+          "description": "Gain: start + 3 dB (within the range)."
+        },
+        "capDownDB": {
+          "type": "number",
+          "description": "Gain: start - 6 dB (within the range)."
+        },
+        "ceilingDB": {
+          "type": "number",
+          "description": "Monitor ceiling: engineer's latest value + headroom."
+        },
+        "opensByRest": {
+          "type": "boolean",
+          "description": "Only a slip-guard wall opens by rest (never Gain, never a ceiling)."
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "version": 0,
+      "state": "atWall",
+      "value": 0,
+      "written": true,
+      "window": {
+        "startDB": -6,
+        "wallUpDB": 0,
+        "opensByRest": true
+      }
+    },
+    {
+      "version": 0,
+      "state": "atCap",
+      "value": 35.5,
+      "written": true,
+      "window": {
+        "startDB": 32.5,
+        "capUpDB": 35.5,
+        "capDownDB": 26.5,
+        "opensByRest": false
+      }
+    }
+  ]
+}
