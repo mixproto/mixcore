@@ -164,7 +164,7 @@ func startRelays(ctx context.Context, wg *sync.WaitGroup, o relayOptions, rec *s
 		t := &relay.TCP{Listener: ln, Console: console, Rec: rec, Apps: o.apps,
 			Dial: func(ctx context.Context) (net.Conn, error) { return d.DialContext(ctx, "tcp", console.String()) }}
 		fmt.Fprintf(out, "relay tcp %s -> %s\n", ln.Addr(), console)
-		safe.Go(wg, report, func() { report(t.Serve(ctx)) })
+		safe.Go(wg, report, func() { defer func() { _ = ln.Close() }(); report(t.Serve(ctx)) })
 	}
 	return nil
 }

@@ -9,10 +9,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -337,5 +339,85 @@ func TestTCPRelayRejectsSourcesOutsideTheAllowList(t *testing.T) {
 	defer mu.Unlock()
 	if dials != 0 {
 		t.Fatalf("relay dialed the console %d times for a stranger", dials)
+	}
+}
+
+// flakyListener fails Accept with the queued errors first, and counts Close.
+type flakyListener struct {
+	*pipeListener
+	mu     sync.Mutex
+	errs   []error
+	closes int
+}
+
+func (l *flakyListener) Accept() (net.Conn, error) {
+	l.mu.Lock()
+	if len(l.errs) > 0 {
+		err := l.errs[0]
+		l.errs = l.errs[1:]
+		l.mu.Unlock()
+		return nil, err
+	}
+	l.mu.Unlock()
+	return l.pipeListener.Accept()
+}
+
+func (l *flakyListener) Close() error {
+	l.mu.Lock()
+	l.closes++
+	l.mu.Unlock()
+	return l.pipeListener.Close()
+}
+
+// Regression (go-reviewer L6): one EMFILE from Accept ended the TCP relay.
+// A transient accept error is retried; the next app connection is served.
+func TestTCPRelaySurvivesATransientAcceptError(t *testing.T) {
+	ln := &flakyListener{pipeListener: newPipeListener(), errs: []error{&net.OpError{Op: "accept", Err: syscall.EMFILE}}}
+	console := netip.MustParseAddrPort("10.0.0.1:49280")
+	var wg sync.WaitGroup
+	tr := &TCP{Listener: ln, Console: console, Rec: &fakeRec{}, Dial: func(context.Context) (net.Conn, error) {
+		c, s := net.Pipe()
+		wg.Go(func() { defer func() { _ = s.Close() }(); _, _ = io.Copy(s, s) }) // an echoing console
+		return c, nil
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	served := make(chan error, 1)
+	wg.Go(func() { served <- tr.Serve(ctx) })
+	client, server := net.Pipe()
+	select {
+	case ln.conns <- server:
+	case err := <-served:
+		cancel()
+		wg.Wait()
+		t.Fatalf("relay stopped after one EMFILE: Serve returned %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("relay did not accept after a transient error")
+	}
+	app := net.Conn(client)
+	if _, err := app.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	b := make([]byte, 1)
+	if _, err := io.ReadFull(app, b); err != nil || b[0] != 'x' {
+		t.Fatalf("echo through the relay: %q, %v", b, err)
+	}
+	_ = app.Close()
+	cancel()
+	wg.Wait()
+}
+
+// Regression (go-reviewer L6): Serve must close its listener on every
+// return, also when Accept fails for good without a cancelled context.
+func TestTCPRelayClosesItsListenerOnEveryReturn(t *testing.T) {
+	ln := &flakyListener{pipeListener: newPipeListener(), errs: []error{net.ErrClosed}}
+	tr := &TCP{Listener: ln, Console: netip.MustParseAddrPort("10.0.0.1:49280"), Rec: &fakeRec{},
+		Dial: func(context.Context) (net.Conn, error) { return nil, errors.New("unused") }}
+	if err := tr.Serve(context.Background()); err == nil {
+		t.Fatal("Serve returned nil after the listener failed")
+	}
+	ln.mu.Lock()
+	defer ln.mu.Unlock()
+	if ln.closes == 0 {
+		t.Fatal("Serve returned without closing its listener")
 	}
 }
