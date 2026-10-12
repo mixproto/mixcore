@@ -77,9 +77,15 @@ Mac, the Mac forwards to the console and records both directions. The console se
 console's client limit counts the relay.
 ```bash
 ipconfig getifaddr en0          # the Mac's address on that network, e.g. 192.168.1.10
-mixcapture relay -console 192.168.1.62 -listen 192.168.1.10 -udp 10024 \
+mixcapture relay -console 192.168.1.62 -listen 192.168.1.10 -app 192.168.1.23 -udp 10024 \
   -out ~/Desktop/dybyskz-mix/research/captures/xr18/2026-10-12
 ```
+**Exposure.** While the relay runs, anything that can reach the Mac's listen address can reach the console through
+it, unauthenticated. So `-listen` must be one address of this Mac (`0.0.0.0`, `::` and addresses the Mac does not have
+are refused), and `-app` should list the tablet's address (Settings > Wi-Fi > the network > IP address): datagrams
+and connections from any other source are dropped before anything is forwarded. Without `-app` the tool prints a
+warning. Run the relay only on the console's own network, never on venue or office Wi-Fi shared with strangers, and
+stop it (`:q`) when the session ends.
 Then enter 192.168.1.10 as the console address in the vendor app. Ports: `-udp` and `-tcp` take a list
 (`-udp 10023,10024 -tcp 49280`) or `listen:console` pairs when the Mac must listen on another port (`-udp 19024:10024`).
 Documented ports: X32/M32 UDP 10023 (`docs/protocols/x32.md`), X Air/M Air UDP 10024 (`xair.md`), Yamaha RCP TCP 49280

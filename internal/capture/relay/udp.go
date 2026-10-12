@@ -25,6 +25,7 @@ type UDP struct {
 	// Upstream opens the socket that talks to the console for one app.
 	Upstream func(ctx context.Context) (net.PacketConn, error)
 	Rec      Recorder
+	Apps     []netip.Addr  // allow-list of app addresses; empty allows every source
 	Idle     time.Duration // an app silent this long loses its upstream socket
 	MaxApps  int
 	Logger   *slog.Logger
@@ -91,6 +92,10 @@ func (u *UDP) readApps(ctx context.Context, wg *sync.WaitGroup, mu *sync.Mutex, 
 			continue
 		}
 		appAddr := unmapped(ua.AddrPort())
+		if !allowed(u.Apps, appAddr.Addr()) {
+			u.Logger.Debug("relay: source not in the allow-list dropped", "from", appAddr)
+			continue
+		}
 		a, err := u.app(ctx, wg, mu, apps, appAddr, onPanic)
 		if err != nil {
 			u.Logger.Warn("relay: app not served", "app", appAddr, "err", err)

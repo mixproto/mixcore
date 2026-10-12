@@ -209,10 +209,22 @@ func (l *pipeListener) Close() error   { l.once.Do(func() { close(l.closed) }); 
 func (l *pipeListener) Addr() net.Addr { return &net.TCPAddr{} }
 
 func (l *pipeListener) dial() net.Conn {
+	return l.dialFrom(netip.MustParseAddrPort(appIP + ":40000"))
+}
+
+// dialFrom connects with the given remote address on the server end.
+func (l *pipeListener) dialFrom(from netip.AddrPort) net.Conn {
 	client, server := net.Pipe()
-	l.conns <- server
+	l.conns <- remoteConn{Conn: server, remote: net.TCPAddrFromAddrPort(from)}
 	return client
 }
+
+type remoteConn struct {
+	net.Conn
+	remote net.Addr
+}
+
+func (c remoteConn) RemoteAddr() net.Addr { return c.remote }
 
 func TestTCPRelayPipesAndRecords(t *testing.T) {
 	ln := newPipeListener()
@@ -249,5 +261,81 @@ func TestTCPRelayPipesAndRecords(t *testing.T) {
 	if len(got) != 2 || !strings.Contains(got[0], ">10.0.0.1:49280 \"devinfo productname\\n\"") ||
 		!strings.HasPrefix(got[1], "tcp 10.0.0.1:49280>") {
 		t.Fatalf("recorded:\n%s", strings.Join(got, "\n"))
+	}
+}
+
+// Regression (go-reviewer M2): with an allow-list, datagrams from any other
+// source are dropped before an upstream socket exists, so nothing reaches
+// the console.
+func TestUDPRelayDropsSourcesOutsideTheAllowList(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		n := memnet.New()
+		simPC, err := n.ListenPacket(consoleAddr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		listen, err := n.ListenPacket(relayIP + ":10024")
+		if err != nil {
+			t.Fatal(err)
+		}
+		sim := simxair.New(simxair.Options{})
+		u := &UDP{Listen: listen, Console: netip.MustParseAddrPort(consoleAddr), Rec: &fakeRec{},
+			Apps:     []netip.Addr{netip.MustParseAddr(appIP)},
+			Upstream: func(context.Context) (net.PacketConn, error) { return n.ListenPacket(relayIP + ":0") }}
+		ctx, cancel := context.WithCancel(context.Background())
+		var wg sync.WaitGroup
+		wg.Go(func() { _ = sim.Serve(ctx, simPC) })
+		wg.Go(func() { _ = u.Serve(ctx) })
+		defer func() { cancel(); wg.Wait(); _ = listen.Close(); _ = simPC.Close() }()
+		relay := net.UDPAddrFromAddrPort(netip.MustParseAddrPort(relayIP + ":10024"))
+		stranger, err := n.ListenPacket("10.0.0.66:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = stranger.Close() }()
+		send(t, stranger, relay, "/ch/01/mix/fader", osc.Float(1))
+		synctest.Wait()
+		if log := sim.Log(); len(log) != 0 {
+			t.Fatalf("a source outside the allow-list reached the console: %+v", log)
+		}
+		app, err := n.ListenPacket(appIP + ":0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = app.Close() }()
+		send(t, app, relay, "/xinfo")
+		if addr, _ := recvAddr(t, app); addr != "/xinfo" {
+			t.Fatalf("allowed app got %s", addr)
+		}
+	})
+}
+
+// Regression (go-reviewer M2): the TCP relay closes a connection from a
+// source outside the allow-list without dialing the console.
+func TestTCPRelayRejectsSourcesOutsideTheAllowList(t *testing.T) {
+	ln := newPipeListener()
+	var dials int
+	var mu sync.Mutex
+	tr := &TCP{Listener: ln, Console: netip.MustParseAddrPort("10.0.0.1:49280"), Rec: &fakeRec{},
+		Apps: []netip.Addr{netip.MustParseAddr(appIP)},
+		Dial: func(context.Context) (net.Conn, error) {
+			mu.Lock()
+			dials++
+			mu.Unlock()
+			return nil, errors.New("must not dial")
+		}}
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	wg.Go(func() { _ = tr.Serve(ctx) })
+	c := ln.dialFrom(netip.MustParseAddrPort("10.0.0.66:40000"))
+	if _, err := c.Read(make([]byte, 1)); err == nil {
+		t.Fatal("connection from a stranger stayed open")
+	}
+	cancel()
+	wg.Wait()
+	mu.Lock()
+	defer mu.Unlock()
+	if dials != 0 {
+		t.Fatalf("relay dialed the console %d times for a stranger", dials)
 	}
 }

@@ -24,6 +24,7 @@ type relayOptions struct {
 	af      analysisFlags
 	console netip.Addr
 	listen  netip.Addr
+	apps    []netip.Addr
 	udp     []portMap
 	tcp     []portMap
 	out     string
@@ -36,6 +37,7 @@ func parseRelay(args []string, out io.Writer) (relayOptions, error) {
 	listenText := fs.String("listen", "", "this Mac's IP on the network the vendor app uses (required; the app connects here)")
 	udp := fs.String("udp", "", "UDP ports to relay: 10024 or listen:console, comma separated")
 	tcp := fs.String("tcp", "", "TCP ports to relay: 49280 or listen:console, comma separated")
+	apps := fs.String("app", "", "IP addresses of the vendor app devices allowed to use the relay, comma separated (recommended)")
 	fs.StringVar(&o.out, "out", "", "session directory (in the private research repository)")
 	o.af.register(fs)
 	if err := parseFlags(fs, args); err != nil {
@@ -45,9 +47,11 @@ func parseRelay(args []string, out io.Writer) (relayOptions, error) {
 	if o.console, err = parseConsoleIP(*consoleText); err != nil {
 		return o, err
 	}
-	if o.listen, err = netip.ParseAddr(*listenText); err != nil {
-		return o, fmt.Errorf("%w: -listen must be one of this machine's addresses (have %s)", errUsage,
-			strings.Join(localIPv4(), ", "))
+	if o.listen, err = parseListen(*listenText); err != nil {
+		return o, err
+	}
+	if o.apps, err = parseIPList(*apps); err != nil {
+		return o, err
 	}
 	if o.udp, err = parsePortMaps(*udp); err != nil {
 		return o, err
@@ -114,6 +118,10 @@ func relaySession(ctx context.Context, o relayOptions, rec *recording, e *engine
 		wg.Wait()
 		return err
 	}
+	if len(o.apps) == 0 {
+		fmt.Fprintf(out, "WARNING: any device that can reach %s can reach the console through the relay; "+
+			"restrict it with -app <tablet IP>\n", o.listen)
+	}
 	fmt.Fprintf(out, "recording; point the vendor app at %s. Type a label and Enter to mark, :help for commands.\n", o.listen)
 	cmds := make(chan command)
 	go readCommands(ctx, in, cmds) // ends with stdin (see readCommands)
@@ -142,7 +150,7 @@ func startRelays(ctx context.Context, wg *sync.WaitGroup, o relayOptions, rec *s
 		if err != nil {
 			return fmt.Errorf("relay: listen udp %d: %w", pm.listen, err)
 		}
-		u := &relay.UDP{Listen: pc, Console: netip.AddrPortFrom(o.console, pm.console), Rec: rec,
+		u := &relay.UDP{Listen: pc, Console: netip.AddrPortFrom(o.console, pm.console), Rec: rec, Apps: o.apps,
 			Upstream: func(ctx context.Context) (net.PacketConn, error) { return lc.ListenPacket(ctx, "udp", ":0") }}
 		fmt.Fprintf(out, "relay udp %s -> %s\n", pc.LocalAddr(), u.Console)
 		safe.Go(wg, report, func() { defer func() { _ = pc.Close() }(); report(u.Serve(ctx)) })
@@ -154,10 +162,55 @@ func startRelays(ctx context.Context, wg *sync.WaitGroup, o relayOptions, rec *s
 		}
 		console := netip.AddrPortFrom(o.console, pm.console)
 		var d net.Dialer
-		t := &relay.TCP{Listener: ln, Console: console, Rec: rec,
+		t := &relay.TCP{Listener: ln, Console: console, Rec: rec, Apps: o.apps,
 			Dial: func(ctx context.Context) (net.Conn, error) { return d.DialContext(ctx, "tcp", console.String()) }}
 		fmt.Fprintf(out, "relay tcp %s -> %s\n", ln.Addr(), console)
 		safe.Go(wg, report, func() { report(t.Serve(ctx)) })
 	}
 	return nil
+}
+
+// parseListen accepts one address this machine has (loopback included),
+// never the unspecified 0.0.0.0 or ::, so the relay is reachable only on the
+// network the operator chose.
+func parseListen(text string) (netip.Addr, error) {
+	ip, err := netip.ParseAddr(strings.TrimSpace(text))
+	hint := fmt.Sprintf("-listen must be one of this machine's addresses (have %s)", strings.Join(localIPv4(), ", "))
+	switch {
+	case err != nil:
+		return netip.Addr{}, fmt.Errorf("%w: %s", errUsage, hint)
+	case ip.IsUnspecified():
+		return netip.Addr{}, fmt.Errorf("%w: -listen %s would expose the console on every network; %s", errUsage, ip, hint)
+	case !isLocalAddr(ip.Unmap()):
+		return netip.Addr{}, fmt.Errorf("%w: -listen %s is not an address of this machine; %s", errUsage, ip, hint)
+	}
+	return ip.Unmap(), nil
+}
+
+func isLocalAddr(ip netip.Addr) bool {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return false
+	}
+	for _, a := range addrs {
+		if p, err := netip.ParsePrefix(a.String()); err == nil && p.Addr().Unmap() == ip {
+			return true
+		}
+	}
+	return false
+}
+
+func parseIPList(text string) ([]netip.Addr, error) {
+	if strings.TrimSpace(text) == "" {
+		return nil, nil
+	}
+	var out []netip.Addr
+	for item := range strings.SplitSeq(text, ",") {
+		ip, err := netip.ParseAddr(strings.TrimSpace(item))
+		if err != nil {
+			return nil, fmt.Errorf("%w: -app wants IP addresses, got %q", errUsage, item)
+		}
+		out = append(out, ip.Unmap())
+	}
+	return out, nil
 }

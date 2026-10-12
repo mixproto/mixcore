@@ -298,3 +298,19 @@ func TestParseCommand(t *testing.T) {
 		}
 	}
 }
+
+// Regression (go-reviewer M2): the relay must not listen on every interface or
+// on an address this machine does not have, and -app must be IP addresses.
+func TestRelayListenMustBeOneLocalAddress(t *testing.T) {
+	dir := t.TempDir()
+	for _, listen := range []string{"0.0.0.0", "::", "192.0.2.1"} {
+		_, err := runCmd(t, "relay", "-console", "192.168.1.62", "-listen", listen, "-udp", "10024", "-out", dir)
+		if !errors.Is(err, errUsage) || !strings.Contains(err.Error(), "-listen") {
+			t.Errorf("-listen %s: err = %v, want a usage error", listen, err)
+		}
+	}
+	_, err := runCmd(t, "relay", "-console", "192.168.1.62", "-listen", "127.0.0.1", "-udp", "10024", "-app", "tablet", "-out", dir)
+	if !errors.Is(err, errUsage) || !strings.Contains(err.Error(), "-app") {
+		t.Errorf("-app tablet: err = %v", err)
+	}
+}

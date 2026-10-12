@@ -164,7 +164,7 @@ func startE2E(t *testing.T) *e2e {
 	simPort := simPC.LocalAddr().(*net.UDPAddr).Port
 	stdinR, stdinW := io.Pipe()
 	e.stdin = stdinW
-	args := []string{"relay", "-console", "127.0.0.1", "-listen", "127.0.0.1", "-udp", fmt.Sprintf("0:%d", simPort),
+	args := []string{"relay", "-console", "127.0.0.1", "-listen", "127.0.0.1", "-app", "127.0.0.1", "-udp", fmt.Sprintf("0:%d", simPort),
 		"-out", e.dir, "-window", e2eWindow.String(), "-quiet", e2eQuiet.String()}
 	e.wg.Go(func() { e.done <- runMain(e.ctx, args, stdinR, e.out) })
 	t.Cleanup(func() { e.cancel(); _ = stdinW.Close(); e.wg.Wait(); _ = simPC.Close() })

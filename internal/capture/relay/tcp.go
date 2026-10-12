@@ -25,6 +25,7 @@ type TCP struct {
 	// Dial connects to the console for one app connection.
 	Dial    func(ctx context.Context) (net.Conn, error)
 	Rec     Recorder
+	Apps    []netip.Addr // allow-list of app addresses; empty allows every source
 	MaxApps int
 	Logger  *slog.Logger
 }
@@ -51,6 +52,11 @@ func (t *TCP) Serve(ctx context.Context) error {
 		}
 		if err != nil {
 			return fmt.Errorf("relay: tcp accept: %w", err)
+		}
+		if from := addrOf(conn.RemoteAddr()); !allowed(t.Apps, from.Addr()) {
+			t.Logger.Debug("relay: source not in the allow-list refused", "from", from)
+			_ = conn.Close()
+			continue
 		}
 		select {
 		case slots <- struct{}{}:
