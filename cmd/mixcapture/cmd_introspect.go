@@ -27,6 +27,7 @@ const (
 type introspectOptions struct {
 	console netip.AddrPort
 	out     string
+	force   bool
 	max     int
 	timeout time.Duration
 }
@@ -38,6 +39,7 @@ func parseIntrospect(args []string, out io.Writer) (introspectOptions, error) {
 	consoleText := fs.String("console", "", "console IP address (required)")
 	port := fs.Int("port", rcpinfo.Port, "console TCP port (docs/protocols/yamaha-rcp.md YR-F01)")
 	fs.StringVar(&o.out, "out", "", "session directory (in the private research repository)")
+	fs.BoolVar(&o.force, "force", false, "overwrite a session already in -out")
 	fs.IntVar(&o.max, "max", rcpinfo.DefaultMaxIndex, "largest number of table entries to ask for")
 	fs.DurationVar(&o.timeout, "timeout", rcpinfo.DefaultReplyTimeout, "reply timeout per query")
 	if err := parseFlags(fs, args); err != nil {
@@ -67,7 +69,7 @@ func runIntrospect(ctx context.Context, args []string, _ io.Reader, out io.Write
 	if o.out == "" {
 		return fmt.Errorf("%w: -out is required (a directory in the private research repository)", errUsage)
 	}
-	d, err := session.Create(o.out)
+	d, err := session.Create(o.out, o.force)
 	if err != nil {
 		return err
 	}

@@ -36,14 +36,14 @@ func TestCreateRefusesThePublicRepo(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module github.com/mixproto/mixcore\n\ngo 1.27.0\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Create(filepath.Join(repo, "research", "captures", "x")); !errors.Is(err, ErrPublicRepo) {
+	if _, err := Create(filepath.Join(repo, "research", "captures", "x"), false); !errors.Is(err, ErrPublicRepo) {
 		t.Fatalf("err = %v, want ErrPublicRepo", err)
 	}
 	other := t.TempDir()
 	if err := os.WriteFile(filepath.Join(other, "go.mod"), []byte("module example.com/private\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	d, err := Create(filepath.Join(other, "captures", "ui24r", "2026-10-12"))
+	d, err := Create(filepath.Join(other, "captures", "ui24r", "2026-10-12"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestTapConnRecordsBothDirections(t *testing.T) {
 }
 
 func TestChownKeepsOwnFiles(t *testing.T) {
-	d, err := Create(t.TempDir())
+	d, err := Create(t.TempDir(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,4 +187,26 @@ func TestChownKeepsOwnFiles(t *testing.T) {
 	if _, err := d.ReadMeta(); err == nil {
 		t.Fatal("ReadMeta without session.json succeeded")
 	}
+}
+
+// Regression (go-reviewer M3): reusing a session directory silently truncated
+// the earlier capture. A second Create is refused; overwrite must be explicit.
+func TestCreateRefusesAnExistingSession(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s")
+	d, err := Create(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.WriteFile(FileCapture, []byte("first capture")); err != nil {
+		t.Fatal(err)
+	}
+	_ = d.Close()
+	if _, err := Create(path, false); !errors.Is(err, ErrSessionExists) {
+		t.Fatalf("second Create: err = %v, want ErrSessionExists", err)
+	}
+	d2, err := Create(path, true)
+	if err != nil {
+		t.Fatalf("Create with overwrite: %v", err)
+	}
+	_ = d2.Close()
 }

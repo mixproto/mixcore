@@ -33,6 +33,7 @@ const (
 	FileCapture = "capture.pcap"
 	FileIndex   = "index.jsonl"
 	dirPerm     = 0o750
+	filePerm    = 0o600
 	publicRepo  = "module github.com/mixproto/mixcore"
 )
 
@@ -42,6 +43,9 @@ const PrivacyNote = "Capture files may contain personal data: channel, scene and
 	"name people, plus IP and MAC addresses. Keep them in the private research repository " +
 	"(research/captures/<console>/<date>/), never in the public mixcore repository, and share " +
 	"only the facts you extract."
+
+// ErrSessionExists is returned by Create for a directory that already holds a session.
+var ErrSessionExists = errors.New("session: the directory already holds a session (use another -out, or -force to overwrite it)")
 
 // ErrPublicRepo is returned for a session directory inside the mixcore repository.
 var ErrPublicRepo = errors.New("session: refusing to store a capture inside the public mixcore repository")
@@ -64,8 +68,11 @@ type Dir struct {
 	root *os.Root
 }
 
-// Create makes (or reuses) the session directory at path.
-func Create(path string) (*Dir, error) {
+// Create makes the session directory at path and claims it by creating
+// session.json exclusively (O_EXCL), so an earlier session is never
+// truncated: a directory that already holds one is refused with
+// ErrSessionExists unless overwrite is true.
+func Create(path string, overwrite bool) (*Dir, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("session: %w", err)
@@ -76,7 +83,23 @@ func Create(path string) (*Dir, error) {
 	if err := os.MkdirAll(abs, dirPerm); err != nil {
 		return nil, fmt.Errorf("session: %w", err)
 	}
-	return Open(abs)
+	d, err := Open(abs)
+	if err != nil || overwrite {
+		return d, err
+	}
+	f, err := d.root.OpenFile(FileMeta, os.O_WRONLY|os.O_CREATE|os.O_EXCL, filePerm)
+	if err != nil {
+		_ = d.Close()
+		if errors.Is(err, fs.ErrExist) {
+			return nil, fmt.Errorf("%w: %s", ErrSessionExists, abs)
+		}
+		return nil, fmt.Errorf("session: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		_ = d.Close()
+		return nil, fmt.Errorf("session: %w", err)
+	}
+	return d, nil
 }
 
 // Open opens an existing session directory.

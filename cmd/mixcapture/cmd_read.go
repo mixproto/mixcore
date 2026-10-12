@@ -28,6 +28,7 @@ type readOptions struct {
 	console string
 	marks   string
 	out     string
+	force   bool
 }
 
 func parseRead(args []string, out io.Writer) (readOptions, error) {
@@ -37,6 +38,7 @@ func parseRead(args []string, out io.Writer) (readOptions, error) {
 	fs.StringVar(&o.console, "console", "", "console IP address (default: guessed from the traffic)")
 	fs.StringVar(&o.marks, "marks", "", `marks file: lines "+<seconds> <label>" or "<RFC 3339 time> <label>"; ":s <label>" for a snapshot`)
 	fs.StringVar(&o.out, "out", "", "session directory (in the private research repository)")
+	fs.BoolVar(&o.force, "force", false, "overwrite a session already in -out")
 	o.af.register(fs)
 	if err := parseFlags(fs, args); err != nil {
 		return o, err
@@ -60,7 +62,7 @@ func runRead(_ context.Context, args []string, _ io.Reader, out io.Writer) error
 	if err != nil {
 		return err
 	}
-	rec, err := startRecording(o.out, "read", console.String(), map[string]string{"source": filepath.Base(o.pcap)}, out)
+	rec, err := startRecording(o.out, o.force, "read", console.String(), map[string]string{"source": filepath.Base(o.pcap)}, out)
 	if err != nil {
 		return err
 	}

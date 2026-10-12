@@ -314,3 +314,21 @@ func TestRelayListenMustBeOneLocalAddress(t *testing.T) {
 		t.Errorf("-app tablet: err = %v", err)
 	}
 }
+
+// Regression (go-reviewer M3): a second recording into the same -out is
+// refused unless -force, so an earlier capture is never truncated silently.
+func TestReadRefusesAnExistingSessionWithoutForce(t *testing.T) {
+	dir := t.TempDir()
+	pcap := filepath.Join(dir, "mirror.pcap")
+	writePcap(t, pcap, hexFixture(t, "../../internal/capture/decode/testdata/midi-nrpn.hex"))
+	out := filepath.Join(dir, "session")
+	if got, err := runCmd(t, "read", "-pcap", pcap, "-out", out); err != nil {
+		t.Fatalf("first read: %v\n%s", err, got)
+	}
+	if _, err := runCmd(t, "read", "-pcap", pcap, "-out", out); err == nil || !strings.Contains(err.Error(), "-force") {
+		t.Fatalf("second read into the same session: err = %v, want a refusal naming -force", err)
+	}
+	if got, err := runCmd(t, "read", "-pcap", pcap, "-out", out, "-force"); err != nil {
+		t.Fatalf("read -force: %v\n%s", err, got)
+	}
+}

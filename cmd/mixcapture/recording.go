@@ -27,12 +27,12 @@ type recording struct {
 
 // startRecording creates the session directory, warns about personal data
 // and opens the index.
-func startRecording(outDir, mode, console string, settings map[string]string, out io.Writer) (*recording, error) {
+func startRecording(outDir string, force bool, mode, console string, settings map[string]string, out io.Writer) (*recording, error) {
 	if outDir == "" {
 		return nil, fmt.Errorf("%w: -out is required (a directory in the private research repository, "+
 			"e.g. research/captures/<console>/<date>)", errUsage)
 	}
-	d, err := session.Create(outDir)
+	d, err := session.Create(outDir, force)
 	if err != nil {
 		return nil, err
 	}

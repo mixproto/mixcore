@@ -56,7 +56,7 @@ func sampleInput(t *testing.T) Input {
 }
 
 func TestWriteReport(t *testing.T) {
-	d, err := session.Create(t.TempDir())
+	d, err := session.Create(t.TempDir(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestWriteReport(t *testing.T) {
 }
 
 func TestWriteIntrospection(t *testing.T) {
-	d, err := session.Create(t.TempDir())
+	d, err := session.Create(t.TempDir(), false)
 	if err != nil {
 		t.Fatal(err)
 	}

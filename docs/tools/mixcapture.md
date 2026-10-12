@@ -43,6 +43,8 @@ the decoder chosen. Use B when only a relay is possible.
 
 Session directory (all setups): `-out ~/Desktop/dybyskz-mix/research/captures/<console>/<date>` (create the parent
 first). It receives `capture.pcap` (or your own pcap/pcapng), `index.jsonl`, `session.json` and the report files.
+A directory that already holds a session is refused, so an earlier capture is never overwritten; `-force` overwrites
+on purpose.
 
 ### A. Mac as a Wi-Fi hotspot (Internet Sharing)
 1. Plug the console into the Mac's Ethernet adapter. Find the adapter's service name and give it an address in the

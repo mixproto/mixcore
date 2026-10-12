@@ -31,6 +31,7 @@ type liveOptions struct {
 	tcpdump string
 	filter  string
 	out     string
+	force   bool
 }
 
 func parseLive(args []string, out io.Writer) (liveOptions, error) {
@@ -41,6 +42,7 @@ func parseLive(args []string, out io.Writer) (liveOptions, error) {
 	fs.StringVar(&o.tcpdump, "tcpdump", defaultTcpdump, "tcpdump binary")
 	fs.StringVar(&o.filter, "filter", "", `capture filter (default "host <console>")`)
 	fs.StringVar(&o.out, "out", "", "session directory (in the private research repository)")
+	fs.BoolVar(&o.force, "force", false, "overwrite a session already in -out")
 	o.af.register(fs)
 	if err := parseFlags(fs, args); err != nil {
 		return o, err
@@ -67,7 +69,7 @@ func runLive(ctx context.Context, args []string, in io.Reader, out io.Writer) er
 	if err != nil {
 		return err
 	}
-	rec, err := startRecording(o.out, "live", o.console.String(),
+	rec, err := startRecording(o.out, o.force, "live", o.console.String(),
 		map[string]string{"interface": o.iface, "filter": o.filter}, out)
 	if err != nil {
 		return err

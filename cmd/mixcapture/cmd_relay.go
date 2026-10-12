@@ -28,6 +28,7 @@ type relayOptions struct {
 	udp     []portMap
 	tcp     []portMap
 	out     string
+	force   bool
 }
 
 func parseRelay(args []string, out io.Writer) (relayOptions, error) {
@@ -39,6 +40,7 @@ func parseRelay(args []string, out io.Writer) (relayOptions, error) {
 	tcp := fs.String("tcp", "", "TCP ports to relay: 49280 or listen:console, comma separated")
 	apps := fs.String("app", "", "IP addresses of the vendor app devices allowed to use the relay, comma separated (recommended)")
 	fs.StringVar(&o.out, "out", "", "session directory (in the private research repository)")
+	fs.BoolVar(&o.force, "force", false, "overwrite a session already in -out")
 	o.af.register(fs)
 	if err := parseFlags(fs, args); err != nil {
 		return o, err
@@ -79,7 +81,7 @@ func runRelay(ctx context.Context, args []string, in io.Reader, out io.Writer) e
 			cfg.Ports = append(cfg.Ports, pm.console)
 		}
 	}
-	rec, err := startRecording(o.out, "relay", o.console.String(), map[string]string{
+	rec, err := startRecording(o.out, o.force, "relay", o.console.String(), map[string]string{
 		"listen": o.listen.String(), "udp": fmt.Sprint(o.udp), "tcp": fmt.Sprint(o.tcp)}, out)
 	if err != nil {
 		return err
