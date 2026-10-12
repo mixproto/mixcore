@@ -74,6 +74,7 @@ type session struct {
 	// 10 s after our uplink dies. time.Now keeps a monotonic reading, so a
 	// wall-clock step cannot fake or hide a loss.
 	lastPong time.Time
+	live     liveness
 	tx       []byte
 	msg      osc.Message
 	sent     map[int][]sentWrite
@@ -187,8 +188,9 @@ func (s *session) Run(ctx context.Context, events chan<- driver.Event) error {
 		return errAlreadyRunning
 	}
 	defer func() { s.stopped.Store(true); s.dropPending() }() // nothing queued survives the session
-	ping := time.NewTicker(s.timing.PingEvery)
-	defer ping.Stop()
+	s.live = newLiveness(time.Now())
+	tick := time.NewTicker(s.timing.LivenessTick)
+	defer tick.Stop()
 	renew := time.NewTicker(s.timing.RenewEvery)
 	defer renew.Stop()
 	for {
@@ -211,12 +213,10 @@ func (s *session) Run(ctx context.Context, events chan<- driver.Event) error {
 			s.requestMeters()
 		case <-s.rereadReady:
 			s.startReread(time.Now())
-		case now := <-ping.C:
-			if silent := now.Sub(s.lastPong); silent > s.timing.DeadAfter {
-				return fmt.Errorf("x32: no /xinfo reply for %s: %w", silent.Round(time.Millisecond), driver.ErrConnectionLost)
+		case now := <-tick.C:
+			if err := s.onTick(now); err != nil {
+				return err
 			}
-			s.sendSub(addrXinfo) // X32-F25: a read, never a write
-			s.rereadStep(now)
 		case <-renew.C:
 			s.sendSub(addrXremote) // X32-F20, X32-F27
 			s.requestMeters()

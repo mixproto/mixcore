@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/state.schema.json",
-  "title": "mixcore core API v0: StateListener.OnState(stateJSON)",
+  "title": "mixcore core API v0.1: StateListener.OnState(stateJSON)",
   "description": "A snapshot replaces everything the UI holds; a diff lists changes since the previous message. seq grows by one per message; a gap never happens within one Start. Values are the console's, never the UI's. events report holds that ended without the user releasing them; they appear in snapshots and diffs and are never dropped by coalescing (up to 256 between two messages).",
   "type": "object",
   "additionalProperties": false,
@@ -32,11 +32,19 @@
         "live",
         "stale"
       ],
-      "description": "live: input unlocked. stale: connection lost, last values shown, Apply returns ERR_STALE. connecting: not yet connected since Start/Resume. stopped: Stop or Pause."
+      "description": "live: input unlocked. stale: connection lost (no packet from the console for 1.5 s, or the console stopped answering), last values shown, Apply returns ERR_STALE. connecting: not yet connected since Start/Resume. stopped: Stop or Pause. status, reason, staleSinceMs, offline (and the v0.1 connection fields below) describe the connection in every message, snapshot or diff; an absent optional field means false or none."
     },
     "reason": {
       "type": "string",
       "description": "Diagnostic text for logs, never shown to users as is."
+    },
+    "staleSinceMs": {
+      "type": "integer",
+      "description": "v0.1. Present only while status is stale: when the connection was lost, as Unix time in milliseconds (wall clock of this device). The UI counts up from it ('Reconnecting 0:07'). It does not move while reconnect attempts fail; it disappears when the status leaves stale."
+    },
+    "offline": {
+      "type": "boolean",
+      "description": "v0.1. True once status has been stale for 30 s (design 8.1 'Offline', a stronger label only: the core keeps retrying at the same pace). Absent means false."
     },
     "console": {
       "type": "object",

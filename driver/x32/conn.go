@@ -44,6 +44,8 @@ type conn struct {
 	failed    atomic.Pointer[error]
 	done      chan struct{}
 	meters    *meterSink
+	base      time.Time    // monotonic origin of lastRx
+	lastRx    atomic.Int64 // nanoseconds after base of the last packet from the console
 	wg        sync.WaitGroup
 	closeOnce sync.Once
 }
@@ -63,7 +65,7 @@ func openConn(ctx context.Context, console netip.AddrPort, opts driver.Options) 
 		console: console, consoleTo: net.UDPAddrFromAddrPort(console),
 		sub: sub, cmd: cmd,
 		inbound: make(chan inPacket, inboundCap), errs: make(chan error, 2), done: make(chan struct{}),
-		meters: newMeterSink(opts.Meters),
+		meters: newMeterSink(opts.Meters), base: time.Now(),
 	}
 	onPanic := func(err error) { c.fail(err) }
 	safe.Go(&c.wg, onPanic, func() { c.fail(c.readLoop(sub, false)) })
@@ -121,6 +123,7 @@ func (c *conn) readLoop(pc net.PacketConn, isCmd bool) error {
 			continue
 		}
 		now := time.Now()
+		c.lastRx.Store(int64(now.Sub(c.base))) // any packet proves the downlink (X32-F25)
 		pkt := ring[i][:n]
 		if !isCmd && c.meters.handle(pkt, now) {
 			i--
@@ -133,6 +136,9 @@ func (c *conn) readLoop(pc net.PacketConn, isCmd bool) error {
 		}
 	}
 }
+
+// lastRxAt is when the last packet from the console arrived (base before any).
+func (c *conn) lastRxAt() time.Time { return c.base.Add(time.Duration(c.lastRx.Load())) }
 
 func (c *conn) fromConsole(a net.Addr) bool {
 	ua, ok := a.(*net.UDPAddr)

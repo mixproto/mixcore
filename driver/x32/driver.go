@@ -19,9 +19,10 @@
 // counts each new port as a new client, X32-F28).
 //
 // Client limit: four /xremote clients (X32-F21). Subscriptions last 10 s and
-// are renewed every Timing.RenewEvery. Liveness is the time of the last packet
-// received, kept fresh by an /xinfo poll (X32-F25). A scene recall arrives as
-// ordinary pushes (no StateReplaced yet).
+// are renewed every Timing.RenewEvery. Liveness (X32-F25): any packet from the
+// console counts; after StaleAfter without one the session is lost. A quiet
+// console is probed with /xinfo after QuietProbeAfter, and one /xinfo per
+// PingEvery checks the uplink (lost after DeadAfter without a reply).
 //
 // Background re-read (driver.Rereader): on request, one read-only pass over
 // every parameter, paced at one batch of reads per PingEvery, recovers changes
@@ -51,22 +52,46 @@ const Family driver.Family = "x32"
 // Timing holds every interval of the session. Defaults are documented in
 // docs/protocols/x32.md (X32-F20, X32-F25, X32-F27, X32-F50); tests scale them down.
 type Timing struct {
-	RenewEvery     time.Duration // /xremote and /meters renewal, <= TTL/3 (X32-F27)
-	PingEvery      time.Duration // /xinfo liveness poll (X32-F25)
-	DeadAfter      time.Duration // silence after which the console is lost (X32-F25)
-	ConnectTimeout time.Duration // identify + full initial read
-	ReadRetryEvery time.Duration // re-send unanswered reads and /xinfo during connect (X32-F07)
-	EchoWindow     time.Duration // how long a sent value is matched against pushes
+	RenewEvery      time.Duration // /xremote and /meters renewal, <= TTL/3 (X32-F27)
+	PingEvery       time.Duration // uplink /xinfo probe and re-read pacing (X32-F25)
+	DeadAfter       time.Duration // no /xinfo reply for this long: the uplink is lost (X32-F25)
+	StaleAfter      time.Duration // no packet at all for this long: the console is lost (X32-F25, SR-05)
+	QuietProbeAfter time.Duration // send /xinfo when nothing arrived for this long (X32-F25)
+	LivenessTick    time.Duration // how often the liveness rules above are checked
+	ConnectTimeout  time.Duration // identify + full initial read
+	ReadRetryEvery  time.Duration // re-send unanswered reads and /xinfo during connect (X32-F07)
+	EchoWindow      time.Duration // how long a sent value is matched against pushes
 }
 
-// DefaultTiming is used when Config.Timing is zero.
+// DefaultTiming is used for every zero field of Config.Timing.
 var DefaultTiming = Timing{
-	RenewEvery:     3 * time.Second,
-	PingEvery:      time.Second,
-	DeadAfter:      3 * time.Second,
-	ConnectTimeout: 5 * time.Second,
-	ReadRetryEvery: 300 * time.Millisecond,
-	EchoWindow:     2 * time.Second,
+	RenewEvery:      3 * time.Second,
+	PingEvery:       time.Second,
+	DeadAfter:       3 * time.Second,
+	StaleAfter:      1500 * time.Millisecond,
+	QuietProbeAfter: 400 * time.Millisecond,
+	LivenessTick:    100 * time.Millisecond,
+	ConnectTimeout:  5 * time.Second,
+	ReadRetryEvery:  300 * time.Millisecond,
+	EchoWindow:      2 * time.Second,
+}
+
+// withDefaults fills every zero field from DefaultTiming.
+func (t Timing) withDefaults() Timing {
+	or := func(v, def time.Duration) time.Duration {
+		if v == 0 {
+			return def
+		}
+		return v
+	}
+	d := DefaultTiming
+	return Timing{
+		RenewEvery: or(t.RenewEvery, d.RenewEvery), PingEvery: or(t.PingEvery, d.PingEvery),
+		DeadAfter: or(t.DeadAfter, d.DeadAfter), StaleAfter: or(t.StaleAfter, d.StaleAfter),
+		QuietProbeAfter: or(t.QuietProbeAfter, d.QuietProbeAfter), LivenessTick: or(t.LivenessTick, d.LivenessTick),
+		ConnectTimeout: or(t.ConnectTimeout, d.ConnectTimeout), ReadRetryEvery: or(t.ReadRetryEvery, d.ReadRetryEvery),
+		EchoWindow: or(t.EchoWindow, d.EchoWindow),
+	}
 }
 
 // Config configures the driver.
@@ -85,13 +110,9 @@ var _ driver.Driver = (*Driver)(nil)
 // ErrBadEndpoint is returned for an endpoint that is not an IP address.
 var ErrBadEndpoint = errors.New("x32: endpoint must be an IP address")
 
-// New returns a driver. A zero Config.Timing means DefaultTiming.
+// New returns a driver. Zero fields of Config.Timing take DefaultTiming.
 func New(cfg Config) *Driver {
-	t := cfg.Timing
-	if t == (Timing{}) {
-		t = DefaultTiming
-	}
-	return &Driver{timing: t, params: newParamTable(inputChannels)}
+	return &Driver{timing: cfg.Timing.withDefaults(), params: newParamTable(inputChannels)}
 }
 
 // Family implements driver.Driver.

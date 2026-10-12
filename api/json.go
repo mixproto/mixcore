@@ -258,20 +258,27 @@ type eventJSON struct {
 }
 
 type stateJSON struct {
-	Version int              `json:"version"`
-	Type    string           `json:"type"`
-	Seq     uint64           `json:"seq"`
-	Status  string           `json:"status"`
-	Reason  string           `json:"reason,omitempty"`
-	Console *consoleJSON     `json:"console,omitempty"`
-	Strips  []stripStateJSON `json:"strips,omitempty"`
-	Changes *[]changeJSON    `json:"changes,omitempty"` // present (maybe empty) in every diff
-	Events  []eventJSON      `json:"events,omitempty"`
+	Version int    `json:"version"`
+	Type    string `json:"type"`
+	Seq     uint64 `json:"seq"`
+	Status  string `json:"status"`
+	Reason  string `json:"reason,omitempty"`
+	// v0.1 connection fields, in every message.
+	StaleSinceMs int64            `json:"staleSinceMs,omitempty"`
+	Offline      bool             `json:"offline,omitempty"`
+	Console      *consoleJSON     `json:"console,omitempty"`
+	Strips       []stripStateJSON `json:"strips,omitempty"`
+	Changes      *[]changeJSON    `json:"changes,omitempty"` // present (maybe empty) in every diff
+	Events       []eventJSON      `json:"events,omitempty"`
 }
 
 // encodeUpdate renders a supervisor update as a state message with sequence seq.
 func encodeUpdate(u console.Update, seq uint64, full bool) ([]byte, error) {
-	out := stateJSON{Version: contractVersion, Seq: seq, Status: u.Status.String(), Reason: u.Reason, Events: eventsJSON(u.Events)}
+	out := stateJSON{Version: contractVersion, Seq: seq, Status: u.Status.String(), Reason: u.Reason, Events: eventsJSON(u.Events),
+		Offline: u.Offline}
+	if !u.StaleSince.IsZero() {
+		out.StaleSinceMs = u.StaleSince.UnixMilli()
+	}
 	if !full {
 		out.Type = "diff"
 		changes := make([]changeJSON, 0, len(u.Changes))

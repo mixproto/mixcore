@@ -36,6 +36,9 @@ const (
 	// maxPendingChanges bounds changes kept between two Drain calls; beyond it
 	// the next Drain returns a full snapshot instead.
 	maxPendingChanges = 1024
+	// OfflineAfter: a stale console is labelled offline after this long
+	// (design 8.1, decision D5). A label only: retries keep their pace.
+	OfflineAfter = 30 * time.Second
 	// stableAfter: a session that lived shorter than this counts as a failed
 	// attempt, so a console that accepts and drops us at once still gets backoff
 	// (and does not burn a push-client slot per retry). Design target.
@@ -71,14 +74,16 @@ type Change struct {
 // the previous Drain. Full means the state was replaced (connect, reconnect,
 // or too many changes to list). Events are never folded into Full.
 type Update struct {
-	Seq      uint64
-	Status   Status
-	Reason   string // why the status last changed (empty when live)
-	Identity driver.Identity
-	State    model.State
-	Full     bool
-	Changes  []Change
-	Events   []HoldEvent
+	Seq        uint64
+	Status     Status
+	Reason     string    // why the status last changed (empty when live)
+	StaleSince time.Time // when the status became stale; zero unless stale
+	Offline    bool      // stale for at least OfflineAfter
+	Identity   driver.Identity
+	State      model.State
+	Full       bool
+	Changes    []Change
+	Events     []HoldEvent
 }
 
 // Config configures a Supervisor.
@@ -101,18 +106,21 @@ type Supervisor struct {
 	notify chan struct{}
 	life   sync.Mutex // serialises Start and Stop, including Stop's wait
 
-	mu      sync.Mutex
-	status  Status
-	reason  string
-	ident   driver.Identity
-	state   model.State
-	sess    driver.Session
-	holds   holds
-	changes []Change
-	full    bool
-	seq     uint64
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
+	mu         sync.Mutex
+	status     Status
+	reason     string
+	staleSince time.Time
+	offline    bool
+	offlineT   *time.Timer
+	ident      driver.Identity
+	state      model.State
+	sess       driver.Session
+	holds      holds
+	changes    []Change
+	full       bool
+	seq        uint64
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
 
 	// link is the long-lived transport of drivers that implement
 	// driver.LinkOpener. Only the run goroutine uses it; Stop closes it after
@@ -221,7 +229,8 @@ func (s *Supervisor) Snapshot() Update {
 
 func (s *Supervisor) snapshotLocked() Update {
 	s.seq++
-	return Update{Seq: s.seq, Status: s.status, Reason: s.reason, Identity: s.ident, State: s.state}
+	return Update{Seq: s.seq, Status: s.status, Reason: s.reason, StaleSince: s.staleSince, Offline: s.offline,
+		Identity: s.ident, State: s.state}
 }
 
 func (s *Supervisor) signal() {
@@ -232,7 +241,31 @@ func (s *Supervisor) signal() {
 }
 
 func (s *Supervisor) setStatusLocked(st Status, reason string) {
+	if st == StatusStale && s.status != StatusStale {
+		s.staleSince = time.Now()
+		s.offlineT = time.AfterFunc(OfflineAfter, s.markOffline)
+	}
+	if st != StatusStale {
+		s.staleSince, s.offline = time.Time{}, false
+		if s.offlineT != nil {
+			s.offlineT.Stop()
+			s.offlineT = nil
+		}
+	}
 	s.status, s.reason = st, reason
+	s.full = true
+	s.signal()
+}
+
+// markOffline labels a console that has been stale for OfflineAfter.
+func (s *Supervisor) markOffline() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.status != StatusStale || s.offline || time.Since(s.staleSince) < OfflineAfter {
+		return // went live (or stopped) meanwhile
+	}
+	s.offline = true
+	s.cfg.Logger.Info("console: offline", "endpoint", s.cfg.Endpoint.Host)
 	s.full = true
 	s.signal()
 }

@@ -1,8 +1,16 @@
-# mixcore core API, contract v0
+# mixcore core API, contract v0.1
 
 The in-process API that every app uses to drive a console (`api.Engine` in Go; the `mobile` gomobile wrapper and the
 `capi` c-shared wrapper expose the same calls). Structured data crosses the boundary as JSON strings (schemas in this
 folder) or as a binary meter frame (`meter-frame.md`). v0 is unstable until the first tagged release.
+
+**v0.1 is backwards compatible with v0.** The `version` field of every JSON message stays `0`; v0.1 only adds optional
+fields, events, command types and calls (marked "v0.1" in the schemas). A v0 app that ignores unknown JSON keys keeps
+working unchanged. What v0.1 adds:
+
+| Area | Addition | Design ref |
+|---|---|---|
+| Connection | `staleSinceMs` and `offline` in every state message; stale after 1.5 s without any packet from the console | SR-05, CR-06, 8.1 |
 
 ## Calls
 
