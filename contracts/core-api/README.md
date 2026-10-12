@@ -70,7 +70,9 @@ behave the same and a UI bug cannot bypass them:
   item 17; XS10 avoids it): each entry's `writeMaxDB` is the top a write may reach (+59.5 mic, +19.5 line); a set above
   it is `ERR_INVALID_VALUE`, and a Gain gesture's cap stops there. Rule (lead decision, review pass 4): if hardware
   (x32.md item 17, xair.md item 22) shows that a family does not echo Gain writes, that family's Gain becomes read-only
-  (`writable: false`): the in-flight bound would otherwise rest on re-reads alone.
+  (`writable: false`): the in-flight bound would otherwise rest on re-reads alone. Until then, on a console that does
+  not echo Gain, a hold that has 8 values in flight stops at `atCap` in both directions, lowerings included, until the
+  next re-read ends them (intended: the core cannot know where the console is; lift and drag again after the re-read).
 
   The index is a model number, never UI text: the UI names a headamp by `bank` and `number` ("Local 1", "AES50 A 05",
   "Aux"). On x32 an input's `headamp` field says which headamp feeds it (`null`: none, the channel has no Gain); xair
