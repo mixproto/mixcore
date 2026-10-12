@@ -52,7 +52,8 @@ func (s *session) connect(ctx context.Context) error {
 	}
 	s.snapshot = state
 	s.caps = s.capabilities()
-	s.lastPong = time.Now() // the answered reads prove the uplink as well as an /xinfo reply
+	s.c.meters.SetAbsent(s.inputs, s.params.layout.Inputs) // the frame keeps its size; absent inputs read -inf
+	s.lastPong = time.Now()                                // the answered reads prove the uplink as well as an /xinfo reply
 	return nil
 }
 

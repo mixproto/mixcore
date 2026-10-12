@@ -7,6 +7,7 @@ package xair
 import (
 	"bytes"
 	"context"
+	"math"
 	"net"
 	"sync"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mixproto/mixcore/driver"
+	"github.com/mixproto/mixcore/meters"
 	simxair "github.com/mixproto/mixcore/sim/xair"
 )
 
@@ -122,6 +124,44 @@ func TestConnect_AbsentInputsAreReported(t *testing.T) {
 		c := r.connect().Capabilities()
 		if c.InputCount != 13 || c.AbsentInputs != 3 {
 			t.Fatalf("capabilities %+v", c)
+		}
+	})
+}
+
+// The frame keeps n = 18 (Main L/R at n-2, n-1) on a small model; the inputs
+// the mixer did not answer read -inf whatever bank 1 carries there.
+func TestMeters_AbsentInputsReadMinusInf(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t, simxair.Options{InputChannels: 12})
+		vals := make([]int16, 16)
+		for i := range vals {
+			vals[i] = -256 * int16(i+1) // -1 .. -16 dBFS
+		}
+		r.sim.SetMeterValues(vals)
+		r.sim.SetMeterValue(simxair.Bank1MainL, -512)
+		r.sim.SetMeterValue(simxair.Bank1MainL+1, -768)
+		sess := r.connect()
+		r.run(sess)
+		if err := sess.SetMeters(driver.MeterRequest{Inputs: true}); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Second)
+		var fr meters.Frame
+		if !r.slot.CopyLatest(&fr) || fr.Count != meterLevels {
+			t.Fatalf("frame count %d", fr.Count)
+		}
+		for i := range 12 {
+			if fr.Levels[i] != float32(-(i + 1)) {
+				t.Fatalf("input %d = %v", i+1, fr.Levels[i])
+			}
+		}
+		for i := 12; i < 16; i++ {
+			if !math.IsInf(float64(fr.Levels[i]), -1) {
+				t.Fatalf("absent input %d = %v, want -inf", i+1, fr.Levels[i])
+			}
+		}
+		if fr.Levels[16] != -2 || fr.Levels[17] != -3 {
+			t.Fatalf("Main L/R = %v %v", fr.Levels[16], fr.Levels[17])
 		}
 	})
 }

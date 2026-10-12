@@ -40,8 +40,11 @@ type MeterSink struct {
 	mu      sync.Mutex
 	enabled atomic.Bool
 	reset   atomic.Bool // set when meters are switched on: forget old levels first
-	frame   meters.Frame
-	msg     osc.Message
+	// absentFrom..absentTo are levels of input strips the console did not
+	// answer (XA-F72): published as -inf whatever the bank carries.
+	absentFrom, absentTo atomic.Int32
+	frame                meters.Frame
+	msg                  osc.Message
 }
 
 // NewMeterSink returns a sink that publishes to slot (nil: meters dropped).
@@ -83,11 +86,25 @@ func (m *MeterSink) Handle(pkt []byte, at time.Time) bool {
 	if !ok || m.codec.Decode(bank, blob, &m.frame) != nil {
 		return true
 	}
+	for i := m.absentFrom.Load(); i < m.absentTo.Load(); i++ {
+		m.frame.Levels[i] = float32(math.Inf(-1))
+	}
 	m.frame.Count = m.codec.Levels()
 	m.frame.Seq++
 	m.frame.At = at
 	m.slot.Publish(&m.frame)
 	return true
+}
+
+// SetAbsent makes levels from..to-1 read -inf (input strips the console did
+// not answer); from >= to clears it. Indexes are clamped to the frame.
+func (m *MeterSink) SetAbsent(from, to int) {
+	from, to = max(from, 0), min(to, m.codec.Levels())
+	if from >= to {
+		from, to = 0, 0
+	}
+	m.absentFrom.Store(int32(from))
+	m.absentTo.Store(int32(to))
 }
 
 func (m *MeterSink) silence() {
