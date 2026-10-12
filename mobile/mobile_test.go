@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"math"
+	"strings"
 	"testing"
 
 	"go.uber.org/goleak"
@@ -87,5 +88,24 @@ func TestReadMeterFrame_CallerBuffer(t *testing.T) {
 	}
 	if allocs := testing.AllocsPerRun(100, func() { ReadMeterFrame(buf) }); allocs != 0 {
 		t.Fatalf("ReadMeterFrame allocates %v times per call", allocs)
+	}
+}
+
+// The v0.1 UI helpers pass straight through to api (contract README).
+func TestUIHelpers(t *testing.T) {
+	if s := MeterScale(); !strings.Contains(s, `"peakHoldMs":1500`) || !strings.Contains(s, `"minDB":-60`) {
+		t.Fatalf("MeterScale = %s", s)
+	}
+	if got := MeterPosition(-30); got != 0.5 {
+		t.Fatalf("MeterPosition(-30) = %v", got)
+	}
+	if got := MeterRelease(-10, -40, 100); got != -12 {
+		t.Fatalf("MeterRelease = %v", got)
+	}
+	if got := FaderStep(math.Inf(-1), 1); got != -60 {
+		t.Fatalf("FaderStep(-inf, +1) = %v", got)
+	}
+	if got := FaderStep(-60, -1); !math.IsInf(got, -1) {
+		t.Fatalf("FaderStep(-60, -1) = %v", got)
 	}
 }

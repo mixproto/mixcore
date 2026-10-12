@@ -122,6 +122,8 @@ func FuzzParseCommand(f *testing.F) {
 	f.Add(cmd("fader", `"-inf"`, "macro"))
 	f.Add(cmd("mute", "true", "console"))
 	f.Add(`{"version":0,"type":"holdBegin","param":{"strip":{"kind":"main"},"field":"fader"},"origin":{"kind":"gesture"}}`)
+	f.Add(`{"version":0,"type":"toggle","param":{"strip":{"kind":"muteGroup","index":2},"field":"mute"},"origin":{"kind":"gesture"}}`)
+	f.Add(`{"version":0,"type":"set","param":{"strip":{"kind":"input","index":3},"field":"muteGroups"},"value":[1,6],"origin":{"kind":"gesture"}}`)
 	f.Fuzz(func(t *testing.T, in string) {
 		c, err := parseCommand(in)
 		if err != nil {
