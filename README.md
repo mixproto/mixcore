@@ -26,6 +26,7 @@ It is the core of [Mixhand](https://mixhand.dybyskz.com), and you can use it in 
 | `capi/` | the c-shared binding of `api/` (Windows DLL via P/Invoke; dylib/.so for interop tests), ABI in `contracts/core-api/capi.md` |
 | `sim/x32/` | console simulator used as the test oracle, written from `docs/protocols/x32.md` only |
 | `cmd/mixsim/` | serves the simulator on real UDP ports |
+| `cmd/mixprobe/` | guided hardware session against a real console on a lab network: checks the protocol facts, restores what it changed, writes a report |
 | `contracts/core-api/` | JSON Schema and binary meter frame spec of the API (v0, unstable) |
 | `docs/protocols/` | every protocol fact we implement, with its source |
 
@@ -39,6 +40,7 @@ make mobile-check   # gobind type check of mobile/ (no Xcode or NDK needed)
 make capi-check     # host c-shared library into build/capi + C smoke test against mixsim
 make xcframework DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer   # build/Mixcore.xcframework
 go run ./cmd/mixsim -demo   # a simulated X32 on 127.0.0.1:10023
+go run ./cmd/mixprobe --lab -host 192.168.1.62   # hardware session (amplifiers off; see the package doc)
 ```
 
 ## Compatibility
