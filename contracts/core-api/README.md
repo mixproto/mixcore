@@ -235,7 +235,8 @@ Rules of v0.5 (numbered rules below are amended in place):
    mid-drag); a read-back always is (it is the console's value). Everything else ends the hold as
    `externalChangeOnHeld`, also when its value matches one of ours: the desk, a scene recall, another client's echo.
    One finger per preamp: a `holdBegin` on a headamp's Gain that another client holds ends that client's hold
-   (`externalChangeOnHeld`, SR-15).
+   (`externalChangeOnHeld`, SR-15). **For UIs:** touching a Gain control takes that preamp away from another device
+   that is holding it; that device shows "Changed at the mixer" and its finger must lift and grab again.
 5. Echo: a diff caused by the app's own write carries the write's origin (`kind`, `clientId`, `seq`), so the UI can tell
    its own echo from a change made at the desk. A write of another client (another `clientId` through the same engine,
    or a MixLink client) carries that client's origin and is an external change for everyone else's holds.
@@ -269,7 +270,9 @@ Rules of v0.5 (numbered rules below are amended in place):
    console and is never refused.
    **Inside a hold (v0.5, CC-3)** the first write is bounded like a write outside a hold, against the console value and
    every value in flight (`fader-and-gain.md` 15: "the first from the console value"); every later one against the
-   value the hold wrote last and the latest value any client sent. The hold's start (`startDB`) is the latest value of
+   value the hold wrote last and the latest value any client sent. When no value is within 6 dB of all of them (the
+   values in flight span more than 12 dB), a `set` in a hold writes nothing (`written: false`, `value` is the hold's
+   start, the hold stays open) until the settle re-read brings them together (review re-check, lead decision). The hold's start (`startDB`) is the latest value of
    ours still in flight, where the console is going, else the console value. A candidate further than 6 dB is moved to 6 dB from
    it (state `free`, `value` says where; at 1 dB per 48 pt a finger never asks for it). The in-flight count of the next
    paragraph never refuses or stalls a hold: values in flight are kept per console step (at most one per step of the
