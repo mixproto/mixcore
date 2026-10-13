@@ -28,11 +28,15 @@ const (
 	silence = math.MinInt16
 )
 
-// Meter frame layout (contracts/core-api/meter-frame.md): inputs 1..16, then
+// Meter frame layout (contracts/core-api/meter-frame.md): inputs 1..16,
+// then (core-api v0.5) buses 1..6 and FX sends 1..4 (buses 7..10), then
 // Main L and Main R.
 const (
-	mainLLevel  = inputChannels     // level index of Main L; Main R follows
-	meterLevels = inputChannels + 2 // levels in a frame
+	busMeters     = 10                        // XA-F53: 6 buses + 4 FX sends, bank 1 values 26..35
+	bank1Bus1     = 26                        // XA-F53: value index of bus 1 in bank 1
+	busMeterLevel = inputChannels             // level index of bus 1
+	mainLLevel    = busMeterLevel + busMeters // level index of Main L; Main R follows
+	meterLevels   = mainLLevel + 2            // levels in a frame
 )
 
 var (
@@ -47,6 +51,7 @@ var (
 type meterCodec struct{}
 
 func (meterCodec) Levels() int           { return meterLevels }
+func (meterCodec) BusMeters() (int, int) { return busMeterLevel, busMeters }
 func (meterCodec) Requests() [][]osc.Arg { return meterRequests }
 
 func (meterCodec) Bank(pkt []byte) (int, bool) { return 1, bytes.HasPrefix(pkt, meterPrefix) }
@@ -55,7 +60,8 @@ func (meterCodec) Decode(_ int, blob []byte, fr *meters.Frame) error { return de
 
 // decodeBank1 reads a bank 1 blob (XA-F51, XA-F53): a little-endian int32
 // count, then count little-endian int16 values in 1/256 dB. Values 0..15 are
-// inputs 1..16 (pre-fader), 36 and 37 Main L/R (post-fader). The blob must
+// inputs 1..16 (pre-fader), 26..35 buses 1..6 and FX sends 1..4, 36 and 37
+// Main L/R (post-fader). The blob must
 // hold Main R, and the count must not exceed the blob; anything else is
 // rejected, never guessed.
 func decodeBank1(blob []byte, fr *meters.Frame) error {
@@ -69,6 +75,9 @@ func decodeBank1(blob []byte, fr *meters.Frame) error {
 	}
 	for i := range inputChannels {
 		fr.Levels[i] = dbfsFromWire(value(blob, i))
+	}
+	for b := range busMeters { // pre bus master (XA-F53 "all pre")
+		fr.Levels[busMeterLevel+b] = dbfsFromWire(value(blob, bank1Bus1+b))
 	}
 	fr.Levels[mainLLevel] = dbfsFromWire(value(blob, bank1MainL))
 	fr.Levels[mainLLevel+1] = dbfsFromWire(value(blob, bank1MainL+1))

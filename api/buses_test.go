@@ -148,8 +148,8 @@ func TestSnapshot_X32BusesSendsAndTaps(t *testing.T) {
 		e.startLive(t)
 		raw := e.rec.raw[len(e.rec.raw)-1]
 		for _, want := range []string{
-			`"buses":[{"index":1,"kind":"mix","name":"","colour":"off","faderDB":"-inf","mute":false,"linked":true,"sendPan":true},` +
-				`{"index":2,"kind":"mix","name":"Mon 2 Keys","colour":"blue","faderDB":"-inf","mute":false,"sendPan":true}`,
+			`"buses":[{"index":1,"kind":"mix","name":"","colour":"off","faderDB":"-inf","mute":false,"linked":true,"sendPan":true,"meterIndex":32},` +
+				`{"index":2,"kind":"mix","name":"Mon 2 Keys","colour":"blue","faderDB":"-inf","mute":false,"sendPan":true,"meterIndex":33}`,
 			`"sends":[{"bus":1,"levelDB":"-inf","on":true,"pan":0,"tap":"preFader"},{"bus":2,"levelDB":2,"on":true},`,
 			`"sendFields":{"on":true,"pan":"pair","tap":"pair"}`,
 			`"sendTaps":[{"tap":"input","label":"IN/LC"},{"tap":"preEq","label":"\u003c-EQ"},{"tap":"postEq","label":"EQ-\u003e"},` +

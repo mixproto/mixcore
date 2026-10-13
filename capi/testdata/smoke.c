@@ -109,11 +109,11 @@ static void gesture(void) {
 static void meters(uint8_t* frame) {
 	int32_t n = 0;
 	for (int i = 0; i < WAIT_STEPS && (n = MixMeterFrame(frame, MIX_METER_FRAME_MAX_BYTES)) <= 24; i++) sleep_ms(10);
-	CHECK(n == 24 + 34 * 4 && memcmp(frame, "MXMF", 4) == 0 && frame[6] == 34, "meter frame of %d bytes", n);
+	CHECK(n == 24 + 50 * 4 && memcmp(frame, "MXMF", 4) == 0 && frame[6] == 50, "meter frame of %d bytes", n);
 	uint8_t small[8] = {0};
 	CHECK(MixMeterFrame(small, (int32_t)sizeof small) == n && small[0] == 0, "short buffer must not be written");
 	CHECK(MixMeterFrame(NULL, 0) == n, "size query");
-	printf("meters: frame of %d bytes, 32 input levels + Main L/R\n", n);
+	printf("meters: frame of %d bytes, 32 input levels, 16 bus masters, Main L/R\n", n);
 }
 
 static int timing(uint8_t* frame) {

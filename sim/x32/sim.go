@@ -117,6 +117,7 @@ type Sim struct {
 	// Guarded by the core lock (Core.Do).
 	levels [inputChannels]float32 // linear input meter levels (X32-F54)
 	mainLR [2]float32             // linear Main L/R meter levels (X32-F55)
+	buses  [busMeters]float32     // linear bus master meter levels, bank 2 values 0..15 (X32-F55)
 }
 
 // New creates a simulator with the documented defaults applied to opts.
@@ -149,6 +150,15 @@ func silentGain(on bool) func(string) bool {
 func (s *Sim) SetMainLevels(l, r float32) {
 	s.Do(func(time.Time) []oscsim.Outgoing {
 		s.mainLR = [2]float32{l, r}
+		return nil
+	})
+}
+
+// SetBusLevels sets the linear meter levels of bus masters 1..n, bank 2
+// values 0..15 (X32-F55).
+func (s *Sim) SetBusLevels(levels []float32) {
+	s.Do(func(time.Time) []oscsim.Outgoing {
+		copy(s.buses[:], levels)
 		return nil
 	})
 }

@@ -160,8 +160,8 @@ func TestMeters_AbsentInputsReadMinusInf(t *testing.T) {
 				t.Fatalf("absent input %d = %v, want -inf", i+1, fr.Levels[i])
 			}
 		}
-		if fr.Levels[16] != -2 || fr.Levels[17] != -3 {
-			t.Fatalf("Main L/R = %v %v", fr.Levels[16], fr.Levels[17])
+		if fr.Levels[mainLLevel] != -2 || fr.Levels[mainLLevel+1] != -3 {
+			t.Fatalf("Main L/R = %v %v", fr.Levels[mainLLevel], fr.Levels[mainLLevel+1])
 		}
 	})
 }

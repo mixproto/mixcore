@@ -505,7 +505,7 @@ func encodeUpdateWith(u console.Update, seq uint64, full, demo, favourites bool)
 	out.AbsentInputs = absentInputsJSON(u.Capabilities)
 	out.Headamps = headampsJSON(u.State, u.Capabilities)
 	out.MuteGroups, out.DCAs = groupStatesJSON(u.State.MuteGroups()), dcasJSON(u.State)
-	out.Buses, out.Matrices = busesJSON(u.State), matricesJSON(u.State)
+	out.Buses, out.Matrices = busesJSON(u.State, u.Capabilities), matricesJSON(u.State)
 	out.SendFields, out.SendTaps = sendFieldsOf(u.State), sendTapsJSON(u.State, u.Capabilities)
 	if u.Capabilities.MuteGroupMembershipUnknown {
 		known := false

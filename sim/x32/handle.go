@@ -25,6 +25,7 @@ const (
 	meterBank1Values  = 96 // X32-F51: 32 inputs + 32 gate GR + 32 dynamics GR
 	meterBank2Values  = 49 // X32-F55: 16 buses, 6 matrices, main L, R, M/C, 24 GR
 	bank2MainL        = 22 // X32-F55
+	busMeters         = 16 // X32-F55: bank 2 values 0..15 are the bus masters
 	infoServerVersion = "V2.05"
 	infoServerName    = "osc-server"
 	minTimeFactor     = 1
@@ -73,6 +74,7 @@ func (f *family) MeterPacket(bank string) []byte {
 	var blob []byte
 	if bank == bankBuses {
 		var levels [bank2MainL + 2]float32
+		copy(levels[:busMeters], f.buses[:])
 		levels[bank2MainL], levels[bank2MainL+1] = f.mainLR[0], f.mainLR[1]
 		blob = appendMeterBlob(nil, meterBank2Values, levels[:])
 	} else {

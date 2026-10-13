@@ -26,7 +26,7 @@ func TestReadMeterFrame_FillsCallerBufferOrReportsSize(t *testing.T) {
 		buf := make([]byte, MeterFrameMaxBytes)
 		n := e.eng.ReadMeterFrame(buf)
 		other := e.eng.MeterFrame() // may be a newer frame: compare the layout, not the levels
-		if n != meters.FrameHeaderSize+34*4 || len(other) != n || !bytes.Equal(buf[:8], other[:8]) {
+		if n != meters.FrameHeaderSize+50*4 || len(other) != n || !bytes.Equal(buf[:8], other[:8]) {
 			t.Fatalf("ReadMeterFrame = %d bytes, want a frame shaped like MeterFrame (%d bytes)", n, len(other))
 		}
 		small := bytes.Repeat([]byte{0xAA}, 10)

@@ -22,12 +22,14 @@ const (
 	meterValueSize = 4 // little-endian float32 per value (X32-F53)
 )
 
-// Meter frame layout (contracts/core-api/meter-frame.md): inputs 1..32, then
-// Main L and Main R.
+// Meter frame layout (contracts/core-api/meter-frame.md): inputs 1..32,
+// then (core-api v0.5) bus masters 1..16, then Main L and Main R.
 const (
-	mainLLevel  = inputChannels     // level index of Main L; Main R follows
-	meterLevels = inputChannels + 2 // levels in a frame
-	bank2MainL  = 22                // X32-F55: value index of Main L in bank 2; Main R follows
+	busMeters     = 16                        // X32-F55: bank 2 values 0..15 are the bus masters
+	busMeterLevel = inputChannels             // level index of bus 1
+	mainLLevel    = busMeterLevel + busMeters // level index of Main L; Main R follows
+	meterLevels   = mainLLevel + 2            // levels in a frame
+	bank2MainL    = 22                        // X32-F55: value index of Main L in bank 2; Main R follows
 )
 
 // Meter banks as codec bank numbers.
@@ -50,6 +52,7 @@ var (
 type meterCodec struct{}
 
 func (meterCodec) Levels() int           { return meterLevels }
+func (meterCodec) BusMeters() (int, int) { return busMeterLevel, busMeters }
 func (meterCodec) Requests() [][]osc.Arg { return meterRequests }
 
 func (meterCodec) Bank(pkt []byte) (int, bool) {
@@ -79,8 +82,9 @@ func (meterCodec) Decode(bank int, blob []byte, fr *meters.Frame) error {
 	return nil
 }
 
-// decodeMainLR reads Main L/R of a bank 2 blob (X32-F53, X32-F55) into
-// fr.Levels[mainLLevel] and fr.Levels[mainLLevel+1].
+// decodeMainLR reads a bank 2 blob (X32-F53, X32-F55): the bus masters
+// (values 0..15) into fr.Levels[busMeterLevel..], Main L/R (values 22, 23)
+// into fr.Levels[mainLLevel] and fr.Levels[mainLLevel+1].
 func decodeMainLR(blob []byte, fr *meters.Frame) error {
 	if len(blob) < meterCountSize {
 		return errBadMeters
@@ -90,10 +94,14 @@ func decodeMainLR(blob []byte, fr *meters.Frame) error {
 	if count > avail || count < bank2MainL+2 {
 		return errBadMeters
 	}
-	for i := range 2 {
-		off := meterCountSize + (bank2MainL+i)*meterValueSize
-		fr.Levels[mainLLevel+i] = meters.LinearToDBFS(math.Float32frombits(binary.LittleEndian.Uint32(blob[off:])))
+	value := func(i int) float32 {
+		off := meterCountSize + i*meterValueSize
+		return meters.LinearToDBFS(math.Float32frombits(binary.LittleEndian.Uint32(blob[off:])))
 	}
+	for b := range busMeters {
+		fr.Levels[busMeterLevel+b] = value(b)
+	}
+	fr.Levels[mainLLevel], fr.Levels[mainLLevel+1] = value(bank2MainL), value(bank2MainL+1)
 	return nil
 }
 

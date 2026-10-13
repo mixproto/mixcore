@@ -179,7 +179,7 @@ func changeIn(m stateJSON, kind string, index int, field string) *changeJSON {
 // moving inputs, and a sounding Main L/R.
 func assertDemoMeters(t *testing.T, eng *Engine, fam string) {
 	t.Helper()
-	want := map[string]int{familyX32: 34, familyXAir: 18}[fam]
+	want := map[string]int{familyX32: 50, familyXAir: 28}[fam] // v0.5: bus meters between the inputs and Main L/R
 	a := eng.MeterFrame()
 	time.Sleep(300 * time.Millisecond)
 	synctest.Wait()
@@ -193,6 +193,12 @@ func assertDemoMeters(t *testing.T, eng *Engine, fam string) {
 	moved := false
 	for i := range n - 2 {
 		moved = moved || lv(a, i) != lv(b, i)
+	}
+	busFirst := map[string]int{familyX32: 32, familyXAir: 16}[fam]
+	for bus := range 6 { // the six monitor mixes carry the band: their meters move (v0.5, CC-13)
+		if l := lv(b, busFirst+bus); l < -60 || l > 0 {
+			t.Fatalf("%s bus %d meter %v dBFS", fam, bus+1, l)
+		}
 	}
 	mainL, mainR := lv(b, n-2), lv(b, n-1)
 	if !moved || mainL < -40 || mainL > 0 || mainR < -40 || mainR > 0 {

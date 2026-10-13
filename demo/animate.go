@@ -18,8 +18,12 @@ import (
 // mainCeilingDB caps Main L/R: the demo never shows its own clip.
 const mainCeilingDB = 0.0
 
-// stripAddrs are the addresses the animator reads per input, built once.
-type stripAddrs struct{ fader, on, groups, dcas, pan string }
+// stripAddrs are the addresses the animator reads per input, built once;
+// sends[b] is the send level into monitor bus b+1.
+type stripAddrs struct {
+	fader, on, groups, dcas, pan string
+	sends                        [len(monitorBuses)]string
+}
 
 // stripMix is what the main mix needs of one input this tick.
 type stripMix struct {
@@ -41,6 +45,7 @@ type animator struct {
 	dcaAddrs   []string // /dca/N/on (X32-F37; xair.md section 3.2)
 	levels     []float64
 	mix        []stripMix
+	buses      [len(monitorBuses)]float64 // bus meters in dBFS this tick
 	deskNext   int
 }
 
@@ -50,6 +55,9 @@ func newAnimator(sim console, law driver.FaderLaw, fam family, out meterOut, log
 	for i := range a.addrs {
 		root := chRoot(i + 1)
 		a.addrs[i] = stripAddrs{fader: root + "/mix/fader", on: root + "/mix/on", groups: root + "/grp/mute", dcas: root + "/grp/dca"}
+		for b := range a.addrs[i].sends {
+			a.addrs[i].sends[b] = fmt.Sprintf("%s/mix/%02d/level", root, b+1) // two digits in both families
+		}
 		if fam.hasPan {
 			a.addrs[i].pan = root + "/mix/pan"
 		}
@@ -102,7 +110,22 @@ func (a *animator) step(t float64) {
 	}
 	a.readMix()
 	l, r := mainMix(a.levels, a.mix, a.mainDB())
-	a.out.publish(a.levels, l, r)
+	a.busMix()
+	a.out.publish(a.levels, a.buses[:], l, r)
+}
+
+// busMix is each monitor bus's meter: the power sum of the pre-fader sends
+// into it, before the bus master (the xair tap, XA-F53 "all pre"; the x32
+// bus tap is not documented, the demo uses the same).
+func (a *animator) busMix() {
+	for b := range a.buses {
+		var p float64
+		for i, ad := range a.addrs {
+			amp := dbToAmp(a.levels[i] + a.law.DBFromPosition(a.floatAt(ad.sends[b])))
+			p += amp * amp
+		}
+		a.buses[b] = ampToDB(math.Sqrt(p))
+	}
 }
 
 // readMix reads faders, mutes, membership and pans as the console holds them now.
