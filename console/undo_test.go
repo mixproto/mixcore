@@ -288,3 +288,36 @@ func TestUndo_HoldEndedByTheDeskIsAConflict(t *testing.T) {
 		}
 	})
 }
+
+// A new entry reaches the dispatcher even when no echo follows: one
+// coalesced signal at most undoSignalDelay after a burst of writes.
+func TestUndo_EntrySignalsOnceForABurst(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, _ := startSafe(t, SafetyConfig{}, safetyState(-6))
+		_ = sup.Drain()
+		select {
+		case <-sup.Notify():
+		default:
+		}
+		for _, v := range []float64{-5, -4, -3} { // no echo: the fake console says nothing
+			if _, err := sup.Write(set(ch1Fader, lvl(t, v), gesture)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		select {
+		case <-sup.Notify():
+			t.Fatal("signalled at once: one signal per write would wake the dispatcher per Apply")
+		default:
+		}
+		time.Sleep(undoSignalDelay)
+		synctest.Wait()
+		select {
+		case <-sup.Notify():
+		default:
+			t.Fatal("no signal after the delay")
+		}
+		if e := newestUndo(t, sup.Drain(), gesture.ClientID); dbOf(e.To) != -3 {
+			t.Fatalf("entry %+v", e)
+		}
+	})
+}

@@ -167,7 +167,7 @@ func (s *demoSession) meters(fam string) {
 		}
 		last = f
 	}
-	if n := int(binary.LittleEndian.Uint16(last[6:])); n != map[string]int{familyX32: 34, familyXAir: 18}[fam] ||
+	if n := int(binary.LittleEndian.Uint16(last[6:])); n != map[string]int{familyX32: 50, familyXAir: 28}[fam] || // v0.5 bus meters
 		lv(first, 0) == lv(last, 0) || lv(last, n-2) < -40 {
 		s.t.Fatal("meters must follow the family map, move and carry Main L/R")
 	}

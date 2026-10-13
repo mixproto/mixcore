@@ -5,7 +5,8 @@
 package api
 
 import (
-	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/mixproto/mixcore/console"
 	"github.com/mixproto/mixcore/model"
@@ -84,10 +85,25 @@ func scopeEventsJSON(evs []console.ScopeEvent) []eventJSON {
 }
 
 // v05Key is what the dispatcher compares to send a message when only the
-// v0.5 state moved (an undo ask ran out, the PIN lock, the favourites).
+// v0.5 state moved (an undo ask ran out, the PIN lock). Built without
+// reflection: it runs on every delivery.
 func v05Key(u console.Update) string {
-	return fmt.Sprint(u.ShowModeLocked, u.Favourites, u.Undo)
+	var b strings.Builder
+	b.WriteString(strconv.FormatBool(u.ShowModeLocked))
+	for _, s := range u.Undo {
+		b.WriteString("|" + s.ClientID + " " + s.Param.String() + " " + s.From.String() + " " + s.To.String() + " " + strings.Join(s.Asks, ","))
+		if s.Scene != nil {
+			b.WriteString(" " + strconv.Itoa(s.Scene.Number) + " " + s.Scene.Name)
+		}
+	}
+	return b.String()
 }
 
 // favouritesKey tells the dispatcher when the favourites changed.
-func favouritesKey(u console.Update) string { return fmt.Sprint(u.Favourites) }
+func favouritesKey(u console.Update) string {
+	var b strings.Builder
+	for _, r := range u.Favourites {
+		b.WriteString(r.String() + "|")
+	}
+	return b.String()
+}

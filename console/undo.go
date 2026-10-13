@@ -32,6 +32,10 @@ const (
 	undoRaiseAskDB   = 6.0              // SR-13: an undo raising more than this asks
 	undoGainBoundDB  = gainBoundDB      // SR-31: an undo moving Gain more than this asks
 	recentLowerSlack = time.Millisecond // the summary changes just after the 30 s
+	// undoSignalDelay coalesces the signals of history changes: a burst of
+	// writes wakes the dispatcher at most this often (Apply stays cheap);
+	// the write's own echo usually delivers the new entry sooner.
+	undoSignalDelay = 50 * time.Millisecond
 )
 
 // UndoKind is what an entry changed.
@@ -101,6 +105,7 @@ type undoEntry struct {
 type undoHistory struct {
 	byClient map[string][]undoEntry
 	expiry   *time.Timer // signals when a raiseAfterRecentLower ask runs out
+	notify   *time.Timer // a pending coalesced signal of a history change
 }
 
 func newUndoHistory() undoHistory { return undoHistory{byClient: map[string][]undoEntry{}} }
@@ -236,7 +241,21 @@ func (s *Supervisor) recordEntryLocked(o driver.Origin, p model.ParamRef, before
 	if kind == UndoLevel && dbOf(after) < dbOf(before) { // a lowering: its ask runs out after 30 s
 		s.armUndoExpiryLocked(recentLowerAsk + recentLowerSlack)
 	}
-	s.signal()
+	s.undoChangedLocked()
+}
+
+// undoChangedLocked signals the dispatcher once, undoSignalDelay after the
+// first history change since the last such signal. Callers hold mu.
+func (s *Supervisor) undoChangedLocked() {
+	if s.undo.notify != nil {
+		return // the pending signal covers this change too
+	}
+	s.undo.notify = time.AfterFunc(undoSignalDelay, func() {
+		s.mu.Lock()
+		s.undo.notify = nil
+		s.mu.Unlock()
+		s.signal()
+	})
 }
 
 // armUndoExpiryLocked signals the dispatcher after d, so the state's undo
