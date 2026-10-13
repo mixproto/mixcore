@@ -309,3 +309,16 @@ func TestPause_StallsWithoutClosing(t *testing.T) {
 		}
 	})
 }
+
+// TestMaxPipelined: a console that handles only the first request of
+// each received burst (item 3, pipelining).
+func TestMaxPipelined(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t, Options{MaxPipelined: 1})
+		p := r.dial()
+		p.send("DFD1 D7 38AE75C2 DC D7 F50F69F8 DC")
+		if got := pushes(t, p.recv(wait)); len(got) != 1 {
+			t.Fatalf("answers to a burst of two: %+v", got)
+		}
+	})
+}

@@ -38,6 +38,7 @@ type client struct {
 	meter []byte
 	sel   *node
 	reply []byte
+	asked int      // requests of the current burst (MaxPipelined)
 	sub   meterSub // guarded by Sim.mu (the meter goroutine reads it)
 }
 
@@ -127,7 +128,7 @@ func (s *Sim) handleBytes(cl *client, b []byte) bool {
 	if len(cl.data) > maxBuffered || len(cl.meter) > maxBuffered {
 		return false
 	}
-	cl.reply = cl.reply[:0]
+	cl.reply, cl.asked = cl.reply[:0], 0
 	cl.data = cl.data[s.processData(cl, cl.data):]
 	cl.meter = cl.meter[s.processMeter(cl, cl.meter):]
 	if len(cl.reply) > 0 {
@@ -169,10 +170,15 @@ func (s *Sim) token(cl *client, tok token) {
 			}
 			return nil
 		})
-	case tkData:
-		s.dataRequest(cl)
-	case tkDefs:
-		s.defRequest(cl)
+	case tkData, tkDefs:
+		if cl.asked++; s.opts.MaxPipelined > 0 && cl.asked > s.opts.MaxPipelined {
+			return // over the console's pipeline: dropped (item 3)
+		}
+		if tok.kind == tkData {
+			s.dataRequest(cl)
+		} else {
+			s.defRequest(cl)
+		}
 	case tkInt, tkFloat, tkRaw, tkText, tkClick, tkStep:
 		s.write(cl, cl.sel, tok)
 	}

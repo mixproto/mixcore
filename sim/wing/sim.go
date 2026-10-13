@@ -96,6 +96,10 @@ type Options struct {
 	// only a mute group or a DCA mutes it: 2 (default, a value whose
 	// meaning the document leaves open) or 1.
 	GroupMuteValue int32
+	// MaxPipelined: [TO-VERIFY] item 3. How many data or definition
+	// requests of one received burst the console answers; the rest are
+	// dropped. 0 (default): all.
+	MaxPipelined int
 	// UnknownPaths are leaves this console does not have (a schema
 	// difference, WG-F35): they are not in the tree at all.
 	UnknownPaths []string

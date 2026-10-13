@@ -495,9 +495,12 @@ WING Edit or on the console unless an item says "probe", which means a one-off r
 2. **Strip and send counts per model (WG-F02, WG-F03, WG-F35, 3.3 footnote).** Introspect (`DD`) `/ch/1/main`,
    `/aux/1/in/set`, `/io/in/LCL`, `/dca/1/name`, `/mgrp/1/name`, `/aux/1/dyn`. Pass: the counts, the `$g` presence on
    aux, the name lengths, and whether a Rack has 8 main sends.
-3. **Node data request (WG-F31).** Probe: `D7 <hash of /ch/1> DC`; log every token until silence for 1 s. Pass: the
-   reply is `D7 <hash> <value>` per leaf; whether it ends with `DE`; its byte size and duration; same for `/ch` (40
-   strips).
+3. **Node data request and pipelining (WG-F31).** Probe: `D7 <hash of /ch/1> DC`; log every token until silence for
+   1 s. Pass: the reply is `D7 <hash> <value>` per leaf; whether it ends with `DE`; its byte size and duration; same
+   for `/ch` (40 strips). Then pipelining: send 50, then 500 leaf data requests (and 50 definition requests) in one
+   TCP write without waiting, and log which are answered, in which order, and whether any is dropped or the
+   connection closed. Pass: the largest burst answered in full (the driver asks unanswered ones again in batches of
+   4, then one at a time; `sim/wing` option `MaxPipelined`).
 4. **Echo of our own writes (WG-F24).** Probe with two TCP connections A and B. From A write `/ch/40/fdr` -20.0 dB
    (ch 40 muted, no source). Log what A and B receive within 500 ms. Repeat for `/ch/40/mute` 1 then 0 and for
    `/ch/40/name`. Then write the value the console already has. Pass: table of echoes on A and B (decides H1/H2 of 2.4
@@ -561,13 +564,17 @@ makes where this file leaves a gap. Family status: in development until the hard
 | Area | What the code does | Facts |
 |---|---|---|
 | Hashes | No hash table ships. At the first connect of a link the driver walks the nodes it models with `DA DD` and `D7 <hash> DD` only and maps paths to hashes from the definitions' names; the walk is cached per link and repeated only when `$firmware` changes. Open question 5 is therefore moot for the driver; the simulator uses the eight hashes of this file and placeholders for the rest. | WG-F31..F33, WG-F35 |
-| Definition answers | A definition belongs to the requested node whose hash is its parent; a level ends after one `DE` per request, or after 1 s of silence once every node that answered has its `DE`. Data requests are never in flight while a walk level runs (a `DE` after data, item 3). | WG-F30, WG-F31, WG-F33 |
+| Definition answers | A definition belongs to the requested node whose hash is its parent (any parent only on the root level); names are one path segment; each modelled leaf must have its expected type. A walk holds at most 4096 children per node, 60 000 definitions and 16 MiB; enum definitions over 1024 items are rejected; definitions are parsed only during a walk. A level is asked in one burst; nodes that got no definitions are asked again one at a time (item 3). Data requests are never in flight while a walk level runs (a `DE` after data, item 3). | WG-F30, WG-F31, WG-F33 |
+| Reads | One burst of data requests; unanswered ones are asked again in batches of 4, then one at a time, for three rounds; then a required parameter fails the connect and others are absent. | WG-F31, item 3 |
+| Schema cache | Kept per link only after a successful connect, dropped on any failure, checked on reuse with one fresh `/ch` definition request; three schema failures in a row stop dialing (protocol mismatch). | WG-F32, WG-F35 |
 | Undefined bytes | A token starting with `E0`..`FF` (not in WG-F30) ends the connection (stale, reconnect, full re-read) instead of a guessed length that could misread payload bytes as a hash and a value. The simulator ignores such bytes. | WG-F30 |
 | Receive channel | Bytes before the console's first `DF Dn` count as data-channel bytes. | WG-F13, WG-F14 |
+| Liveness | A complete message is a sign of life. 1.5 s without one: input locked (stale) while the connection stays; 5 s, or 1.5 s with the meter stream silent too: the connection is closed and reopened. | WG-F25, 2.4 |
+| Effective mute | `<s>/$mute` is read as the console's own report: 0 not muted, 1 muted, 2 unknown (item 12); mute-group membership is unknown (item 11), so an unmuted strip is reported unknown while a mute group is engaged. DCA membership is reported from tags; `/cfg/dcamgrp` only changes the rule. | WG-F24, 3.2 |
 | Echo | Section 2.4 as written: echo window 2 s, read-back 150 ms after the last write, `EchoesOwnWrites` true. Fader values match within half of a 1024-step display position or 0.05 dB (item 10: a console that rounds to 0.1 dB). | WG-F24, WG-F60, WG-F61 |
 | Fader law (UI) | The X32 four-segment law, which contains every raw point of WG-F61; it only draws the scale (the wire carries dB). | WG-F60, WG-F61 |
 | Gain | Law from the console's definition of `/io/in/<grp>/<n>/g`; writable on `LCL` only, never the wire maximum; AES50 A and B read-only (open question 2 default); AES50 C not modelled yet. Local count: 24 when the model string contains `rack` or `compact`, else 8. | WG-F03, WG-F62, 3.4 |
-| Membership | DCA membership from `#D1`..`#D16` in `tags`, any non-digit ends a tag (item 11); reported empty while `/cfg/dcamgrp` = 0. Mute-group membership of strips is not read (item 11). | 3.2 |
+| Membership | DCA membership from `#D1`..`#D16` in `tags`, any non-digit ends a tag (item 11). Mute-group membership of strips is not read (item 11). | 3.2 |
 | Mains | `/main/1` is the model's main (open question 4 default); mains 2..4 are not modelled yet. | 3.1 |
 | Remote lock | `/$syscfg/tcplock` = 1: every write is refused in the driver (`ErrUnsupported`). | WG-F26 |
 | Scene recall | Burst rule only (low confidence); `$actidx` and `$active` are not used until item 17. | section 7 |

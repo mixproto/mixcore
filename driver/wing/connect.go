@@ -7,6 +7,8 @@ package wing
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -177,54 +179,76 @@ func (s *session) readInitial(ctx context.Context) error {
 
 func isAES(headamp int) bool { return headamp > aesAOffset }
 
+// Read retries (review go M2): a console may drop requests beyond its
+// pipeline (item 3), so unanswered reads are asked again in small batches.
+const (
+	readRetryRounds = 3
+	readBatch       = 4
+)
+
 // readSet sends one data request per parameter (D7 <hash> DC, WG-F31) and
 // collects the values; pushes of the same parameters count as answers.
-// Required parameters must answer within the connect timeout; the others
-// get OptionalWait after the required ones and are absent if silent.
+// Reads still unanswered are asked again, readBatch at a time, and one at
+// a time once a batch comes back incomplete, for readRetryRounds rounds. Then a required parameter fails the connect
+// (ErrNoReply) and any other is absent for the session.
 func (s *session) readSet(ctx context.Context, idxs []int) error {
 	if len(idxs) == 0 {
 		return nil
 	}
-	var req []byte
-	left, required := map[int]bool{}, 0
+	left := make(map[int]bool, len(idxs))
 	for _, i := range idxs {
-		req = wingproto.AppendValueRead(req, s.tab.all[i].hash)
 		left[i] = true
-		if s.tab.all[i].required {
-			required++
+	}
+	if err := s.askValues(ctx, idxs, left); err != nil {
+		return err
+	}
+	batch := readBatch
+	for round := 0; round < readRetryRounds && len(left) > 0; round++ {
+		missing := slices.Sorted(maps.Keys(left))
+		for start := 0; start < len(missing); start += batch {
+			which := missing[start:min(start+batch, len(missing))]
+			if err := s.askValues(ctx, which, left); err != nil {
+				return err
+			}
+			if slices.ContainsFunc(which, func(i int) bool { return left[i] }) {
+				batch = 1 // this console drops pipelined requests: one at a time
+			}
 		}
+	}
+	for _, i := range slices.Sorted(maps.Keys(left)) {
+		if s.tab.all[i].required {
+			return fmt.Errorf("%w: %s", ErrNoReply, s.tab.all[i].path)
+		}
+		s.absent[i] = true
+		s.log.Info("wing: parameter did not answer; absent for this session", "path", s.tab.all[i].path)
+	}
+	return nil
+}
+
+// askValues reads the parameters in which and collects answers until each
+// is answered or OptionalWait passes without a message.
+func (s *session) askValues(ctx context.Context, which []int, left map[int]bool) error {
+	var req []byte
+	for _, i := range which {
+		req = wingproto.AppendValueRead(req, s.tab.all[i].hash)
 	}
 	if err := s.c.writeData(req); err != nil {
 		return lost(err)
 	}
-	var optionalSince time.Time
-	for len(left) > 0 {
-		if required == 0 && optionalSince.IsZero() {
-			optionalSince = time.Now()
-		}
-		wait := s.timing.ConnectTimeout
-		if !optionalSince.IsZero() {
-			if wait = s.timing.OptionalWait - time.Since(optionalSince); wait <= 0 {
-				break
-			}
-		}
-		m, ok, err := s.next(ctx, wait)
+	for slices.ContainsFunc(which, func(i int) bool { return left[i] }) {
+		m, ok, err := s.next(ctx, s.timing.OptionalWait)
 		if err != nil {
 			return err
 		}
-		if !ok || m.kind != msgValue {
+		if !ok {
+			return nil
+		}
+		if m.kind != msgValue {
 			continue
 		}
-		if i, known := s.tab.byHash[m.hash]; known && s.acceptInitial(i, m.val) && left[i] {
+		if i, known := s.tab.byHash[m.hash]; known && s.acceptInitial(i, m.val) {
 			delete(left, i)
-			if s.tab.all[i].required {
-				required--
-			}
 		}
-	}
-	for i := range left {
-		s.absent[i] = true
-		s.log.Info("wing: parameter did not answer; absent for this session", "path", s.tab.all[i].path)
 	}
 	return nil
 }

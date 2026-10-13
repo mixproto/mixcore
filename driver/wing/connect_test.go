@@ -121,3 +121,26 @@ func TestBuildTable_EmptySchema(t *testing.T) {
 		t.Fatalf("empty schema: %v", err)
 	}
 }
+
+// TestConnect_ConsoleWithoutPipelining (review go M2): a console that
+// answers only one request of each burst still gives the full state;
+// unanswered nodes and reads are asked again in small batches.
+func TestConnect_ConsoleWithoutPipelining(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t, simwing.Options{MaxPipelined: 1})
+		mustSet(t, r.sim, "/ch/40/name", "Last")
+		mustSet(t, r.sim, "/io/in/LCL/8/g", 30.0)
+		s := r.connect()
+		c := s.Capabilities()
+		if c.InputCount != 40 || c.DCAs != 16 || c.MuteGroups != 8 || countBank(c, model.BankLocal) != 8 {
+			t.Fatalf("capabilities %+v", c)
+		}
+		st := s.Snapshot()
+		if ch, _ := st.Strip(model.StripRef{Kind: model.StripInput, Index: 40}); ch.Name != "Last" {
+			t.Fatalf("ch 40 %+v", ch)
+		}
+		if h, _ := st.Strip(model.StripRef{Kind: model.StripHeadamp, Index: 8}); h.GainDB != 30 {
+			t.Fatalf("headamp 8 %+v", h)
+		}
+	})
+}

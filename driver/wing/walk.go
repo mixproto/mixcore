@@ -144,59 +144,94 @@ func expand(pattern string, defs map[string]wingproto.Def) []string {
 	return paths
 }
 
-// walkLevel sends the definition requests of one level at once and collects
-// the answers. A definition belongs to the requested node whose hash is its
-// parent (WG-F33); on the root level every definition belongs to the root.
-// The level ends when one DE per request arrived (WG-F30). Should a console
-// send no DE for a node without children, the level also ends after
-// WalkQuiet of silence once there are at least as many DEs as nodes that
-// answered. The caller makes sure no data request is unanswered before a
-// level starts (a DE after a data reply is unverified, item 3).
+// walkLevel asks for the definitions of one level's nodes at once, then
+// asks again, one at a time, for every node that got none (review go M2:
+// a console may drop requests beyond its pipeline, item 3). A definition
+// belongs to the requested node whose hash is its parent (WG-F33); on the
+// root level every definition belongs to the root. A node that still has
+// no definitions after its own request has no children.
 func (s *session) walkLevel(ctx context.Context, nodes []walkNode, budget *walkBudget) ([][]wingproto.Def, error) {
-	var req []byte
 	byParent := map[uint32]int{}
+	all := make([]int, len(nodes))
 	for i, n := range nodes {
-		if n.root {
-			req = wingproto.AppendDefRequest(wingproto.AppendRoot(req))
-			continue
+		all[i] = i
+		if !n.root {
+			byParent[n.hash] = i
 		}
-		req = wingproto.AppendDefsOf(req, n.hash)
-		byParent[n.hash] = i
-	}
-	if err := s.c.writeData(req); err != nil {
-		return nil, lost(err)
 	}
 	out := make([][]wingproto.Def, len(nodes))
-	ends, answered := 0, 0
-	for ends < len(nodes) {
-		m, ok, err := s.next(ctx, s.timing.WalkQuiet)
-		if err != nil {
-			return nil, fmt.Errorf("schema walk: %w", err)
+	if err := s.askDefs(ctx, nodes, all, byParent, out, budget); err != nil {
+		return nil, err
+	}
+	for i := range nodes {
+		if len(out[i]) > 0 {
+			continue
 		}
-		switch {
-		case !ok && answered > 0 && ends >= answered:
-			return out, nil
-		case !ok:
-		case m.kind == msgDef:
-			if err := budget.take(m.size); err != nil {
-				return nil, err
-			}
-			i, ok := s.attribute(nodes, byParent, m)
-			if !ok {
-				continue
-			}
-			if len(out[i]) >= maxDefsPerNode {
-				return nil, fmt.Errorf("%w: more than %d children of %s", errWalkLimit, maxDefsPerNode, nodes[i].path)
-			}
-			if len(out[i]) == 0 {
-				answered++
-			}
-			out[i] = append(out[i], m.def)
-		case m.kind == msgEnd:
-			ends++
+		if err := s.askDefs(ctx, nodes, []int{i}, byParent, out, budget); err != nil {
+			return nil, err
 		}
 	}
 	return out, nil
+}
+
+// askDefs sends the definition requests of the nodes in which and collects
+// answers until each of them has definitions and as many DE tokens as
+// requests arrived (WG-F30), or WalkQuiet passes without a message.
+// Late answers to earlier requests are attributed by parent all the same.
+func (s *session) askDefs(ctx context.Context, nodes []walkNode, which []int, byParent map[uint32]int,
+	out [][]wingproto.Def, budget *walkBudget) error {
+	var req []byte
+	for _, i := range which {
+		if nodes[i].root {
+			req = wingproto.AppendDefRequest(wingproto.AppendRoot(req))
+		} else {
+			req = wingproto.AppendDefsOf(req, nodes[i].hash)
+		}
+	}
+	if err := s.c.writeData(req); err != nil {
+		return lost(err)
+	}
+	for ends := 0; ends < len(which) || !allHave(out, which); {
+		m, ok, err := s.next(ctx, s.timing.WalkQuiet)
+		if err != nil {
+			return fmt.Errorf("schema walk: %w", err)
+		}
+		switch {
+		case !ok:
+			return nil // quiet: unanswered nodes are asked again, or have no children
+		case m.kind == msgEnd:
+			ends++
+		case m.kind == msgDef:
+			if err := s.takeDef(nodes, byParent, out, budget, m); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (s *session) takeDef(nodes []walkNode, byParent map[uint32]int, out [][]wingproto.Def, budget *walkBudget, m inMsg) error {
+	if err := budget.take(m.size); err != nil {
+		return err
+	}
+	i, ok := s.attribute(nodes, byParent, m)
+	if !ok {
+		return nil
+	}
+	if len(out[i]) >= maxDefsPerNode {
+		return fmt.Errorf("%w: more than %d children of %s", errWalkLimit, maxDefsPerNode, nodes[i].path)
+	}
+	out[i] = append(out[i], m.def)
+	return nil
+}
+
+func allHave(out [][]wingproto.Def, which []int) bool {
+	for _, i := range which {
+		if len(out[i]) == 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // attribute returns the requested node a definition belongs to: its
