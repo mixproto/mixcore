@@ -319,8 +319,9 @@ mixcore never writes the wire maximum 1.0 until item 22 shows it is safe (XA-F11
 LOW D): the writable top is +59.5 dB on the mic law and +19.5 dB on the line law; reading 1.0 is +60 / +20 dB.
 If item 22 shows that the mixer does not echo a Gain write, X Air Gain becomes read-only in mixcore (lead decision,
 review pass 4): the in-flight bound would otherwise rest on the background re-read alone. Until then, on a mixer that
-does not echo Gain, a hold with 8 values in flight stops at `atCap` in both directions, lowerings included, until the
-next re-read (intended).
+does not echo Gain, a hold with 8 values in flight stopped at `atCap` in both directions, lowerings included, until the
+next re-read (core-api v0.4). Since v0.5 (redesign CC-3) the shared engine reads an unechoed Gain write back 100 to 200 ms
+after the last write of its burst (the settle re-read, as in `x32.md`), and the in-flight count never stops a hold.
 
 ### 3.7 Processing per strip (next milestone)
 Read 2026-10-13 from XS1 (pages 3-4 re-read on the mirror), XS5, XS6/XS7 (one lineage: XS7 is derived from XS6), XS10

@@ -192,6 +192,9 @@ func (s *session) markTouched(idx int) {
 	if _, ok := s.rr.asked[idx]; ok {
 		s.rr.asked[idx] = true
 	}
+	if _, ok := s.settle.asked[idx]; ok {
+		s.settle.asked[idx] = true
+	}
 }
 
 // rereadReply handles a packet from the write socket, which can only be the
@@ -202,10 +205,14 @@ func (s *session) markTouched(idx int) {
 // pushed meanwhile, this is the console's value now.
 func (s *session) rereadReply(idx int, v model.Value, at time.Time) (driver.ParamChanged, bool) {
 	touched, ok := s.rr.asked[idx]
+	if ok {
+		delete(s.rr.asked, idx)
+	} else {
+		ok, touched = s.takeSettleAsk(idx) // a settle re-read (settle.go)
+	}
 	if !ok || touched {
 		return driver.ParamChanged{}, false
 	}
-	delete(s.rr.asked, idx)
 	sent, wrote := s.unconfirmed[idx]
 	delete(s.unconfirmed, idx)
 	unchanged := idx < len(s.known) && s.known[idx].Equal(v)

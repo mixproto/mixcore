@@ -66,6 +66,9 @@ type Timing struct {
 	// decision 2026-10-12). Recovery passes (scene recall, served again)
 	// start at once.
 	RereadGap time.Duration
+	// SettleAfter: an unechoed Gain write is read back this long after the
+	// last write of its burst (redesign CC-3, settle.go).
+	SettleAfter time.Duration
 }
 
 // DefaultTiming is used for every zero field of a Timing.
@@ -80,6 +83,7 @@ var DefaultTiming = Timing{
 	ReadRetryEvery:  300 * time.Millisecond,
 	EchoWindow:      2 * time.Second,
 	RereadGap:       15 * time.Second,
+	SettleAfter:     100 * time.Millisecond,
 }
 
 // WithDefaults fills every zero field from DefaultTiming.
@@ -97,6 +101,7 @@ func (t Timing) WithDefaults() Timing {
 		QuietProbeAfter: or(t.QuietProbeAfter, d.QuietProbeAfter), LivenessTick: or(t.LivenessTick, d.LivenessTick),
 		ConnectTimeout: or(t.ConnectTimeout, d.ConnectTimeout), ReadRetryEvery: or(t.ReadRetryEvery, d.ReadRetryEvery),
 		EchoWindow: or(t.EchoWindow, d.EchoWindow), RereadGap: or(t.RereadGap, d.RereadGap),
+		SettleAfter: or(t.SettleAfter, d.SettleAfter),
 	}
 }
 
