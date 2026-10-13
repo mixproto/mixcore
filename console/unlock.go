@@ -135,8 +135,9 @@ func (s *Supervisor) SetShowMode(on bool) {
 }
 
 // Unlock allows raising Gain on one headamp in show mode after the UI's
-// 1 s hold (SR-27), until Relock, 20 s without a command on it, stale,
-// pause or stop. It writes nothing. Outside show mode it does nothing.
+// one-tap Adjust (SR-27 amended, no minimum hold), until Relock, 20 s
+// without a command on it (paused while a Gain hold on it is open, CC-4),
+// stale, pause or stop. It writes nothing. Outside show mode it does nothing.
 func (s *Supervisor) Unlock(p model.ParamRef, origin driver.Origin) error {
 	if !origin.MayWrite() {
 		return driver.ErrNotUserOrigin
@@ -178,12 +179,25 @@ func (s *Supervisor) unlockIdleCheck(h int, e *unlockEntry) {
 	if s.safe.unlocks.active[h] != e {
 		return // ended meanwhile
 	}
+	if s.gainHeldLocked(h) { // a finger on the wheel: the 20 s never run out (CC-4)
+		e.last = time.Now()
+	}
 	if left := unlockIdle - time.Since(e.last); left > 0 {
 		e.timer.Reset(left)
 		return
 	}
 	s.safe.unlocks.end(h, UnlockIdle)
 	s.signal()
+}
+
+// gainHeldLocked reports an open hold on headamp h's Gain. Callers hold mu.
+func (s *Supervisor) gainHeldLocked(h int) bool {
+	for k := range s.holds.active {
+		if isHeadampGain(k.param) && k.param.Strip.Index == h {
+			return true
+		}
+	}
+	return false
 }
 
 // Relock ends the Gain unlock of one headamp (the sheet closed). It writes nothing.

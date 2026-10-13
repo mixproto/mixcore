@@ -200,6 +200,9 @@ func (s *Supervisor) HoldWindow(p model.ParamRef, origin driver.Origin, held boo
 	delete(s.safe.windows, k)
 	if !held {
 		delete(s.holds.active, k)
+		if isHeadampGain(p) {
+			s.safe.unlocks.touch(p.Strip.Index) // the idle 20 s start again at release (CC-4)
+		}
 		return Result{}, nil
 	}
 	cur, ok := s.state.Value(p)
