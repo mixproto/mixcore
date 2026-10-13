@@ -148,3 +148,92 @@ func TestShowLock_LockEndsGainUnlocks(t *testing.T) {
 		}
 	})
 }
+
+// fillPINTable gives maxPINClients engineer seats a counter (most refused
+// by the shared lockout their first ten wrong PINs start).
+func fillPINTable(t *testing.T, sup *Supervisor) {
+	t.Helper()
+	for i := range maxPINClients + 6 {
+		id := fmt.Sprintf("seat-%02d", i)
+		_ = sup.SetClientRole(id, Role{Kind: RoleEngineer})
+		_ = sup.UnlockShowMode(seat(id), "1111")
+		time.Sleep(time.Second)
+	}
+}
+
+// Security re-check LOW 1: the owner always gets a counter, however full
+// the table is, so seats cannot lock the owner out.
+func TestPINGuard_OwnerAlwaysHasACounter(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, _ := startSafe(t, SafetyConfig{}, safetyState(-6))
+		_, _ = sup.LockShowMode(gesture, "2468")
+		sup.mu.Lock() // every slot holds a seat with a recent failure
+		sup.lock.guard.clients = map[string]*pinCounter{}
+		for i := range maxPINClients {
+			sup.lock.guard.clients[fmt.Sprintf("seat-%02d", i)] = &pinCounter{failures: 1, lastFailure: time.Now()}
+		}
+		sup.mu.Unlock()
+		if err := sup.UnlockShowMode(gesture, "2468"); err != nil {
+			t.Fatalf("the owner with a full table: %v", err)
+		}
+	})
+}
+
+// Security re-check LOW 1: a full table makes room by evicting the counter
+// whose last failure is oldest, so a new seat can try once the shared
+// lockout is over.
+func TestPINGuard_FullTableEvictsTheOldestFailure(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, _ := startSafe(t, SafetyConfig{}, safetyState(-6))
+		_, _ = sup.LockShowMode(gesture, "2468")
+		fillPINTable(t, sup)
+		time.Sleep(pinLockoutMax + time.Second) // past any shared lockout the seats started
+		_ = sup.SetClientRole("late", Role{Kind: RoleEngineer})
+		if err := sup.UnlockShowMode(seat("late"), "2468"); err != nil {
+			t.Fatalf("a new seat with a full table: %v", err)
+		}
+	})
+}
+
+// Security re-check LOW 1: a client's failures decay after 30 quiet minutes.
+func TestPINGuard_FailuresDecayAfterQuiet(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, _ := startSafe(t, SafetyConfig{}, safetyState(-6))
+		_ = sup.SetClientRole("eng", Role{Kind: RoleEngineer})
+		_, _ = sup.LockShowMode(gesture, "2468")
+		fail := func(n int) {
+			for range n {
+				_ = sup.UnlockShowMode(seat("eng"), "0000")
+			}
+		}
+		fail(4)
+		time.Sleep(pinFailureDecay + time.Second)
+		fail(4) // 8 in total, but the first 4 decayed
+		if err := sup.UnlockShowMode(seat("eng"), "2468"); err != nil {
+			t.Fatalf("after the decay: %v", err)
+		}
+	})
+}
+
+// Security re-check LOW 2: a role change during the hash settles the shared
+// count the attempt reserved, so nothing leaks.
+func TestPINGuard_RoleChangeDuringTheHashLeaksNothing(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, _ := startSafe(t, SafetyConfig{}, safetyState(-6))
+		_ = sup.SetClientRole("eng", Role{Kind: RoleEngineer})
+		_, _ = sup.LockShowMode(gesture, "2468")
+		orig := pinHash
+		pinHash = func(pin string, salt []byte, iter int) ([]byte, error) {
+			_ = sup.SetClientRole("eng", Role{}) // promoted to owner mid-hash
+			return orig(pin, salt, iter)
+		}
+		t.Cleanup(func() { pinHash = orig })
+		_ = sup.UnlockShowMode(seat("eng"), "0000")
+		sup.mu.Lock()
+		inflight := sup.lock.guard.shared.inflight
+		sup.mu.Unlock()
+		if inflight != 0 {
+			t.Fatalf("shared attempts in flight after the hash: %d", inflight)
+		}
+	})
+}

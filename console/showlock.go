@@ -152,19 +152,19 @@ func (s *Supervisor) UnlockShowMode(origin driver.Origin, pin string) error {
 		return driver.ErrNotUserOrigin
 	}
 	s.mu.Lock()
-	rec, c, err := s.reservePINLocked(origin)
+	r, err := s.reservePINLocked(origin)
 	s.mu.Unlock()
 	if err != nil {
 		return err
 	}
-	ok := ValidPIN(pin) && rec.matches(pin) // the hash runs outside mu, one at a time
+	ok := ValidPIN(pin) && r.record.matches(pin) // the hash runs outside mu, one at a time
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.lock.record != rec { // relocked or unlocked meanwhile: the attempt counts for nothing
+	if s.lock.record != r.record { // relocked or unlocked meanwhile: the attempt counts for nothing
 		s.lock.guard.hashing = false
 		return fmt.Errorf("%w: the show mode lock changed", ErrRole)
 	}
-	s.settlePINLocked(origin, c, !ok)
+	s.settlePINLocked(r, !ok)
 	if !ok {
 		return fmt.Errorf("%w: wrong PIN", ErrRole)
 	}
