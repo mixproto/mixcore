@@ -188,7 +188,10 @@ func TestReread_NextPassStartsAGapAfterThePreviousEnded(t *testing.T) {
 		r.run(sess)
 		rr := sess.(driver.Rereader)
 		start := time.Now()
-		for time.Since(start) < 2*time.Minute {
+		// A pass is the table at 16 reads per ping (about two minutes since
+		// core-api v0.4 added sends); run long enough for three passes.
+		pass := rereadPassTime
+		for time.Since(start) < 3*(pass+DefaultTiming.RereadGap)+pass {
 			_ = rr.Reread() // a request every second
 			time.Sleep(time.Second)
 		}

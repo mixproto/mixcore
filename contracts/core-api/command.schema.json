@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/command.schema.json",
-  "title": "mixcore core API v0.3: Apply(commandJSON) and Gesture(commandJSON)",
-  "description": "One user gesture. set writes a value; holdBegin/holdEnd mark a fader as held by a finger (no write). Only origin kinds gesture and macro are accepted; console and system are rejected with ERR_NOT_USER_ORIGIN. A set for a fader whose hold was ended by an external change or by losing the console is rejected with ERR_GESTURE_ENDED until the same client sends holdBegin or holdEnd for it. v0.1: toggle (field mute only, no value) reads the console's current value in the core and writes the inverse as an absolute value; it is the way to toggle a mute group or a DCA mute. muteGroups, dcas and effectiveMute cannot be written (ERR_UNSUPPORTED / ERR_INVALID_COMMAND). v0.3 (phone safety, docs/design/phone-safety.md): every set inside a hold is a gesture candidate the core clamps to the gesture window (slip guard, Gain caps, monitor ceiling, CR-22); openWall re-opens a slip-guard wall after the UI measured a rest; Gain writes are bounded to 6 dB from the console value (CR-23); typed raises over 6 dB need confirmed (CR-26); show mode locks raising Gain (CR-24). setSlipGuard and setShowMode change settings and never write.",
+  "title": "mixcore core API v0.4: Apply(commandJSON) and Gesture(commandJSON)",
+  "description": "One user gesture. set writes a value; holdBegin/holdEnd mark a fader as held by a finger (no write). Only origin kinds gesture and macro are accepted; console and system are rejected with ERR_NOT_USER_ORIGIN. A set for a fader whose hold was ended by an external change or by losing the console is rejected with ERR_GESTURE_ENDED until the same client sends holdBegin or holdEnd for it. v0.1: toggle (field mute only, no value) reads the console's current value in the core and writes the inverse as an absolute value; it is the way to toggle a mute group or a DCA mute. muteGroups, dcas and effectiveMute cannot be written (ERR_UNSUPPORTED / ERR_INVALID_COMMAND). v0.3 (phone safety, docs/design/phone-safety.md): every set inside a hold is a gesture candidate the core clamps to the gesture window (slip guard, Gain caps, monitor ceiling, CR-22); openWall re-opens a slip-guard wall after the UI measured a rest; Gain writes are bounded to 6 dB from the console value (CR-23); typed raises over 6 dB need confirmed (CR-26); show mode locks raising Gain (CR-24). setSlipGuard and setShowMode change settings and never write. v0.4 (buses and sends): set, holdBegin, holdEnd and openWall work on a send level (param field sendLevel with bus) and a bus or DCA fader like on a channel fader, with the same gesture window and, for a monitor seat, the monitor ceiling of that bus; toggle also flips sendOn; sendPan is set as an absolute pan. Roles (config role, v0.4): a command the client's role does not allow is ERR_ROLE and writes nothing (a monitor role writes only sends into its buses and those buses' fader and mute; a viewer writes nothing).",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -87,7 +87,12 @@
           "param": {
             "properties": {
               "field": {
-                "const": "fader"
+                "enum": [
+                  "fader",
+                  "gain",
+                  "sendLevel"
+                ],
+                "description": "gain is v0.3, sendLevel v0.4."
               }
             }
           }
@@ -130,7 +135,11 @@
           "param": {
             "properties": {
               "field": {
-                "const": "mute"
+                "enum": [
+                  "mute",
+                  "sendOn"
+                ],
+                "description": "sendOn is v0.4 (consoles with a send on/off only: x32)."
               }
             }
           }
@@ -462,6 +471,110 @@
         "kind": "gesture",
         "clientId": "ios-1",
         "seq": 53
+      }
+    },
+    {
+      "version": 0,
+      "type": "holdBegin",
+      "param": {
+        "strip": {
+          "kind": "input",
+          "index": 4
+        },
+        "field": "sendLevel",
+        "bus": 2
+      },
+      "origin": {
+        "kind": "gesture",
+        "clientId": "ios-1",
+        "seq": 54
+      }
+    },
+    {
+      "version": 0,
+      "type": "set",
+      "param": {
+        "strip": {
+          "kind": "input",
+          "index": 4
+        },
+        "field": "sendLevel",
+        "bus": 2
+      },
+      "value": 4.0,
+      "origin": {
+        "kind": "gesture",
+        "clientId": "ios-1",
+        "seq": 55
+      }
+    },
+    {
+      "version": 0,
+      "type": "toggle",
+      "param": {
+        "strip": {
+          "kind": "input",
+          "index": 4
+        },
+        "field": "sendOn",
+        "bus": 2
+      },
+      "origin": {
+        "kind": "gesture",
+        "clientId": "ios-1",
+        "seq": 56
+      }
+    },
+    {
+      "version": 0,
+      "type": "set",
+      "param": {
+        "strip": {
+          "kind": "input",
+          "index": 4
+        },
+        "field": "sendPan",
+        "bus": 2
+      },
+      "value": -40,
+      "origin": {
+        "kind": "gesture",
+        "clientId": "ios-1",
+        "seq": 57
+      }
+    },
+    {
+      "version": 0,
+      "type": "set",
+      "param": {
+        "strip": {
+          "kind": "bus",
+          "index": 2
+        },
+        "field": "fader"
+      },
+      "value": -3.0,
+      "origin": {
+        "kind": "gesture",
+        "clientId": "ios-1",
+        "seq": 58
+      }
+    },
+    {
+      "version": 0,
+      "type": "set",
+      "param": {
+        "strip": {
+          "kind": "dca",
+          "index": 1
+        },
+        "field": "fader"
+      },
+      "value": -5.0,
+      "origin": {
+        "kind": "gesture",
+        "clientId": "ios-1",
+        "seq": 59
       }
     }
   ]

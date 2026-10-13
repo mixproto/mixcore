@@ -67,11 +67,29 @@ func groupAt(list []bool, index int) (bool, bool) {
 	return list[index-1], true
 }
 
-// withGroup sets the mute of a group strip in a copy of s.
+// groupStrip returns a mute group (Ref, Muted) or a DCA (with its name,
+// fader and colour when the state has DCA masters).
+func (s State) groupStrip(ref StripRef) (Strip, bool) {
+	on, ok := groupAt(s.groupList(ref.Kind), ref.Index)
+	if !ok {
+		return Strip{}, false
+	}
+	st := Strip{Ref: ref}
+	if ref.Kind == StripDCA && len(s.dcaMasters) == len(s.dcaMutes) {
+		st = s.dcaMasters[ref.Index-1]
+	}
+	st.Muted = on
+	return st, true
+}
+
+// withGroup sets the mute of a group strip, or a DCA master field, in a copy of s.
 func (s State) withGroup(p ParamRef, v Value) (State, error) {
 	list := s.groupList(p.Strip.Kind)
-	if _, ok := groupAt(list, p.Strip.Index); !ok || p.Field != FieldMute {
+	if _, ok := groupAt(list, p.Strip.Index); !ok {
 		return s, fmt.Errorf("%s: %w", p, ErrUnknownParam)
+	}
+	if p.Field != FieldMute {
+		return s.withDCAMaster(p, v)
 	}
 	on, ok := v.Bool()
 	if !ok {
@@ -134,4 +152,22 @@ func MaskOf(groups []int, limit int) (uint32, error) {
 		m |= 1 << (g - 1)
 	}
 	return m, nil
+}
+
+// withDCAMaster sets the name, fader or colour of a DCA in a copy of s
+// (the caller checked the state's shape).
+func (s State) withDCAMaster(p ParamRef, v Value) (State, error) {
+	if p.Strip.Kind != StripDCA || len(s.dcaMasters) != len(s.dcaMutes) {
+		return s, fmt.Errorf("%s: %w", p, ErrUnknownParam)
+	}
+	updated, err := s.dcaMasters[p.Strip.Index-1].with(p.Field, v)
+	if err != nil {
+		return s, err
+	}
+	if err := updated.validate(); err != nil {
+		return s, err
+	}
+	s.dcaMasters = slices.Clone(s.dcaMasters)
+	s.dcaMasters[p.Strip.Index-1] = updated
+	return s, nil
 }

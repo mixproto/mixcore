@@ -123,6 +123,9 @@ type Config struct {
 	// RereadEvery is the background re-read interval while live (sessions
 	// that implement driver.Rereader). Zero: DefaultRereadEvery; negative: off.
 	RereadEvery time.Duration
+	// Role is the role of every client without SetClientRole (roles.go);
+	// the zero value is the owner (a direct connection).
+	Role Role
 }
 
 // Supervisor owns the connection lifecycle of one console.
@@ -169,6 +172,9 @@ func New(cfg Config) (*Supervisor, error) {
 	if err := cfg.Policy.Validate(); err != nil {
 		return nil, err
 	}
+	if err := cfg.Role.Validate(); err != nil {
+		return nil, err
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
@@ -180,7 +186,7 @@ func New(cfg Config) (*Supervisor, error) {
 	}
 	return &Supervisor{
 		cfg: cfg, notify: make(chan struct{}, 1),
-		holds: newHolds(), safe: newSafety(cfg.Safety),
+		holds: newHolds(), safe: newSafety(cfg.Safety, cfg.Role),
 	}, nil
 }
 

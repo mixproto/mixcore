@@ -68,13 +68,16 @@ type safety struct {
 	showMode bool
 	unlocks  unlocks
 	engineer map[model.ParamRef]float64    // latest value not from a monitor client (SR-28)
+	roles    map[string]Role               // per client (roles.go)
+	defRole  Role                          // every other client
 	pending  map[model.ParamRef][]inFlight // Gain values in flight (pending.go)
 	latest   map[model.ParamRef]lastSend   // latest Gain value sent, no report since (pending.go)
 }
 
-func newSafety(cfg SafetyConfig) safety {
+func newSafety(cfg SafetyConfig, role Role) safety {
 	return safety{cfg: cfg, clients: map[string]ClientSafety{}, windows: map[holdKey]*window{}, showMode: cfg.ShowMode,
-		unlocks: newUnlocks(), engineer: map[model.ParamRef]float64{}, pending: map[model.ParamRef][]inFlight{}, latest: map[model.ParamRef]lastSend{}}
+		unlocks: newUnlocks(), engineer: map[model.ParamRef]float64{}, pending: map[model.ParamRef][]inFlight{}, latest: map[model.ParamRef]lastSend{},
+		roles: map[string]Role{}, defRole: role}
 }
 
 func (s *safety) client(id string) ClientSafety {
@@ -103,7 +106,9 @@ func (s *Supervisor) SetSlipGuard(clientID string, on bool) {
 }
 
 // isLevel reports whether f is a level a gesture window applies to.
-func isLevel(f model.Field) bool { return f == model.FieldFader || f == model.FieldGain }
+func isLevel(f model.Field) bool {
+	return f == model.FieldFader || f == model.FieldGain || f == model.FieldSendLevel
+}
 
 func dbOf(v model.Value) float64 {
 	db, ok := v.DB()
@@ -113,15 +118,16 @@ func dbOf(v model.Value) float64 {
 	return db
 }
 
-// isMonitorOrigin: a write of a monitor client of this core.
+// isMonitorOrigin: a write of a monitor client of this core (a monitor
+// role, or a client with a monitor ceiling).
 func (s *safety) isMonitorOrigin(o driver.Origin) bool {
-	return o.MayWrite() && s.client(o.ClientID).Monitor != nil
+	return o.MayWrite() && (s.client(o.ClientID).Monitor != nil || s.role(o.ClientID).Kind == RoleMonitor)
 }
 
-// noteChange keeps the engineer's latest value (SR-28): every level value
-// except the writes of a monitor client.
+// noteChange keeps the engineer's latest value (SR-28): every fader and
+// send level except the writes of a monitor client.
 func (s *safety) noteChange(c Change) {
-	if c.Param.Field == model.FieldFader && !s.isMonitorOrigin(c.Origin) {
+	if isCeilingField(c.Param.Field) && !s.isMonitorOrigin(c.Origin) {
 		s.engineer[c.Param] = dbOf(c.Value)
 	}
 }
@@ -129,27 +135,47 @@ func (s *safety) noteChange(c Change) {
 // adoptState takes the values of a (re)connect: a value that changed
 // meanwhile has an unknown origin and counts as the engineer's.
 func (s *safety) adoptState(prev, next model.State) {
-	for _, st := range next.Strips() {
-		p := model.ParamRef{Strip: st.Ref, Field: model.FieldFader}
+	for _, p := range ceilingParams(next) {
+		v, _ := next.Value(p)
 		old, _ := prev.Value(p)
-		if _, seen := s.engineer[p]; !seen || old.Kind() == 0 || dbOf(old) != st.FaderDB {
-			s.engineer[p] = st.FaderDB
+		if _, seen := s.engineer[p]; !seen || old.Kind() == 0 || !old.Equal(v) {
+			s.engineer[p] = dbOf(v)
 		}
 	}
 }
 
+// ceilingParams lists every fader and send level of a state (SR-28).
+func ceilingParams(st model.State) []model.ParamRef {
+	var out []model.ParamRef
+	for _, strips := range [][]model.Strip{st.Strips(), st.Buses()} {
+		for _, s := range strips {
+			out = append(out, model.ParamRef{Strip: s.Ref, Field: model.FieldFader})
+		}
+	}
+	for i := 1; i <= len(st.Inputs()); i++ {
+		for _, snd := range st.Sends(i) {
+			p := model.ParamRef{Strip: model.StripRef{Kind: model.StripInput, Index: i}, Field: model.FieldSendLevel, Bus: snd.Bus}
+			if _, ok := st.Value(p); ok {
+				out = append(out, p)
+			}
+		}
+	}
+	return out
+}
+
 // ceiling of a monitor client's write to p: engineer's latest + headroom,
-// never below the latest (SR-28). ok is false when there is none.
+// never below the latest (SR-28); a monitor role's ceiling is the one of
+// the bus (CR-25). ok is false when there is none.
 func (s *safety) ceiling(p model.ParamRef, client string, cur float64) (float64, bool) {
-	m := s.client(client).Monitor
-	if m == nil || p.Field != model.FieldFader {
+	m := s.ceilingOf(p, client)
+	if m == nil || !isCeilingField(p.Field) {
 		return 0, false
 	}
 	ref, ok := s.engineer[p]
 	if !ok {
 		ref = cur
 	}
-	return ref + m.HeadroomDB, true
+	return finiteOr(ref, ceilingFloorDB) + m.HeadroomDB, true
 }
 
 // openWindow makes the window of a new hold on a level parameter.
@@ -166,7 +192,7 @@ func (s *Supervisor) openWindowLocked(k holdKey) *window {
 			w.CapUp = math.Max(math.Min(w.CapUp, h.WriteMaxDB), start)
 			w.CapDown = math.Max(w.CapDown, h.MinDB)
 		}
-	case model.FieldFader:
+	case model.FieldFader, model.FieldSendLevel: // a send moves on the fader law (X32-F83, XA-F40)
 		w.law = s.cfg.Driver.FaderLaw()
 		if s.safe.client(k.client).SlipGuard {
 			w.HasWall, w.WallUp, w.OpensByRest = true, slipWall(start), true

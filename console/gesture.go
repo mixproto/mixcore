@@ -58,13 +58,29 @@ func (s *Supervisor) prepare(w *Write) (driver.Session, Result, error) {
 	return s.prepareLocked(w)
 }
 
-// prepareLocked checks a write and sets w.Value to what may be written.
-func (s *Supervisor) prepareLocked(w *Write) (driver.Session, Result, error) {
+// gateLocked refuses a write before any value rule: the client's role
+// (first: below every UI, invariant 4), not live (rule 3), a read-only
+// parameter, one this console does not have (never faked).
+func (s *Supervisor) gateLocked(w *Write) error {
+	if err := s.checkRoleLocked(w.Param, w.Origin); err != nil {
+		return err
+	}
 	if s.status != StatusLive || s.sess == nil || s.limited != "" {
-		return nil, Result{}, driver.ErrStale
+		return driver.ErrStale
 	}
 	if s.readOnlyLocked(w.Param) {
-		return nil, Result{}, fmt.Errorf("console: %s is read-only: %w", w.Param, driver.ErrUnsupported)
+		return fmt.Errorf("console: %s is read-only: %w", w.Param, driver.ErrUnsupported)
+	}
+	if _, ok := s.state.Value(w.Param); !ok && w.Param.Strip.Kind != model.StripHeadamp {
+		return fmt.Errorf("console: %s: not on this console: %w", w.Param, driver.ErrUnsupported)
+	}
+	return nil
+}
+
+// prepareLocked checks a write and sets w.Value to what may be written.
+func (s *Supervisor) prepareLocked(w *Write) (driver.Session, Result, error) {
+	if err := s.gateLocked(w); err != nil {
+		return nil, Result{}, err
 	}
 	k := holdKey{param: w.Param, client: w.Origin.ClientID}
 	if s.holds.isEnded(w.Param, w.Origin.ClientID) {
@@ -123,11 +139,14 @@ func (s *Supervisor) fullSetCapLocked(w *Write, cur float64, win *Window) Result
 }
 
 // readOnlyLocked reports a parameter the core never writes, whatever the
-// value: headamp phantom, an input's headamp, and the Gain of a headamp
-// whose law or ownership is unconfirmed (capabilities writable false).
+// value: headamp phantom, an input's headamp, the Gain of a headamp whose
+// law or ownership is unconfirmed (capabilities writable false) and, in
+// core-api v0.4, send taps, colours, bus links and matrices.
 func (s *Supervisor) readOnlyLocked(p model.ParamRef) bool {
 	switch {
 	case p.Field == model.FieldPhantom || p.Field == model.FieldHeadamp:
+		return true
+	case p.Field == model.FieldSendTap || p.Field == model.FieldColour || p.Field == model.FieldLinked || p.Strip.Kind == model.StripMatrix:
 		return true
 	case p.Strip.Kind != model.StripHeadamp:
 		return false
@@ -170,6 +189,11 @@ func (s *Supervisor) HoldWindowWith(p model.ParamRef, origin driver.Origin, held
 	k := holdKey{param: p, client: origin.ClientID}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if held {
+		if err := s.checkRoleLocked(p, origin); err != nil {
+			return Result{}, err
+		}
+	}
 	if held && (s.status != StatusLive || s.limited != "") {
 		return Result{}, driver.ErrStale
 	}
@@ -207,6 +231,9 @@ func (s *Supervisor) OpenWall(p model.ParamRef, origin driver.Origin) (Result, e
 	k := holdKey{param: p, client: origin.ClientID}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.checkRoleLocked(p, origin); err != nil {
+		return Result{}, err
+	}
 	if s.holds.isEnded(p, origin.ClientID) {
 		return Result{}, ErrGestureEnded
 	}

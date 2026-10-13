@@ -32,7 +32,8 @@ type link struct {
 // unitCounts are the optional units a console answered for.
 type unitCounts struct {
 	inputs, headamps int
-	extra            bool // the extra headamp groups answered
+	extra            bool  // the extra headamp groups answered
+	buses            []int // the buses that answered (core-api v0.4)
 }
 
 var _ driver.Link = (*link)(nil)
@@ -76,7 +77,7 @@ func (l *link) Connect(ctx context.Context) (_ driver.Session, err error) {
 	}
 	l.mu.Lock()
 	if l.units == nil {
-		l.units = &unitCounts{inputs: s.inputs, headamps: s.headamps, extra: s.extra}
+		l.units = &unitCounts{inputs: s.inputs, headamps: s.headamps, extra: s.extra, buses: s.presentBuses()}
 	}
 	l.mu.Unlock()
 	return s, nil

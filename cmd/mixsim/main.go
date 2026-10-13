@@ -57,7 +57,7 @@ func parseFlags() (flags, error) {
 	flag.StringVar(&f.name, "name", "", "network name reported by /xinfo")
 	flag.StringVar(&f.model, "model", "", "model reported by /xinfo and /info")
 	flag.StringVar(&f.firmware, "firmware", "", "firmware version reported")
-	flag.BoolVar(&f.demo, "demo", false, "fill channel names and animate input meters")
+	flag.BoolVar(&f.demo, "demo", false, "fill channel names, name six monitor buses with sends, animate input meters")
 	flag.BoolVar(&f.pushSnapIndex, "push-snap-index", false, "xair: push /-snap/index on a snapshot load (unverified, XA-F62)")
 	flag.BoolVar(&f.verbose, "v", false, "debug logging")
 	flag.Parse()

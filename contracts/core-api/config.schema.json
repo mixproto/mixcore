@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/config.schema.json",
-  "title": "mixcore core API v0.3: Start(configJSON)",
+  "title": "mixcore core API v0.4: Start(configJSON)",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -57,7 +57,7 @@
           "description": "SR-27: the UI restores the per-console setting it stored on the device."
         },
         "monitorCeiling": {
-          "description": "SR-28, CR-25: this engine is a monitor seat. Every fader write is capped at the engineer's latest value + headroomDB (0..10, default 6), never below that value; sends are not modelled yet; 'off' or absent: no ceiling; null is refused (ERR_INVALID_CONFIG). The hub will carry it per client in the pairing token.",
+          "description": "SR-28, CR-25: this engine is a monitor seat. Every level write (fader, and v0.4 send level) is capped at the engineer's latest value + headroomDB (0..10, default 6), never below that value; 'off' or absent: no ceiling; null is refused (ERR_INVALID_CONFIG). v0.4: a monitor role (role) carries its own ceiling per bus, which wins for the sends into that bus and its fader. The hub will carry it per client in the pairing token.",
           "oneOf": [
             {
               "type": "object",
@@ -77,6 +77,87 @@
           ]
         }
       }
+    },
+    "role": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind"
+      ],
+      "description": "v0.4, roles enforced below the UI (docs/product/roles.md, invariant 4): the role of every client of this engine (a hub sets one per paired device with the Go call SetClientRole). Absent: owner, the device user on a direct connection. owner and engineer: every write the core offers. monitor: only sends (sendLevel, sendOn, sendPan) into the listed buses and those buses' fader and mute; a stereo pair is two buses, list both. viewer: no write at all. Anything else is ERR_ROLE and writes nothing; settings that only change this device (setSlipGuard) stay allowed, show mode and Gain unlocks are ERR_ROLE for monitor and viewer. Reads are not filtered in the in-process API (the app draws only its mix); per-client filtering is a hub requirement.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "owner",
+            "engineer",
+            "monitor",
+            "viewer"
+          ]
+        },
+        "buses": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "description": "monitor only, required for it: the buses this seat may write, each once.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "bus"
+            ],
+            "properties": {
+              "bus": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64
+              },
+              "monitorCeiling": {
+                "description": "SR-28: the monitor ceiling of this bus for its sends and its fader ('My level'): the engineer's latest value + headroomDB (0..10, default 6), never below that value; 'off': none. Absent: the default, 6 dB (on for monitor seats, phone-safety.md 7).",
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "headroomDB": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 10,
+                        "default": 6
+                      }
+                    }
+                  },
+                  {
+                    "const": "off"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "monitor"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "buses"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "buses"
+              ]
+            }
+          }
+        }
+      ]
     }
   },
   "examples": [
@@ -103,6 +184,22 @@
       "safety": {
         "slipGuard": true,
         "showMode": false
+      }
+    },
+    {
+      "version": 0,
+      "family": "x32",
+      "host": "192.168.1.62",
+      "role": {
+        "kind": "monitor",
+        "buses": [
+          {
+            "bus": 2,
+            "monitorCeiling": {
+              "headroomDB": 6
+            }
+          }
+        ]
       }
     }
   ]

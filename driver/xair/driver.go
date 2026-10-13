@@ -38,6 +38,13 @@
 //     (XA-F115), so Gain is per headamp strip, not per channel.
 //   - Meters: one bank, /meters/1, int16 LE in 1/256 dB; frame = 16 inputs
 //     then Main L/R from values 36/37 (XA-F51..F53).
+//   - Buses and sends (core-api v0.4, sections 3.1-3.3): buses /bus/1..6
+//     (pairs 1-2, 3-4, 5-6 linkable) and FX sends /fxsend/1..4 as buses
+//     7..10; sends /ch/NN/mix/MM/level (161 steps), pan and tap per send,
+//     no send on/off (absent, never faked). Every bus is probed once per
+//     link, so a model with fewer buses connects without them (XA-F72).
+//     DCA faders and names, and colours, are read; tap and colours are
+//     read-only.
 //   - Scene recall: no dedicated message; a burst of pushes raises
 //     SceneRecalled (low). /-snap/index names the recently loaded or saved
 //     snapshot (XA-F60..F62): a save moves it too, so it never raises a
@@ -106,8 +113,15 @@ var profile = xosc.Profile{
 		Inputs: inputChannels, RequiredInputs: requiredInputs, MainRoot: "/lr", MainMuteGroups: false,
 		MuteGroups: muteGroupCount, DCAs: dcaCount,
 		Headamps: headamps, HeadampAddr: headampFormat,
+		Buses: []xosc.BusGroup{
+			{First: 1, Count: mixBuses, Root: "/bus/%d", Kind: model.BusMix, Linkable: true}, // section 3.1, 3.2 buslink
+			{First: mixBuses + 1, Count: fxSends, Root: "/fxsend/%d", Kind: model.BusFX},     // section 3.1: FX sends as buses 7..10
+		},
+		SendPan: true, SendTapLeaf: "tap", Colours: true, DCAMasters: true, // section 3.2, 3.3
 	},
-	Meters: meterCodec{},
+	// Section 3.3: tap 0..5 = IN, PREEQ, POSTEQ, PRE, POST, GRP.
+	TapLabels: [model.TapCount]string{"IN", "PREEQ", "POSTEQ", "PRE", "POST", "GRP"},
+	Meters:    meterCodec{},
 	Markers: []xosc.Marker{{
 		// XA-F60: "recently loaded/saved", 1..64: a hint, never a recall alone.
 		Addr: addrSnapIndex, Kind: xosc.MarkerIndexHint, Signal: driver.SignalSnapshotIndex,

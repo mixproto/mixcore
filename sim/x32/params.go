@@ -32,6 +32,14 @@ const (
 
 	addrUndoTime = "/-undo/time"           // X32-F62
 	addrPrepos   = "/-show/prepos/current" // X32-F61
+
+	mixBuses   = 16  // X32-F80: /bus/01..16
+	matrices   = 6   // X32-F87: /mtx/01..06
+	sendSteps  = 160 // X32-F83: send levels have 161 known values
+	panSteps   = 100 // X32-F84: linf -100..100 step 2, 101 values
+	panCentre  = 0.5 // X32-F84: f = (pan + 100) / 200
+	colourMax  = 15  // X32-F89: config/color 0..15
+	sendTapMax = 5   // X32-F85: type 0..5 = IN/LC, <-EQ, EQ->, PRE, POST, GRP
 )
 
 // newParams builds the modelled parameter tree. Initial values are a
@@ -64,5 +72,50 @@ func newParams() map[string]*oscsim.Value {
 	}
 	p[addrPrepos] = oscsim.IntRange(minScene, maxScene, 0) // X32-F61
 	p[addrUndoTime] = oscsim.Text(nameMaxLen)              // X32-F62
+	addOutputs(p)
 	return p
+}
+
+// addOutputs adds buses, sends, matrices, DCA masters and colours
+// (x32.md X32-F80..F89). Initial values are a simulator choice: faders and
+// send levels at 0.0 (off), switches and sends on, pans centred, taps 0,
+// colours 0, links off, empty names.
+func addOutputs(p map[string]*oscsim.Value) {
+	for ch := 1; ch <= inputChannels; ch++ {
+		root := fmt.Sprintf("/ch/%02d", ch)
+		p[root+"/config/color"] = oscsim.IntRange(0, colourMax, 0) // X32-F89
+		for bus := 1; bus <= mixBuses; bus++ {
+			send := fmt.Sprintf("%s/mix/%02d", root, bus) // X32-F82: two digits
+			p[send+"/on"] = oscsim.Switch(1)              // X32-F82: 1 = send on
+			p[send+"/level"] = oscsim.Level(sendSteps)    // X32-F82, X32-F83
+			if bus%2 == 1 {                               // X32-F84, X32-F85: odd sends only
+				p[send+"/pan"] = oscsim.LevelAt(panSteps, panCentre)
+				p[send+"/type"] = oscsim.IntRange(0, sendTapMax, 0)
+			}
+		}
+	}
+	p["/main/st/config/color"] = oscsim.IntRange(0, colourMax, 0) // X32-F89
+	for bus := 1; bus <= mixBuses; bus++ {
+		addMaster(p, fmt.Sprintf("/bus/%02d", bus)) // X32-F80
+	}
+	for pair := 1; pair < mixBuses; pair += 2 {
+		p[fmt.Sprintf("/config/buslink/%d-%d", pair, pair+1)] = oscsim.Switch(0) // X32-F81: 1 = linked
+	}
+	for m := 1; m <= matrices; m++ {
+		addMaster(p, fmt.Sprintf("/mtx/%02d", m)) // X32-F87
+	}
+	for d := 1; d <= dcaGroups; d++ {
+		root := fmt.Sprintf("/dca/%d", d)
+		p[root+"/fader"] = oscsim.Level(levelSteps)                // X32-F88
+		p[root+"/config/name"] = oscsim.Text(nameMaxLen)           // X32-F88
+		p[root+"/config/color"] = oscsim.IntRange(0, colourMax, 0) // X32-F89
+	}
+}
+
+// addMaster adds name, colour, fader and mute of a bus or matrix (X32-F80, X32-F87).
+func addMaster(p map[string]*oscsim.Value, root string) {
+	p[root+"/config/name"] = oscsim.Text(nameMaxLen)
+	p[root+"/config/color"] = oscsim.IntRange(0, colourMax, 0)
+	p[root+"/mix/fader"] = oscsim.Level(levelSteps)
+	p[root+"/mix/on"] = oscsim.Switch(1) // 1 = on, 0 = muted (as X32-F33)
 }

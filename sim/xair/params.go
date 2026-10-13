@@ -63,8 +63,9 @@ func newParams(o Options) map[string]*oscsim.Value {
 	for d := 1; d <= dcaGroups; d++ {
 		root := fmt.Sprintf("/dca/%d", d)
 		p[root+"/config/name"] = oscsim.Text(o.NameMaxLen)
-		p[root+"/fader"] = oscsim.Level(faderSteps) // DCA fader has no mix/ (section 3.2)
-		p[root+"/on"] = oscsim.Switch(1)            // 0 = DCA muted
+		p[root+"/config/color"] = oscsim.IntRange(0, colourMax, 0) // section 3.2: colour on dca too
+		p[root+"/fader"] = oscsim.Level(faderSteps)                // DCA fader has no mix/ (section 3.2)
+		p[root+"/on"] = oscsim.Switch(1)                           // 0 = DCA muted
 	}
 	for g := 1; g <= muteGroups; g++ {
 		p[fmt.Sprintf("/config/mute/%d", g)] = oscsim.Switch(0) // 1 = engaged

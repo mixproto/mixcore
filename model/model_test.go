@@ -176,7 +176,7 @@ func TestParse_KindsAndFields(t *testing.T) {
 			t.Fatalf("ParseField(%q) = %v, %v", f.String(), got, err)
 		}
 	}
-	if _, err := ParseStripKind("bus"); !errors.Is(err, ErrUnknownParam) {
+	if _, err := ParseStripKind("fxReturn"); !errors.Is(err, ErrUnknownParam) {
 		t.Fatalf("unknown kind err = %v", err)
 	}
 	if _, err := ParseField("pan"); !errors.Is(err, ErrUnknownParam) {

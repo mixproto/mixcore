@@ -64,6 +64,7 @@ type session struct {
 	headamps int              // unit headamps that answered, set during connect
 	extra    bool             // the extra headamp groups answered, set during connect
 	present  headampSet       // headamps read and reported (units, extras, patched in use)
+	buses    headampSet       // buses that answered (indexes), set during connect (core-api v0.4)
 	// knownUnits are the optional unit counts an earlier session of the same
 	// link read (nil: first connect); those units are required (XA-F72).
 	knownUnits *unitCounts
@@ -117,6 +118,7 @@ func newSession(d *Driver, c *conn, opts driver.Options) *session {
 		pending: map[int]pendingWrite{}, done: make(chan struct{}), cmdReady: make(chan struct{}, 1), meterReady: make(chan struct{}, 1),
 		rereadReady: make(chan struct{}, 1), tx: make([]byte, 0, rxBufSize), sent: map[int][]sentWrite{}, unconfirmed: map[int]osc.Arg{},
 		rr: rereadPass{asked: map[int]bool{}}, scene: newSceneState(), present: newHeadampSet(d.params.layout.maxHeadamp()),
+		buses: newHeadampSet(d.params.layout.maxBus()),
 	}
 }
 
@@ -311,9 +313,10 @@ func (s *session) flushPending() {
 		}
 		idx := s.params.index(w.param.ref)
 		// Gain echo is unverified (X32-F79, XA-F116): a missing Gain echo is
-		// no client-limit evidence (follow-up 1).
+		// no client-limit evidence (follow-up 1); nor is one of a bus or a
+		// send, whose pushes are not all documented (X32-F90).
 		s.rememberSent(idx, sentWrite{arg: w.arg, origin: w.origin, at: now, changes: s.changesKnown(idx, w),
-			evidence: w.param.feature == featureCore && w.param.conv != convGain})
+			evidence: w.param.feature == featureCore && w.param.conv != convGain && w.param.bus == 0})
 		s.markTouched(idx)
 		if w.param.conv == convGain {
 			s.unconfirmed[idx] = w.arg

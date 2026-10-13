@@ -142,6 +142,9 @@ func (s *Supervisor) Unlock(p model.ParamRef, origin driver.Origin) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.checkConsoleRoleLocked(origin); err != nil {
+		return err
+	}
 	if s.status != StatusLive || s.limited != "" {
 		return driver.ErrStale
 	}
@@ -189,6 +192,9 @@ func (s *Supervisor) Relock(p model.ParamRef, origin driver.Origin) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.checkConsoleRoleLocked(origin); err != nil {
+		return err
+	}
 	s.safe.unlocks.end(p.Strip.Index, UnlockRelock)
 	s.signal()
 	return nil

@@ -30,6 +30,11 @@ const (
 	gainStepDB = 0.5
 	gainSteps  = 144
 
+	// mixBuses: /bus/01..16, two digits (X32-F80).
+	mixBuses = 16
+	// matrixCount: /mtx/01..06 (X32-F87).
+	matrixCount = 6
+
 	meterBank1   = "/meters/1"             // X32-F51, X32-F52
 	meterBank2   = "/meters/2"             // X32-F55
 	addrUndoTime = "/-undo/time"           // X32-F62

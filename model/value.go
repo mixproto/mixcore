@@ -26,21 +26,24 @@ type ValueKind uint8
 
 // Value kinds.
 const (
-	KindLevel ValueKind = iota + 1 // dB, finite or -inf (off)
-	KindBool                       // on/off
-	KindText                       // UTF-8 text
-	KindMask                       // group membership: bit n-1 set = member of group n
-	KindIndex                      // index of another strip, 0 = none (an input's headamp)
+	KindLevel  ValueKind = iota + 1 // dB, finite or -inf (off)
+	KindBool                        // on/off
+	KindText                        // UTF-8 text
+	KindMask                        // group membership: bit n-1 set = member of group n
+	KindIndex                       // index of another strip, 0 = none (an input's headamp)
+	KindPan                         // pan position -100 (left) .. +100 (right)
+	KindTap                         // where a send taps the channel (Tap)
+	KindColour                      // the console's strip colour (Colour)
 )
 
 // Value is an immutable engineering-unit value. The zero Value is invalid.
 type Value struct {
 	kind ValueKind
-	db   float64
+	db   float64 // a level in dB, or a pan position (KindPan)
 	on   bool
 	text string
 	mask uint32
-	n    int
+	n    int // an index, a Tap or a Colour
 }
 
 // Level returns a level in dB. -inf means fully off. NaN and +inf are invalid,
@@ -74,6 +77,37 @@ func Index(n int) (Value, error) {
 	return Value{kind: KindIndex, n: n}, nil
 }
 
+// Pan bounds: -100 is hard left, +100 hard right.
+const (
+	PanLeft  = -100.0
+	PanRight = 100.0
+)
+
+// Pan returns a pan position. NaN and anything outside -100..+100 are
+// invalid: a pan is never clamped into range on its way to a console.
+func Pan(p float64) (Value, error) {
+	if !(p >= PanLeft && p <= PanRight) {
+		return Value{}, fmt.Errorf("pan %v outside %v..%v: %w", p, PanLeft, PanRight, ErrInvalidValue)
+	}
+	return Value{kind: KindPan, db: p}, nil
+}
+
+// TapValue returns a send tap value.
+func TapValue(t Tap) (Value, error) {
+	if !t.valid() {
+		return Value{}, fmt.Errorf("tap %d: %w", t, ErrInvalidValue)
+	}
+	return Value{kind: KindTap, n: int(t)}, nil
+}
+
+// ColourValue returns a strip colour value.
+func ColourValue(c Colour) (Value, error) {
+	if c >= ColourCount {
+		return Value{}, fmt.Errorf("colour %d: %w", c, ErrInvalidValue)
+	}
+	return Value{kind: KindColour, n: int(c)}, nil
+}
+
 // Kind returns the value kind (0 for the invalid zero Value).
 func (v Value) Kind() ValueKind { return v.kind }
 
@@ -88,6 +122,15 @@ func (v Value) Mask() (uint32, bool) { return v.mask, v.kind == KindMask }
 
 // Index returns the strip index (0 = none) if v is an index.
 func (v Value) Index() (int, bool) { return v.n, v.kind == KindIndex }
+
+// Pan returns the pan position if v is a pan.
+func (v Value) Pan() (float64, bool) { return v.db, v.kind == KindPan }
+
+// Tap returns the send tap if v is a tap.
+func (v Value) Tap() (Tap, bool) { return Tap(v.n), v.kind == KindTap }
+
+// Colour returns the colour if v is a colour.
+func (v Value) Colour() (Colour, bool) { return Colour(v.n), v.kind == KindColour }
 
 // Text returns the text if v is text.
 func (v Value) Text() (string, bool) { return v.text, v.kind == KindText }
@@ -108,6 +151,12 @@ func (v Value) String() string {
 		return fmt.Sprintf("mask %b", v.mask)
 	case KindIndex:
 		return fmt.Sprintf("index %d", v.n)
+	case KindPan:
+		return fmt.Sprintf("pan %.0f", v.db)
+	case KindTap:
+		return "tap " + Tap(v.n).String()
+	case KindColour:
+		return "colour " + Colour(v.n).String()
 	default:
 		return "<invalid>"
 	}

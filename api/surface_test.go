@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mixproto/mixcore/console"
+	"github.com/mixproto/mixcore/driver/x32"
 	"github.com/mixproto/mixcore/internal/osc"
 	"github.com/mixproto/mixcore/meters"
 	simx32 "github.com/mixproto/mixcore/sim/x32"
@@ -72,15 +73,18 @@ func TestIdleEngine_RereadsInTheBackgroundButNeverWrites(t *testing.T) {
 		time.Sleep(time.Hour)
 		synctest.Wait()
 		// The supervisor asks every 15 s; a pass starts 15 s after the
-		// previous one ended (about 17 s of reads on x32), so ch 1 is read
-		// every 15 s + one pass, never back to back.
+		// previous one ended, so ch 1 is read every 15 s + one pass, never
+		// back to back. Since core-api v0.4 (sends) an x32 pass is the whole
+		// table at 16 reads per second, about two minutes.
 		var at []time.Time
 		for _, entry := range e.sim.Log() {
 			if entry.Class == simx32.ClassRead && entry.Address == "/ch/01/mix/fader" {
 				at = append(at, entry.At)
 			}
 		}
-		const minEvery, maxEvery = console.DefaultRereadEvery + 10*time.Second, console.DefaultRereadEvery + 25*time.Second
+		const readsPerPass = 16 // per second, driver/internal/xosc ReadWindow (X32-F07)
+		pass := time.Duration(len(x32.New(x32.Config{}).Addresses())/readsPerPass) * time.Second
+		minEvery, maxEvery := console.DefaultRereadEvery+pass-10*time.Second, console.DefaultRereadEvery+pass+10*time.Second
 		if len(at) < int(time.Hour/maxEvery) {
 			t.Fatalf("ch1 fader read %d times in an hour, want at least %d", len(at), int(time.Hour/maxEvery))
 		}

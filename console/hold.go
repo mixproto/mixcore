@@ -91,10 +91,15 @@ func (h *holds) external(c Change) {
 // cancelAll ends every active hold (stale, stopped).
 func (h *holds) cancelAll(reason string) {
 	for k := range maps.Clone(h.active) {
-		delete(h.active, k)
-		h.ended[k] = struct{}{}
-		h.addEvent(HoldEvent{Kind: HoldCancelled, Param: k.param, ClientID: k.client, Reason: reason})
+		h.cancel(k, reason)
 	}
+}
+
+// cancel ends one active hold (stale, stopped, a role change).
+func (h *holds) cancel(k holdKey, reason string) {
+	delete(h.active, k)
+	h.ended[k] = struct{}{}
+	h.addEvent(HoldEvent{Kind: HoldCancelled, Param: k.param, ClientID: k.client, Reason: reason})
 }
 
 func (h *holds) isEnded(p model.ParamRef, client string) bool {

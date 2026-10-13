@@ -26,7 +26,7 @@ const (
 	CodeNotStarted     = "ERR_NOT_STARTED"
 	CodeAlreadyStarted = "ERR_ALREADY_STARTED"
 	CodeInternal       = "ERR_INTERNAL"
-	CodeRole           = "ERR_ROLE"             // reserved for MixLink roles, not emitted in v0
+	CodeRole           = "ERR_ROLE"             // v0.4: the client's role does not allow the command (config role)
 	CodeBusy           = "ERR_BUSY"             // a discovery is already running, or Stop/Pause/StopDemo from inside OnState
 	CodeNetwork        = "ERR_NETWORK"          // no socket could be opened or no probe sent (discovery result)
 	CodeInvalidArg     = "ERR_INVALID_ARGUMENT" // bindings only: NULL pointer or bad length from native code
@@ -74,6 +74,8 @@ func mapError(err error) error {
 		return codeErr(CodeShowMode, err)
 	case errors.Is(err, console.ErrGainBound):
 		return codeErr(CodeGainBound, err)
+	case errors.Is(err, console.ErrRole):
+		return codeErr(CodeRole, err)
 	case errors.Is(err, console.ErrTypedOrigin):
 		return codeErr(CodeInvalidCommand, err)
 	case errors.Is(err, driver.ErrNotUserOrigin):
