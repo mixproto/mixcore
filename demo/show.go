@@ -12,8 +12,8 @@ import (
 // The show: a small church or club band. Values are a demo choice, not
 // protocol facts; addresses and encodings are cited where they are used.
 
-// Colour indexes of an xair strip, docs/protocols/xair.md section 3.2
-// (config/color: OFF, RD, GN, YE, BL, MG, CY, WH).
+// Colour indexes of a strip, docs/protocols/x32.md X32-F89 and xair.md
+// section 3.2 (config/color: OFF, RD, GN, YE, BL, MG, CY, WH).
 const (
 	colourRed     int32 = 1
 	colourGreen   int32 = 2
@@ -48,8 +48,8 @@ type channel struct {
 	faderDB float64
 	muted   bool    // the channel's own mute
 	pan     float64 // -1 left .. +1 right
-	colour  int32   // xair only
-	groups  uint8   // mute groups
+	colour  int32
+	groups  uint8 // mute groups
 	dcas    uint8
 	voice   voice
 }
@@ -110,14 +110,14 @@ var preamps = [len(channels)]preamp{
 	{noHeadamp: true}, {gainDB: 30, phantom: true}, {}, {}, // Click, Talkback, Spare, Spare
 }
 
-// monitorBus is an xair monitor mix: its name and the channels the
-// musician on it wants loud ("more me").
+// monitorBus is a monitor mix (buses 1..6 on both families): its name and
+// the channels the musician on it wants loud ("more me").
 type monitorBus struct {
 	name string
 	me   []int // 1-based channels
 }
 
-// Monitor sends, all pre-fader (xair.md section 3.3).
+// Monitor sends, all pre-fader (X32-F85, xair.md section 3.3).
 const (
 	sendMeDB    = 0.0
 	sendVoiceDB = -6.0

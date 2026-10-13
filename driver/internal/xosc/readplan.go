@@ -55,7 +55,7 @@ func (s *session) readAll(ctx context.Context) (model.State, error) {
 	switch {
 	case s.knownUnits != nil:
 		err = s.readKnown(ctx, rs)
-	case l.RequiredInputs < l.Inputs || len(l.Headamps) > 0:
+	case l.RequiredInputs < l.Inputs || len(l.Headamps) > 0 || len(l.Buses) > 0:
 		err = s.readProbing(ctx, rs)
 	default:
 		s.inputs = l.Inputs
@@ -77,8 +77,11 @@ func (s *session) readKnown(ctx context.Context, rs *readState) error {
 	k := s.knownUnits
 	s.inputs, s.headamps, s.extra = k.inputs, k.headamps, k.extra
 	s.markStatic()
+	for _, b := range k.buses {
+		s.buses.set(b, true)
+	}
 	return s.readPass(ctx, rs, s.plan(func(p param) bool {
-		return p.strip <= s.inputs && (p.headamp == 0 || s.present.has(p.headamp))
+		return p.strip <= s.inputs && (p.headamp == 0 || s.present.has(p.headamp)) && s.busesOf(p)
 	}))
 }
 
@@ -91,7 +94,11 @@ func (s *session) readProbing(ctx context.Context, rs *readState) error {
 	s.inputs, s.headamps = s.probedInputs(rs), s.probedHeadamps(rs)
 	s.extra = s.hasFullUnits()
 	s.markStatic()
+	s.markProbedBuses(rs)
 	rest := s.plan(func(p param) bool {
+		if p.bus != 0 {
+			return s.busesOf(p) && p.strip <= s.inputs
+		}
 		return (p.strip != 0 && p.strip <= s.inputs) || (p.headamp != 0 && p.role != HeadampPatched && s.present.has(p.headamp))
 	})
 	for _, i := range rest {
@@ -120,9 +127,10 @@ func (s *session) plan(keep func(param) bool) []int {
 // gain of every unit headamp, last, so dead reads never hold up the read
 // window.
 func (s *session) probePlan(rs *readState) []int {
-	out := s.plan(func(p param) bool { return p.strip == 0 && p.headamp == 0 })
+	out := s.plan(func(p param) bool { return p.strip == 0 && p.headamp == 0 && p.bus == 0 })
 	for i, p := range s.params.all {
-		if (p.strip != 0 && p.ref.Field == model.FieldFader) || (p.role == HeadampUnit && p.ref.Field == model.FieldGain) {
+		if (p.strip != 0 && p.bus == 0 && p.ref.Field == model.FieldFader) || (p.role == HeadampUnit && p.ref.Field == model.FieldGain) ||
+			isBusProbe(p) {
 			rs.probe[i] = true
 			out = append(out, i)
 		}
@@ -180,7 +188,8 @@ func (s *session) readPass(ctx context.Context, rs *readState, order []int) erro
 func (s *session) absentFeatures(rs *readState) map[feature]bool {
 	out := map[feature]bool{}
 	for i, p := range s.params.all {
-		if !rs.gaveUp[i] || out[p.feature] || p.feature == featureCore || p.strip > s.inputs || (p.headamp != 0 && p.feature != featurePhantom) {
+		if !rs.gaveUp[i] || out[p.feature] || p.feature == featureCore || p.strip > s.inputs || (p.headamp != 0 && p.feature != featurePhantom) ||
+			!s.busesOf(p) {
 			continue
 		}
 		out[p.feature] = true

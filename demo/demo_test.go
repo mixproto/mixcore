@@ -126,8 +126,37 @@ func TestNewConsole_XAirMonitorMixesAndColours(t *testing.T) {
 			t.Fatalf("%s = %v dB, want %v", s.addr, got, s.db)
 		}
 	}
-	if v, _ := sim.Value("/ch/05/mix/04/tap"); v.Int != xairTapPre {
+	if v, _ := sim.Value("/ch/05/mix/04/tap"); v.Int != tapPre {
 		t.Fatalf("monitor sends must be pre-fader, tap %d", v.Int)
+	}
+}
+
+// Core-api v0.4: the x32 demo has the same monitor mixes, DCA masters and
+// colours (X32-F80..F89); the tap is per bus pair, on the odd send (X32-F85).
+func TestNewConsole_X32MonitorMixes(t *testing.T) {
+	sim, _, err := newConsole(FamilyX32, law, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for addr, want := range map[string]string{"/bus/01/config/name": "Drum IEM", "/bus/06/config/name": "Pastor", "/dca/2/config/name": "Band"} {
+		if v, _ := sim.Value(addr); string(v.Bytes) != want {
+			t.Fatalf("%s = %q, want %q", addr, v.Bytes, want)
+		}
+	}
+	if v, _ := sim.Value("/ch/01/config/color"); v.Int != colourRed {
+		t.Fatalf("kick colour %d", v.Int)
+	}
+	if got := faderDB(t, sim, "/ch/02/mix/01/level"); math.Abs(got-sendMeDB) > 0.5 {
+		t.Fatalf("snare in the drummer's mix %v dB", got)
+	}
+	if got := faderDB(t, sim, "/ch/28/mix/05/level"); math.Abs(got-sendVoiceDB) > 0.5 { // Vox 4 in the vox wedge
+		t.Fatalf("vox 4 in bus 5 %v dB", got)
+	}
+	if v, _ := sim.Value("/ch/05/mix/03/type"); v.Int != tapPre {
+		t.Fatalf("x32 monitor sends must be pre-fader, type %d", v.Int)
+	}
+	if got := faderDB(t, sim, "/dca/1/fader"); math.Abs(got-dcaFaderDB) > dbTolerance {
+		t.Fatalf("dca 1 fader %v dB", got)
 	}
 }
 

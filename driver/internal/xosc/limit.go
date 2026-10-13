@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/mixproto/mixcore/driver"
+	"github.com/mixproto/mixcore/model"
 )
 
 // Evidence thresholds of the client-limit detection (docs/protocols/x32.md,
@@ -20,6 +21,19 @@ const (
 	// unpushed change, and no push meanwhile, mean the same.
 	limitAfterUnpushedPasses = 2
 )
+
+// limitEvidence reports whether a change of p is client-limit evidence:
+// one a served /xremote client is told of. Only the fader and mute of an
+// input or main count (X32-F22, X32-F33; XA-F20). Gain (echo unverified,
+// X32-F79, XA-F116), groups, names and every v0.4 value (sends, buses,
+// colours, links, matrices, DCA masters: pushes undocumented, X32-F90
+// item 23) never do. Writes (session.go) and re-reads (reread.go) share
+// this one predicate (review Go S2).
+func limitEvidence(p param) bool {
+	k, f := p.ref.Strip.Kind, p.ref.Field
+	return p.feature == featureCore && p.bus == 0 && (k == model.StripInput || k == model.StripMain) &&
+		(f == model.FieldFader || f == model.FieldMute)
+}
 
 // limitState is the owner-goroutine state of the detection.
 type limitState struct {

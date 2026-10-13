@@ -155,6 +155,7 @@ func (e *Engine) Start(configJSON string) (out string, err error) {
 		Logger:      e.opts.Logger,
 		RereadEvery: e.opts.RereadEvery,
 		Safety:      cfg.safety(),
+		Role:        cfg.mustRole(),
 	})
 	if err != nil {
 		return "", err
@@ -345,10 +346,9 @@ func setting(sup *console.Supervisor, cmd command) error {
 		return driver.ErrNotUserOrigin
 	}
 	if cmd.kind == cmdShowMode {
-		sup.SetShowMode(cmd.on)
-	} else {
-		sup.SetSlipGuard(cmd.origin.ClientID, cmd.on)
+		return sup.SetShowModeBy(cmd.origin, cmd.on) // owner and engineer only (v0.4)
 	}
+	sup.SetSlipGuard(cmd.origin.ClientID, cmd.on)
 	return nil
 }
 

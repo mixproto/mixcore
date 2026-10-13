@@ -21,8 +21,9 @@ import (
 	simx32 "github.com/mixproto/mixcore/sim/x32"
 )
 
-// rereadPassTime covers a full pass: one batch at once, then one per ping.
-var rereadPassTime = time.Duration(len(New(Config{}).Addresses())/xosc.ReadWindow+2) * DefaultTiming.PingEvery
+// rereadPassTime covers a pass (every v0.3 parameter and one slice of the
+// v0.4 ones): one batch at once, then one per ping.
+var rereadPassTime = time.Duration(New(Config{}).RereadPassLen()/xosc.ReadWindow+2) * DefaultTiming.PingEvery
 
 func reads(sim *simx32.Sim, addr string) []simx32.Entry {
 	var out []simx32.Entry
@@ -188,19 +189,40 @@ func TestReread_NextPassStartsAGapAfterThePreviousEnded(t *testing.T) {
 		r.run(sess)
 		rr := sess.(driver.Rereader)
 		start := time.Now()
-		for time.Since(start) < 2*time.Minute {
+		// A pass is the table at 16 reads per ping (about two minutes since
+		// core-api v0.4 added sends); run long enough for three passes.
+		pass := rereadPassTime
+		for time.Since(start) < 3*(pass+DefaultTiming.RereadGap)+pass {
 			_ = rr.Reread() // a request every second
 			time.Sleep(time.Second)
 		}
-		addrs := r.drv.Addresses()                                                       // read order
-		first, last := reads(r.sim, addrs[0])[1:], reads(r.sim, addrs[len(addrs)-1])[1:] // [0]: connect
-		if len(first) < 3 || len(last) < len(first)-1 {
-			t.Fatalf("%d passes started, %d ended", len(first), len(last))
+		gaps := passGaps(r.sim) // a pass's last read to the next pass's first, on the write socket
+		if len(gaps) < 3 {
+			t.Fatalf("%d pass boundaries in %v", len(gaps), time.Since(start))
 		}
-		for i := 1; i < len(first); i++ {
-			if gap := first[i].At.Sub(last[i-1].At); gap < DefaultTiming.RereadGap || gap > DefaultTiming.RereadGap+2*DefaultTiming.PingEvery {
-				t.Errorf("pass %d started %v after pass %d ended, want %v", i+1, gap, i, DefaultTiming.RereadGap)
+		for i, gap := range gaps {
+			if gap < DefaultTiming.RereadGap || gap > DefaultTiming.RereadGap+2*DefaultTiming.PingEvery {
+				t.Errorf("pass %d started %v after pass %d ended, want %v", i+2, gap, i+1, DefaultTiming.RereadGap)
 			}
 		}
 	})
+}
+
+// passGaps returns the pauses between re-read passes: the re-read reads
+// from the write socket at 16 per ping, so a pause longer than a few pings
+// between two of its reads is the gap between two passes.
+func passGaps(sim *simx32.Sim) []time.Duration {
+	subs := sim.Subscribers()
+	var last time.Time
+	var gaps []time.Duration
+	for _, e := range sim.Log() {
+		if e.Class != simx32.ClassRead || (len(subs) > 0 && e.From == subs[0]) {
+			continue
+		}
+		if !last.IsZero() && e.At.Sub(last) > 5*DefaultTiming.PingEvery {
+			gaps = append(gaps, e.At.Sub(last))
+		}
+		last = e.At
+	}
+	return gaps
 }

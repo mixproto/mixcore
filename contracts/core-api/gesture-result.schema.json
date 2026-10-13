@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/gesture-result.schema.json",
-  "title": "mixcore core API v0.3: result of Gesture(commandJSON)",
+  "title": "mixcore core API v0.4: result of Gesture(commandJSON)",
   "description": "Gesture takes the same command as Apply, enforces the same rules, and answers at once what the core did (CR-22): the UI draws the core's value and state instead of assuming its candidate was applied, and plays the haptic from state. On an error code (ERR_NEEDS_CONFIRM, ERR_SHOW_MODE, ERR_GAIN_BOUND, ...) there is no result.",
   "type": "object",
   "additionalProperties": false,

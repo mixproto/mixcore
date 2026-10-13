@@ -236,7 +236,7 @@ From an input `/ch/NN`, the aux return `/rtn/aux` or an FX return `/rtn/N`, to s
 | Field | Address | Type, range | Source |
 |---|---|---|---|
 | level | `<from>/mix/MM/level` | `f` 0..1, level law XA-F40, **161 steps** (k/160) | XS5 `buildStripDefs.js` (`/mix/` + 2-digit bus + `/level`, `fSteps: 161`) `[PERMISSIVE-CODE MIT]`; XS10 `bus/to/level.js` `[PERMISSIVE-CODE Apache-2.0]` |
-| pan | `<from>/mix/MM/pan` | `f` 0..1 = -100..+100 | XS10 `bus/to/pan.js` `[PERMISSIVE-CODE Apache-2.0]`; XS12 `[COMMUNITY]` |
+| pan | `<from>/mix/MM/pan` | `f` 0..1 = -100..+100. **Scope disputed (re-checked 2026-10-13):** XS5 offers send pan only for the pairs `1-2`, `3-4`, `5-6`, written to the odd slot 01, 03, 05; XS10 offers it to a bus only while that bus is stereo-linked (addressed at the bus's own slot, odd or even) and **never to FX sends 07..10**; XS12 shows only `/ch/01/mix/01/pan`. Send pan on 07..10 and on even slots is `[TO-VERIFY]` (test item 10) | XS5 `buildStripDefs.js:370-393` (pan bus choices 1-2, 3-4, 5-6) `[PERMISSIVE-CODE MIT]`; XS10 `bus/to/pan.js:40-43`, `:93-94` (linked bus only, no effect target) `[PERMISSIVE-CODE Apache-2.0]`; XS12 `[COMMUNITY]` |
 | tap | `<from>/mix/MM/tap` | `i` 0..5 = IN, PREEQ, POSTEQ, PRE, POST, GRP (X32: `type` on odd sends only, other labels) | XS12 `[COMMUNITY]`; XS10 `bus/to/tap.js` (same 6 values) `[PERMISSIVE-CODE Apache-2.0]` |
 | subgroup on | `<from>/mix/MM/grpon` | `i` 0/1; the send's on/off when tap = GRP | XS12 ("sends group Off/On") `[COMMUNITY]`; XS10 `bus/to/on.js` (`grpon` used only with tap "Same level") `[PERMISSIVE-CODE Apache-2.0]` |
 | send on/off | **none**: no `<from>/mix/MM/on` in any source (X32 has `/ch/NN/mix/MM/on`) | | XS12 `[COMMUNITY]`, XS10, XS5 (absent in all three); `[TO-VERIFY]` (test item 10) |
@@ -244,7 +244,9 @@ From an input `/ch/NN`, the aux return `/rtn/aux` or an FX return `/rtn/N`, to s
 Model consequence: on X Air `Send.on` is an absent capability (never faked); `Send.tap` maps IN/PREEQ/POSTEQ/PRE to
 `pre` and POST/GRP to `post` for the model's two-valued tap, with the console word kept for display. Whether tap and
 pan exist per send or only per odd send of a linked pair (as on X32) is `[TO-VERIFY]` (test item 10). Sends from FX
-returns to FX sends 07..10 are `[TO-VERIFY]`.
+returns to FX sends 07..10 are `[TO-VERIFY]`. Proposed default until item 10: no send pan to FX sends 07..10 (two of
+the three sources never address it), and send pan to buses 1..6 kept per send as implemented, flagged as possibly
+without effect while the pair is unlinked (XS10).
 
 ### 3.4 Processing (later phases; not in driver v1)
 | Field | Address | Encoding | Source |
@@ -502,9 +504,10 @@ held gesture; going stale cancels every hold; nothing writes in response to a pu
 
 ## Background re-read
 Identical to `x32.md` "Background re-read" (every 15 s while live, paced 16 reads per second, from the command socket,
-read-only). ОЦЕНКА of pass length for the v1 table: 16 inputs x 5 parameters (name, fader, mute, mute-group bitmap, DCA
-bitmap) + main 2 (fader, mute) + 4 mute groups + 4 DCAs (mute) = 90 reads; at 16 reads per 1 s step a pass takes
-ceil(90 / 16) = 6 s (X32's 32-input table: 32 x 5 + 3 + 6 + 8 = 177 reads, 12 s).
+read-only; every v0.3 parameter each pass, then a rotating slice of 256 v0.4 ones; held parameters skipped from the
+next batch on). Pass length: the 123 v0.3 reads (90 of the v1 table, 16 mic gains and phantoms, the aux gain) + 256 =
+379 reads, about 24 s at 16 reads per 1 s step; a lost push of a fader, mute or Gain is recovered within about 40 s
+(one pass plus the 15 s gap), a v0.4 value within ceil(488 / 256) = 2 passes, about 80 s.
 
 ## As implemented (driver/xair, sim/xair; branch feat/core-xair, 2026-10-12)
 Design choices made when implementing this file. None is a new protocol fact; each `[TO-VERIFY]` item keeps the safe
@@ -535,6 +538,23 @@ behaviour above and has a test that pins it, so a hardware result changes one de
   address, so snapshot 64 (XA-F63) is never touched.
 - **Discovery.** `/xinfo` to 10024 (XA-F12). The core API classifies replies: port 10024 is xair unless the model is
   an X32 model; port 10023 is x32 unless the model starts with XR, X18 or MR; on other ports the model decides.
+- **Buses and sends (core-api v0.4, branch feat/core-sends-buses, 2026-10-13).** Buses 1..6 are `/bus/1..6` (kind
+  `mix`) and FX sends 1..4 are model buses 7..10 (`/fxsend/1..4`, kind `fx`), the section 3.1 proposal (lead default
+  "yes"); each has name, colour, fader and mute (section 3.2). Every bus and FX send is probed once per link (its fader
+  read), so a model with fewer buses (XA-F72, test item 12) connects without them. Sends from inputs 1..16 to slots
+  01..10 (section 3.3): `level` with the XA-F40 law in 161 steps (k/160, XA-F41; echoes matched within 0.5/160), `pan`
+  (-100 + 200 f, 101 steps, section 4) **on slots 01..06 only**: since the 2026-10-13 re-check (section 3.3, item 10)
+  the driver neither reads nor writes `/mix/07..10/pan`, the state has no such field, a set is `ERR_UNSUPPORTED` and
+  the snapshot's FX bus entries carry no `sendPan`; and `tap` (0..5, read-only, the console words `IN`, `PREEQ`,
+  `POSTEQ`, `PRE`, `POST`, `GRP`) on every slot. Which send fields exist comes from this file's table (the family
+  profile in `driver/xair/driver.go`), never from what the mixer answers; a field the table has but the mixer does not
+  answer is absent too. Whether tap and pan are really per pair is test item 10 (if it is, the X32 pair rule of
+  `x32.md` X32-F84/F85 applies). `Send.on` is absent (section 3.3), so a set or
+  toggle of `sendOn` is `ERR_UNSUPPORTED`. `grpon`, sends from `/rtn/aux` and `/rtn/N`, and FX-return sends are not
+  modelled. Bus links `/config/buslink/1-2`, `/3-4`, `/5-6` (section 3.2) are read-only, on the odd bus. DCA masters
+  `/dca/N/fader`, `/dca/N/config/name`, `/dca/N/config/color` (section 3.2) and the colour of inputs, main, buses and
+  DCAs (section 3.2 `config/color`) are read; DCA faders are written, colours never. Read count: 16 x (10 x 2 + 6) =
+  416 send reads + 40 bus + 3 link + 12 DCA + 17 colour reads = 488 v0.4 reads next to the 123 of the v0.3 table (611).
 - **Simulator defaults** (`sim/xair`, options for every `[TO-VERIFY]`): push to the sender with `/xremote` (H2,
   option `NoEchoToSender` for H1), no reply to a set (option `ReplyToSet` for H3), ninth client ignored
   (`EvictOldestWhenFull`), `/status` always "active" (`StandbyWhenNotServed`), `/-snap/index` not pushed on a load
@@ -573,8 +593,10 @@ hardware we legally use. "mixprobe" marks items a `--family xair` mode can autom
 9. **Group membership addresses (section 3.2)**, mixprobe. Read `/lr/grp/mute`, `/lr/grp/dca`, `/rtn/aux/grp/mute`,
    `/rtn/1/grp/dca`, `/fxsend/1/grp/mute`. Pass: which answer.
 10. **Sends (section 3.3)**, mixprobe. Read `/ch/01/mix/01/on` (expect no reply), `/ch/01/mix/02/tap`,
-    `/ch/01/mix/02/pan` with bus 1-2 linked and unlinked, `/rtn/1/mix/07/level`. Set tap to GRP and toggle `grpon`
-    from X AIR Edit; log. Pass: address set and link behaviour.
+    `/ch/01/mix/02/pan` with bus 1-2 linked and unlinked, `/ch/01/mix/07/pan`, `/ch/01/mix/07/tap`,
+    `/rtn/1/mix/07/level`. With a tone on ch 1 sent to bus 1 and buses 1-2 unlinked, write `/ch/01/mix/01/pan` to 0.0
+    and 1.0 and log the bus 1 and 2 meters (`/meters/1` values 26, 27). Set tap to GRP and toggle `grpon` from X AIR
+    Edit; log. Pass: address set, whether send pan to FX sends exists, and whether unlinked send pan has an effect.
 11. **Model and firmware strings (XA-F70, XA-F78)**, mixprobe. Record `/xinfo` and `/info` on every model available
     (especially V2 and "W" units). Pass: exact strings.
 12. **DSP counts on small models (XA-F71, XA-F72)**, mixprobe. On an XR12 and an XR16 read `/ch/16/mix/fader`,
@@ -636,3 +658,4 @@ knob moves of 26 need a person.
 - Warn on firmware older than 1.18 (XA-F76)? Default: one-time non-blocking hint.
 - Access point onboarding hint at 4 devices (section 8)? Default: yes, in the connect flow.
 - FX send masters as buses 7..10 in the unified model (section 3.1)? Default: yes, with a role flag for display.
+  Implemented that way in core-api v0.4 (bus `kind` `fx`); the lead can still overturn it.

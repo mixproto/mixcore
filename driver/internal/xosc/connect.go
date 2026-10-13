@@ -64,6 +64,11 @@ func (s *session) capabilities() model.Capabilities {
 		InputCount: s.inputs, AbsentInputs: l.Inputs - s.inputs, HasMain: true, InputMeters: true,
 		EchoesOwnWrites: true, MaxPushClients: s.prof.MaxPushClients,
 		Headamps: s.headampInfos(), InputHeadamps: l.HeadampIndexes > 0 && !s.absent[featureHeadampIndex],
+		Buses: s.busInfos(), Matrices: groupCount(s.absent[featureMatrices], l.Matrices),
+		FaderSteps: int(faderSteps), SendLevelSteps: int(sendLevelSteps), EchoWindow: s.timing.EchoWindow,
+	}
+	if sh := s.shape(); sh.Sends.Tap {
+		c.TapLabels = s.prof.TapLabels
 	}
 	if !s.absent[featureMuteGroups] {
 		c.MuteGroups = l.MuteGroups
@@ -75,11 +80,31 @@ func (s *session) capabilities() model.Capabilities {
 	return c
 }
 
-// isAbsent reports whether p belongs to a feature or an input strip this
-// console did not answer for (never faked).
+// isAbsent reports whether p belongs to a feature, an input strip or a bus
+// this console did not answer for (never faked).
 func (s *session) isAbsent(p param) bool {
-	return s.absent[p.feature] || p.ref.Strip.Kind == model.StripInput && p.ref.Strip.Index > s.inputs ||
-		p.headamp != 0 && !s.present.has(p.headamp)
+	return s.absent[p.feature] || s.absent[p.needs] || s.absent[stripFeature(p.ref.Strip.Kind)] ||
+		p.ref.Strip.Kind == model.StripInput && p.ref.Strip.Index > s.inputs ||
+		p.headamp != 0 && !s.present.has(p.headamp) || !s.busesOf(p)
+}
+
+// stripFeature is the feature a group strip exists with: every parameter
+// of a DCA (mute, and a v0.4 master) is absent without the DCAs.
+func stripFeature(k model.StripKind) feature {
+	switch k {
+	case model.StripDCA:
+		return featureDCAs
+	case model.StripMuteGroup:
+		return featureMuteGroups
+	default:
+		return featureCore
+	}
+}
+
+// busesOf reports whether the buses p belongs to answered (true for a
+// parameter of no bus).
+func (s *session) busesOf(p param) bool {
+	return (p.bus == 0 || s.buses.has(p.bus)) && (p.pairBus == 0 || s.buses.has(p.pairBus))
 }
 
 // next waits up to wait for a packet. ok is false on timeout.
@@ -179,6 +204,10 @@ func (s *session) buildState(values []model.Value) (model.State, error) {
 	if st, err = st.WithHeadamps(s.stateHeadamps()); err != nil {
 		return model.State{}, err
 	}
+	if st, err = st.WithBuses(s.busInfos()); err != nil {
+		return model.State{}, err
+	}
+	st = st.WithMatrices(groupCount(s.absent[featureMatrices], l.Matrices)).WithShape(s.shape())
 	for i, p := range s.params.all {
 		if s.isAbsent(p) {
 			continue

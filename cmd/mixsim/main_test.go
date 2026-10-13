@@ -12,6 +12,7 @@ import (
 
 	"go.uber.org/goleak"
 
+	"github.com/mixproto/mixcore/internal/osc"
 	simx32 "github.com/mixproto/mixcore/sim/x32"
 	simxair "github.com/mixproto/mixcore/sim/xair"
 )
@@ -25,6 +26,14 @@ func TestDemoSetup(t *testing.T) {
 	}
 	if v, _ := sim.Value("/ch/32/config/name"); string(v.Bytes) != "Input 32" {
 		t.Fatalf("ch32 name = %q", v.Bytes)
+	}
+	for addr, want := range map[string]osc.Arg{ // core-api v0.4: named buses and monitor sends
+		"/bus/02/config/name": osc.String("Keys IEM"), "/ch/02/mix/02/level": osc.Float(sendMe),
+		"/ch/03/mix/02/level": osc.Float(sendRest), "/ch/03/mix/01/type": osc.Int(tapPre),
+	} {
+		if v, _ := sim.Value(addr); !v.Equal(want) {
+			t.Fatalf("%s = %v, want %v", addr, v, want)
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*demoTick)
 	defer cancel()
@@ -44,6 +53,12 @@ func TestDemoSetup_XAir(t *testing.T) {
 	}
 	if v, _ := sim.Value("/lr/mix/fader"); v.Float != 767.0/1023 {
 		t.Fatalf("main fader %v", v.Float)
+	}
+	if v, _ := sim.Value("/bus/6/config/name"); string(v.Bytes) != "Pastor" {
+		t.Fatalf("bus 6 = %q", v.Bytes)
+	}
+	if v, _ := sim.Value("/ch/06/mix/06/tap"); v.Int != tapPre {
+		t.Fatalf("xair tap %d", v.Int)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*demoTick)
 	defer cancel()

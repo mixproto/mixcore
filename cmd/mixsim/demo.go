@@ -22,7 +22,62 @@ const (
 	// xairDBSteps: X Air meters are int16 in 1/256 dB (XA-F51).
 	xairDBSteps = 256
 	demoFloorDB = -60.0
+	// Monitor sends (X32-F82, X32-F83; xair.md 3.3): "more me" at 0 dB (0.75),
+	// the rest at -10 dB (0.5), both on the 161-step grid; tap 3 = PRE in
+	// both families (X32-F85, xair.md 3.3).
+	sendMe   = 0.75
+	sendRest = 0.5
+	tapPre   = 3
 )
+
+// demoBuses names the first six mix buses (X32-F80, xair.md 3.1).
+var demoBuses = [...]string{"Drums IEM", "Keys IEM", "Bass IEM", "Vox wedge", "Gtr wedge", "Pastor"}
+
+// busFamily is where a family keeps buses and send taps.
+type busFamily struct {
+	root       func(b int) string // X32-F80 /bus/01; xair.md 3.1 /bus/1
+	tapLeaf    string             // X32-F85 "type"; xair.md 3.3 "tap"
+	tapOddOnly bool               // X32-F85: only odd sends, for the pair
+}
+
+var (
+	x32Buses  = busFamily{root: func(b int) string { return fmt.Sprintf("/bus/%02d", b) }, tapLeaf: "type", tapOddOnly: true}
+	xairBuses = busFamily{root: func(b int) string { return fmt.Sprintf("/bus/%d", b) }, tapLeaf: "tap"}
+)
+
+// fillBuses names the demo buses, sets their faders to unity and sends
+// every input pre-fader into each: its own bus louder ("more me").
+func fillBuses(sim surfaceSetter, inputs int, fam busFamily) error {
+	for i, name := range demoBuses {
+		b := i + 1
+		if err := sim.SurfaceSet(fam.root(b)+"/config/name", osc.String(name)); err != nil {
+			return err
+		}
+		if err := sim.SurfaceSet(fam.root(b)+"/mix/fader", osc.Float(unityLevel)); err != nil {
+			return err
+		}
+		for ch := 1; ch <= inputs; ch++ {
+			if err := fillSend(sim, fmt.Sprintf("/ch/%02d/mix/%02d", ch, b), (ch-1)%len(demoBuses) == i, fam, b); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func fillSend(sim surfaceSetter, send string, me bool, fam busFamily, b int) error {
+	level := float32(sendRest)
+	if me {
+		level = sendMe
+	}
+	if err := sim.SurfaceSet(send+"/level", osc.Float(level)); err != nil {
+		return err
+	}
+	if fam.tapOddOnly && b%2 == 0 {
+		return nil
+	}
+	return sim.SurfaceSet(send+"/"+fam.tapLeaf, osc.Int(tapPre))
+}
 
 // surfaceSetter is SurfaceSet of either simulator.
 type surfaceSetter interface {
@@ -43,10 +98,18 @@ func fillNames(sim surfaceSetter, n int, mainFader string) error {
 }
 
 func fillDemoNames(sim *simx32.Sim) error {
-	return fillNames(sim, demoX32Channels, "/main/st/mix/fader")
+	if err := fillNames(sim, demoX32Channels, "/main/st/mix/fader"); err != nil {
+		return err
+	}
+	return fillBuses(sim, demoX32Channels, x32Buses)
 }
 
-func fillXAirDemo(sim *simxair.Sim) error { return fillNames(sim, demoXAirChannels, "/lr/mix/fader") }
+func fillXAirDemo(sim *simxair.Sim) error {
+	if err := fillNames(sim, demoXAirChannels, "/lr/mix/fader"); err != nil {
+		return err
+	}
+	return fillBuses(sim, demoXAirChannels, xairBuses)
+}
 
 // sweep returns n levels in 0..1 with a phase offset per channel.
 func sweep(now, start time.Time, out []float64) {

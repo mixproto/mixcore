@@ -34,11 +34,13 @@ const (
 	ceilingOff      = "off"
 	jsonNull        = "null"
 	maxHeadroomDB   = 10.0
-	fieldEffective  = "effectiveMute"
-	maxGroupNumber  = 32 // largest group number a membership list may name
-	maxClientIDLen  = 128
-	maxTrackPt      = 10000 // command.schema.json trackLengthPt maximum
-	minTrackPt      = 50    // and minimum: no phone control is shorter (review pass 4, MEDIUM 3)
+	// defaultHeadroomDB is the SR-28 default monitor headroom.
+	defaultHeadroomDB = 6.0
+	fieldEffective    = "effectiveMute"
+	maxGroupNumber    = 32 // largest group number a membership list may name
+	maxClientIDLen    = 128
+	maxTrackPt        = 10000 // command.schema.json trackLengthPt maximum
+	minTrackPt        = 50    // and minimum: no phone control is shorter (review pass 4, MEDIUM 3)
 )
 
 var errVersion = errors.New("unsupported contract version")
@@ -52,6 +54,8 @@ type configJSON struct {
 		Inputs bool `json:"inputs"`
 	} `json:"meters"`
 	Safety safetyJSON `json:"safety"`
+	// Role is config.schema.json role (v0.4, role_json.go).
+	Role json.RawMessage `json:"role,omitempty"`
 }
 
 // safetyJSON is config.schema.json safety (v0.3).
@@ -69,6 +73,7 @@ type stripJSON struct {
 type paramJSON struct {
 	Strip stripJSON `json:"strip"`
 	Field string    `json:"field"`
+	Bus   int       `json:"bus,omitempty"` // v0.4: the bus of a send field
 }
 
 type originJSON struct {
@@ -136,6 +141,9 @@ func parseConfig(data string) (configJSON, error) {
 	if _, err := c.Safety.monitor(); err != nil {
 		return c, codeErr(CodeInvalidConfig, err)
 	}
+	if _, err := c.role(); err != nil {
+		return c, codeErr(CodeInvalidConfig, err)
+	}
 	return c, nil
 }
 
@@ -158,7 +166,7 @@ func (s safetyJSON) monitor() (*console.MonitorCeiling, error) {
 	if err := dec.Decode(&m); err != nil {
 		return nil, fmt.Errorf("monitorCeiling: %w", err)
 	}
-	h := 6.0 // SR-28 default headroom
+	h := defaultHeadroomDB
 	if m.HeadroomDB != nil {
 		h = *m.HeadroomDB
 	}
@@ -245,7 +253,10 @@ func parseParam(p paramJSON) (model.ParamRef, error) {
 	if (kind != model.StripMain && p.Strip.Index < 1) || (kind == model.StripMain && p.Strip.Index != 0) {
 		return model.ParamRef{}, codeErr(CodeInvalidCommand, fmt.Errorf("strip %s index %d", kind, p.Strip.Index))
 	}
-	return model.ParamRef{Strip: ref, Field: field}, nil
+	if err := parseBus(field, p.Bus); err != nil {
+		return model.ParamRef{}, codeErr(CodeInvalidCommand, err)
+	}
+	return model.ParamRef{Strip: ref, Field: field, Bus: p.Bus}, nil
 }
 
 func parseOrigin(o originJSON) (driver.Origin, error) {
@@ -260,6 +271,9 @@ func parseValue(f model.Field, raw json.RawMessage) (model.Value, error) {
 	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		// json.Unmarshal(null) leaves the target unchanged: false would unmute, "" would wipe a name.
 		return model.Value{}, codeErr(CodeInvalidCommand, errors.New("set needs a non-null value"))
+	}
+	if v, handled, err := parseV04Value(f, raw); handled {
+		return v, err
 	}
 	var (
 		v   model.Value
@@ -332,6 +346,9 @@ func valueJSON(v model.Value) any {
 	if db, ok := v.DB(); ok {
 		return levelJSON(db)
 	}
+	if j, ok := v04ValueJSON(v); ok {
+		return j
+	}
 	if b, ok := v.Bool(); ok {
 		return b
 	}
@@ -365,6 +382,9 @@ type stripStateJSON struct {
 	EffectiveMute *effectiveMuteJSON `json:"effectiveMute,omitempty"`
 	// v0.3, x32 inputs: the headamp feeding the strip, null when none.
 	Headamp json.RawMessage `json:"headamp,omitempty"`
+	// v0.4: the strip colour and, for inputs, the sends.
+	Colour string     `json:"colour,omitempty"`
+	Sends  []sendJSON `json:"sends,omitempty"`
 }
 
 type changeJSON struct {
@@ -409,6 +429,10 @@ type stateJSON struct {
 	Headamps      []headampJSON    `json:"headamps,omitempty"`     // v0.3, snapshot only
 	MuteGroups    []groupStateJSON `json:"muteGroups,omitempty"`   // v0.1, snapshot only
 	DCAs          []groupStateJSON `json:"dcas,omitempty"`         // v0.1, snapshot only
+	Buses         []outputJSON     `json:"buses,omitempty"`        // v0.4, snapshot only
+	Matrices      []outputJSON     `json:"matrices,omitempty"`     // v0.4, snapshot only
+	SendFields    *sendFieldsJSON  `json:"sendFields,omitempty"`   // v0.4, snapshot only
+	SendTaps      []tapLabelJSON   `json:"sendTaps,omitempty"`     // v0.4, snapshot only
 	Changes       *[]changeJSON    `json:"changes,omitempty"`      // present (maybe empty) in every diff
 	Events        []eventJSON      `json:"events,omitempty"`
 }
@@ -441,7 +465,9 @@ func encodeUpdate(u console.Update, seq uint64, full, demo bool) ([]byte, error)
 	out.Strips = stripsJSON(u.State, u.Capabilities)
 	out.AbsentInputs = absentInputsJSON(u.Capabilities)
 	out.Headamps = headampsJSON(u.State, u.Capabilities)
-	out.MuteGroups, out.DCAs = groupStatesJSON(u.State.MuteGroups()), groupStatesJSON(u.State.DCAs())
+	out.MuteGroups, out.DCAs = groupStatesJSON(u.State.MuteGroups()), dcasJSON(u.State)
+	out.Buses, out.Matrices = busesJSON(u.State), matricesJSON(u.State)
+	out.SendFields, out.SendTaps = sendFieldsOf(u.State), sendTapsJSON(u.State, u.Capabilities)
 	return json.Marshal(out)
 }
 
@@ -460,7 +486,7 @@ func eventsJSON(evs []console.HoldEvent) []eventJSON {
 }
 
 func paramToJSON(p model.ParamRef) paramJSON {
-	return paramJSON{Strip: stripJSON{Kind: p.Strip.Kind.String(), Index: p.Strip.Index}, Field: p.Field.String()}
+	return paramJSON{Strip: stripJSON{Kind: p.Strip.Kind.String(), Index: p.Strip.Index}, Field: p.Field.String(), Bus: p.Bus}
 }
 
 func originToJSON(o driver.Origin) originJSON {

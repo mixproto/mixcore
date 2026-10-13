@@ -36,13 +36,18 @@ const (
 	xairGroups    = 4  // xair.md section 3.1: 4 mute groups, 4 DCAs
 	// xairBank1Values: /meters/1 holds 40 values (XA-F53).
 	xairBank1Values = 40
-	xairTapPre      = 3 // xair.md section 3.3: tap 0..5 = IN, PREEQ, POSTEQ, PRE, POST, GRP
+	// tapPre is PRE on the wire of both families: x32 type 0..5 = IN/LC,
+	// <-EQ, EQ->, PRE, POST, GRP (X32-F85); xair tap 0..5 = IN, PREEQ,
+	// POSTEQ, PRE, POST, GRP (xair.md section 3.3).
+	tapPre = 3
 	// Mic headamp Gain: -12 + 72 f dB (X32-F71, XA-F111).
 	micGainMinDB  = -12.0
 	micGainSpanDB = 72.0
 	noHeadampHA   = -1 // X32-F74: /-ha/NN/index of a source without a headamp
 	// xairDBSteps: meter values are int16 in 1/256 dB (XA-F52).
 	xairDBSteps = 256
+	// sendSteps: send levels have 161 known values (X32-F83, XA-F41).
+	sendSteps = 160
 )
 
 // console is what the demo needs of a family simulator.
@@ -65,17 +70,25 @@ type family struct {
 	// headamp is the root of input ch's mic headamp (default patch: ch N, headamp N).
 	headamp  func(ch int) string
 	hasPatch bool // /-ha/NN/index names each channel's headamp (x32)
+	// busRoot is the root of mix bus b (X32-F80: /bus/01; xair.md 3.1: /bus/1).
+	busRoot func(b int) string
+	// tapLeaf names a send's tap (X32-F85 "type", xair.md 3.3 "tap");
+	// tapOddOnly: only odd sends have it, for their bus pair (X32-F85).
+	tapLeaf    string
+	tapOddOnly bool
 }
 
 var families = map[string]family{
 	// X32-F33, X32-F34: /main/st is the main bus.
 	// X32-F70: /headamp/000..127, three digits, 0-based; local 000..031.
 	FamilyX32: {inputs: x32Inputs, muteGroups: x32MuteGroups, dcas: x32DCAs, mainFader: "/main/st/mix/fader", mainOn: "/main/st/mix/on",
-		headamp: func(ch int) string { return fmt.Sprintf("/headamp/%03d", ch-1) }, hasPatch: true},
+		headamp: func(ch int) string { return fmt.Sprintf("/headamp/%03d", ch-1) }, hasPatch: true,
+		busRoot: func(b int) string { return fmt.Sprintf("/bus/%02d", b) }, tapLeaf: "type", tapOddOnly: true},
 	// xair.md section 3.1: /lr is the main bus; pan per xair.md section 3.2.
 	// XA-F110: mic headamps /headamp/01..16, two digits, 1-based.
 	FamilyXAir: {inputs: xairInputs, muteGroups: xairGroups, dcas: xairGroups, mainFader: "/lr/mix/fader", mainOn: "/lr/mix/on", hasPan: true,
-		headamp: func(ch int) string { return fmt.Sprintf("/headamp/%02d", ch) }},
+		headamp: func(ch int) string { return fmt.Sprintf("/headamp/%02d", ch) },
+		busRoot: func(b int) string { return fmt.Sprintf("/bus/%d", b) }, tapLeaf: "tap"},
 }
 
 // newConsole builds the family's simulator, seeded with the show.
@@ -112,14 +125,16 @@ func (s *seeder) set(addr string, a osc.Arg) {
 
 func (s *seeder) level(db float64) osc.Arg { return osc.Float(float32(s.law.PositionFromDB(db))) }
 
-// common seeds what both families model: names (X32-F31), faders (X32-F32,
-// XA-F40), mutes (X32-F33: 0 = muted), membership (X32-F36, X32-F38) and
-// engaged mute groups (X32-F35: 1 = engaged); xair uses the same addresses
-// (xair.md section 3.2).
+// common seeds what both families model: names (X32-F31), colours
+// (X32-F89), faders (X32-F32, XA-F40), mutes (X32-F33: 0 = muted),
+// membership (X32-F36, X32-F38) and engaged mute groups (X32-F35: 1 =
+// engaged), then headamps, DCA masters and monitor buses; xair uses the
+// same addresses (xair.md section 3.2).
 func (s *seeder) common(fam family) {
 	for i := range fam.inputs {
 		c, root := channels[i], chRoot(i+1)
 		s.set(root+"/config/name", osc.String(c.name))
+		s.set(root+"/config/color", osc.Int(c.colour))
 		s.set(root+"/mix/fader", s.level(c.faderDB))
 		s.set(root+"/mix/on", osc.Int(boolInt(!c.muted)))
 		s.set(root+"/grp/mute", osc.Int(int32(c.groups)))
@@ -130,6 +145,8 @@ func (s *seeder) common(fam family) {
 		s.set(fmt.Sprintf("/config/mute/%d", g), osc.Int(boolInt(engagedMuteGroups&(1<<(g-1)) != 0)))
 	}
 	s.headamps(fam)
+	s.dcaMasters()
+	s.buses(fam)
 }
 
 // headamps seeds every input's mic headamp: Gain (X32-F71, X32-F72;
@@ -146,27 +163,42 @@ func (s *seeder) headamps(fam family) {
 	}
 }
 
-// xairExtras seeds what only the xair simulator models (xair.md section 3):
-// colours, pans, DCA names and faders, monitor bus names, faders and pre-fader sends.
+// xairExtras seeds what only the xair simulator models: channel pans
+// (xair.md section 3.2; x32.md has no channel pan yet).
 func (s *seeder) xairExtras() {
 	for i := range xairInputs {
-		c, root := channels[i], chRoot(i+1)
-		s.set(root+"/config/color", osc.Int(c.colour))
-		s.set(root+"/mix/pan", osc.Float(float32((c.pan+1)/2))) // 0..1 = L100..R100
+		s.set(chRoot(i+1)+"/mix/pan", osc.Float(float32((channels[i].pan+1)/2))) // 0..1 = L100..R100
 	}
+}
+
+// dcaMasters seeds DCA names and faders (X32-F88, xair.md section 3.2).
+func (s *seeder) dcaMasters() {
 	for d, name := range dcaNames {
 		s.set(fmt.Sprintf("/dca/%d/config/name", d+1), osc.String(name))
 		s.set(fmt.Sprintf("/dca/%d/fader", d+1), s.level(dcaFaderDB))
 	}
+}
+
+// buses seeds the monitor mixes: bus names and faders (X32-F80, xair.md
+// 3.1) and pre-fader sends from every input (X32-F82..F85, xair.md 3.3).
+func (s *seeder) buses(fam family) {
 	for b, bus := range monitorBuses {
-		s.set(fmt.Sprintf("/bus/%d/config/name", b+1), osc.String(bus.name))
-		s.set(fmt.Sprintf("/bus/%d/mix/fader", b+1), s.level(busFaderDB))
-		for ch := 1; ch <= xairInputs; ch++ {
-			send := fmt.Sprintf("%s/mix/%02d", chRoot(ch), b+1) // two digits (xair.md section 3.3)
-			s.set(send+"/level", s.level(sendDB(bus, ch)))
-			s.set(send+"/tap", osc.Int(xairTapPre))
+		root := fam.busRoot(b + 1)
+		s.set(root+"/config/name", osc.String(bus.name))
+		s.set(root+"/mix/fader", s.level(busFaderDB))
+		for ch := 1; ch <= fam.inputs; ch++ {
+			send := fmt.Sprintf("%s/mix/%02d", chRoot(ch), b+1) // two digits in both families
+			s.set(send+"/level", s.sendLevel(sendDB(bus, ch)))
+			if !fam.tapOddOnly || (b+1)%2 == 1 {
+				s.set(send+"/"+fam.tapLeaf, osc.Int(tapPre))
+			}
 		}
 	}
+}
+
+// sendLevel is a send level on the 161-step grid (X32-F83, XA-F41).
+func (s *seeder) sendLevel(db float64) osc.Arg {
+	return osc.Float(float32(math.Round(s.law.PositionFromDB(db)*sendSteps) / sendSteps))
 }
 
 func chRoot(ch int) string { return fmt.Sprintf("/ch/%02d", ch) }

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/common.schema.json",
-  "title": "mixcore core API v0.3: shared definitions",
+  "title": "mixcore core API v0.4: shared definitions",
   "$defs": {
     "version": {
       "const": 0,
@@ -20,14 +20,16 @@
             "main",
             "muteGroup",
             "dca",
-            "headamp"
+            "headamp",
+            "bus",
+            "matrix"
           ],
-          "description": "muteGroup and dca are v0.1 (x32: mute groups 1..6, DCA groups 1..8; xair, v0.2: mute groups 1..4, DCA groups 1..4). Their only field is mute. headamp is v0.3: a preamp (the physical input, not the channel). Index: xair /headamp/NN is NN (01..16 mic, fewer on XR16/XR12, XA-F73; 17 aux on the 18-channel models); x32 /headamp/NNN is NNN + 1 (1..32 local, 33..80 AES50 A, 81..128 AES50 B, X32-F70). UI text never shows the index: it names a headamp by its snapshot entry's bank and number ('Local 1', 'AES50 A 05', 'Aux'). Fields: gain, phantom (read-only). Which channel a headamp feeds: x32 input field headamp; xair not modelled (insrc unverified, XA-F115)."
+          "description": "muteGroup and dca are v0.1 (x32: mute groups 1..6, DCA groups 1..8; xair, v0.2: mute groups 1..4, DCA groups 1..4). Their only field is mute. headamp is v0.3: a preamp (the physical input, not the channel). Index: xair /headamp/NN is NN (01..16 mic, fewer on XR16/XR12, XA-F73; 17 aux on the 18-channel models); x32 /headamp/NNN is NNN + 1 (1..32 local, 33..80 AES50 A, 81..128 AES50 B, X32-F70). UI text never shows the index: it names a headamp by its snapshot entry's bank and number ('Local 1', 'AES50 A 05', 'Aux'). Fields: gain, phantom (read-only). Which channel a headamp feeds: x32 input field headamp; xair not modelled (insrc unverified, XA-F115). bus and matrix are v0.4. bus: a mix bus (x32 1..16, X32-F80) or, on xair, buses 1..6 and the FX send masters as buses 7..10 (xair.md section 3.1); the snapshot's buses list gives each one's kind (mix or fx). Fields of a bus: name, colour (read-only), fader, mute, linked (read-only, odd bus of a pair only). matrix (v0.4, x32 1..6, X32-F87): name, colour, fader, mute, all read-only. v0.4 also gives a dca strip the fields name, colour (read-only) and fader where the console has DCA masters (snapshot dcas entries carry faderDB)."
         },
         "index": {
           "type": "integer",
           "minimum": 1,
-          "description": "Required for input, muteGroup and dca (1-based). Omitted for main."
+          "description": "Required for input, muteGroup, dca, headamp, bus and matrix (1-based). Omitted for main."
         }
       },
       "if": {
@@ -37,7 +39,9 @@
               "input",
               "muteGroup",
               "dca",
-              "headamp"
+              "headamp",
+              "bus",
+              "matrix"
             ]
           }
         }
@@ -59,9 +63,15 @@
         "effectiveMute",
         "gain",
         "phantom",
-        "headamp"
+        "headamp",
+        "colour",
+        "linked",
+        "sendLevel",
+        "sendOn",
+        "sendPan",
+        "sendTap"
       ],
-      "description": "v0.1: muteGroups and dcas are the strip's group membership (read-only); effectiveMute is derived by the core and appears only in state messages, never in commands. For a muteGroup strip, mute true means the group is engaged (muting its members); for a dca strip, mute true means the DCA is muted. v0.2: a strip without a membership on its console has no such field: on xair the main strip belongs to no mute group and no DCA (docs/protocols/xair.md section 3.2), so a set or read of main muteGroups is ERR_UNSUPPORTED and state messages omit it. v0.3: gain is the dB gain of a headamp strip (CR-23); phantom (headamp, read-only) is its 48 V, true = on, only on headamps whose snapshot entry has phantom (x32 local, xair mic); headamp (input, read-only, x32 only, /-ha/NN/index) is the index of the headamp that feeds the channel, null when its source has none (card, USB, internal). A set of phantom or headamp is ERR_UNSUPPORTED. Trim (x32 /ch/NN/preamp/trim) is not modelled yet and not bounded by the core."
+      "description": "v0.1: muteGroups and dcas are the strip's group membership (read-only); effectiveMute is derived by the core and appears only in state messages, never in commands. For a muteGroup strip, mute true means the group is engaged (muting its members); for a dca strip, mute true means the DCA is muted. v0.2: a strip without a membership on its console has no such field: on xair the main strip belongs to no mute group and no DCA (docs/protocols/xair.md section 3.2), so a set or read of main muteGroups is ERR_UNSUPPORTED and state messages omit it. v0.3: gain is the dB gain of a headamp strip (CR-23); phantom (headamp, read-only) is its 48 V, true = on, only on headamps whose snapshot entry has phantom (x32 local, xair mic); headamp (input, read-only, x32 only, /-ha/NN/index) is the index of the headamp that feeds the channel, null when its source has none (card, USB, internal). A set of phantom or headamp is ERR_UNSUPPORTED. Trim (x32 /ch/NN/preamp/trim) is not modelled yet and not bounded by the core. v0.4: colour (read-only) is the strip colour the console shows (colour token); linked (read-only, a bus, true = the bus pair odd/even is linked as one stereo bus; only on the odd bus of each pair); sendLevel, sendOn, sendPan and sendTap are the send of an input strip to the bus named by the param's bus member: sendLevel a level (dB), sendOn a boolean (true = the send is on; xair has no send on/off, XA section 3.3), sendPan a pan (-100..+100), sendTap a sendTap token (read-only in v0.4). On x32 sendPan and sendTap exist on odd buses only and belong to the bus pair (X32-F84, X32-F85); the snapshot's sendFields says so."
     },
     "param": {
       "type": "object",
@@ -76,8 +86,42 @@
         },
         "field": {
           "$ref": "#/$defs/field"
+        },
+        "bus": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64,
+          "description": "v0.4: the destination bus of a send field (sendLevel, sendOn, sendPan, sendTap); required for them and absent for every other field. At most 64 (ERR_INVALID_COMMAND above)."
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "field": {
+                "enum": [
+                  "sendLevel",
+                  "sendOn",
+                  "sendPan",
+                  "sendTap"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "bus"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "bus"
+              ]
+            }
+          }
+        }
+      ]
     },
     "level": {
       "description": "A level in dB. JSON has no infinity, so fully off is the string \"-inf\". NaN never appears.",
@@ -91,7 +135,7 @@
       ]
     },
     "value": {
-      "description": "fader and gain (v0.3): level; mute and phantom (v0.3): boolean (true = muted, or for a muteGroup: engaged; phantom: 48 V on); name: string; muteGroups/dcas (v0.1): groupList; effectiveMute (v0.1): effectiveMute object; headamp (v0.3): headamp index or null. The field decides the type.",
+      "description": "fader, gain (v0.3) and sendLevel (v0.4): level; mute, phantom (v0.3), sendOn and linked (v0.4): boolean (true = muted, or for a muteGroup: engaged; phantom: 48 V on; sendOn: the send is on; linked: the bus pair is linked); name: string; muteGroups/dcas (v0.1): groupList; effectiveMute (v0.1): effectiveMute object; headamp (v0.3): headamp index or null; sendPan (v0.4): pan; sendTap (v0.4): sendTap token; colour (v0.4): colour token. The field decides the type.",
       "anyOf": [
         {
           "type": "integer",
@@ -175,6 +219,44 @@
           "$ref": "#/$defs/groupList"
         }
       }
+    },
+    "pan": {
+      "type": "number",
+      "minimum": -100,
+      "maximum": 100,
+      "description": "v0.4: a pan position, -100 = hard left, 0 = centre, +100 = hard right. x32 and xair store 101 positions (step 2, X32-F84, xair.md section 4); the core rounds to the console's step."
+    },
+    "sendTap": {
+      "enum": [
+        "input",
+        "preEq",
+        "postEq",
+        "preFader",
+        "postFader",
+        "group"
+      ],
+      "description": "v0.4: where a send taps the channel, in signal-flow order: input (after the input stage / low cut), preEq, postEq, preFader, postFader, group (the bus works as a subgroup). The UI shows the console's own word for it from the snapshot's sendTaps list (x32: IN/LC, <-EQ, EQ->, PRE, POST, GRP, X32-F85; xair: IN, PREEQ, POSTEQ, PRE, POST, GRP, xair.md section 3.3), untranslated (CR-16)."
+    },
+    "colour": {
+      "enum": [
+        "off",
+        "red",
+        "green",
+        "yellow",
+        "blue",
+        "magenta",
+        "cyan",
+        "white",
+        "offInverted",
+        "redInverted",
+        "greenInverted",
+        "yellowInverted",
+        "blueInverted",
+        "magentaInverted",
+        "cyanInverted",
+        "whiteInverted"
+      ],
+      "description": "v0.4: the console's strip colour (x32 X32-F89, xair section 3.2: int 0..15 = OFF, RD, GN, YE, BL, MG, CY, WH, then the same inverted). Inverted colours are drawn hollow (design 1.1)."
     }
   }
 }

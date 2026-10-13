@@ -55,7 +55,8 @@ func affectsMute(f model.Field) bool {
 	return f == model.FieldMute || f == model.FieldMuteGroups || f == model.FieldDCAs
 }
 
-// Toggle flips a mute (an input, main, mute group or DCA) as one user gesture:
+// Toggle flips a mute (an input, main, bus, mute group or DCA) or, core-api
+// v0.4, a send's on/off as one user gesture:
 // it reads the console's current value here and writes the inverse as an
 // absolute value, never a toggle command (a lost or doubled packet could
 // then flip it the wrong way). Errors as Apply, plus ErrUnsupported for a
@@ -64,7 +65,7 @@ func (s *Supervisor) Toggle(p model.ParamRef, origin driver.Origin) error {
 	if !origin.MayWrite() {
 		return driver.ErrNotUserOrigin
 	}
-	if p.Field != model.FieldMute {
+	if p.Field != model.FieldMute && p.Field != model.FieldSendOn {
 		return fmt.Errorf("console: toggle %s: %w", p, driver.ErrUnsupported)
 	}
 	s.mu.Lock()

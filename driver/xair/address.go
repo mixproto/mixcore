@@ -35,6 +35,11 @@ const (
 	auxGainSteps  = 64
 	headampFormat = "/headamp/%02d" // two digits, 1-based (XA-F110)
 
+	// mixBuses: /bus/1..6, one digit; FX sends /fxsend/1..4 are buses 7..10
+	// (send slots 07..10), section 3.1, 3.3.
+	mixBuses = 6
+	fxSends  = 4
+
 	meterBank1    = "/meters/1"    // XA-F53
 	addrSnapIndex = "/-snap/index" // XA-F60, XA-F61: the dashed path every client uses
 )

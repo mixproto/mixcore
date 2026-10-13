@@ -93,6 +93,9 @@ type fakeSession struct {
 	rereads int
 	skips   [][]model.ParamRef // RereadExcept calls (selective sessions)
 	failing error              // Apply returns it (a send that failed)
+	onApply func()             // called at the start of Apply (tests of lock order)
+	held    [][]model.ParamRef // SetHeld calls (selective sessions)
+	onSkip  func()             // called at the start of RereadExcept (tests of lock order)
 }
 
 // failApplies makes Apply return err (nil: succeed again).
@@ -105,7 +108,32 @@ func (s *fakeSession) failApplies(err error) {
 // selectiveSession is a fakeSession that can leave held parameters out of a re-read.
 type selectiveSession struct{ *fakeSession }
 
+func (s selectiveSession) SetHeld(held []model.ParamRef) {
+	s.mu.Lock()
+	s.held = append(s.held, held)
+	s.mu.Unlock()
+}
+
+func (s *fakeSession) heldCalls() [][]model.ParamRef {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([][]model.ParamRef(nil), s.held...)
+}
+
+// setOnSkip installs the RereadExcept hook (the supervisor calls it from its own goroutine).
+func (s *fakeSession) setOnSkip(f func()) {
+	s.mu.Lock()
+	s.onSkip = f
+	s.mu.Unlock()
+}
+
 func (s selectiveSession) RereadExcept(skip []model.ParamRef) error {
+	s.mu.Lock()
+	hook := s.onSkip
+	s.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	s.mu.Lock()
 	s.skips = append(s.skips, skip)
 	s.mu.Unlock()
@@ -136,6 +164,9 @@ func (s *fakeSession) Run(ctx context.Context, events chan<- driver.Event) error
 func (s *fakeSession) Apply(cmd driver.Command) error {
 	if !cmd.Origin.MayWrite() {
 		return driver.ErrNotUserOrigin
+	}
+	if s.onApply != nil {
+		s.onApply()
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

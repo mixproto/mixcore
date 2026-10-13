@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"time"
 )
 
 // StripKind is the kind of a channel strip.
@@ -24,10 +25,16 @@ const (
 	// StripHeadamp is a preamp (the physical input), numbered by the
 	// driver; its fields are FieldGain and FieldPhantom (CR-23).
 	StripHeadamp
+	// StripBus is a mix bus or an FX send master (BusInfo.Kind): name,
+	// colour, fader, mute, linked; inputs send to it (FieldSend*).
+	StripBus
+	// StripMatrix is a matrix output (x32): name, colour, fader, mute.
+	StripMatrix
 )
 
 var stripKindNames = map[StripKind]string{
 	StripInput: "input", StripMain: "main", StripMuteGroup: "muteGroup", StripDCA: "dca", StripHeadamp: "headamp",
+	StripBus: "bus", StripMatrix: "matrix",
 }
 
 func (k StripKind) String() string {
@@ -80,11 +87,22 @@ const (
 	FieldPhantom
 	// FieldHeadamp is the headamp feeding an input strip (an index, 0 = none).
 	FieldHeadamp
+	// FieldColour is the strip colour the console shows (Shape.Colours).
+	FieldColour
+	// FieldLinked: the bus pair of an odd bus is linked (Shape.BusLinks).
+	FieldLinked
+	// FieldSendLevel, FieldSendOn, FieldSendPan and FieldSendTap are the
+	// send of an input strip to bus ParamRef.Bus (Shape.Sends).
+	FieldSendLevel
+	FieldSendOn
+	FieldSendPan
+	FieldSendTap
 )
 
 var fieldNames = map[Field]string{
 	FieldFader: "fader", FieldMute: "mute", FieldName: "name", FieldMuteGroups: "muteGroups", FieldDCAs: "dcas",
-	FieldGain: "gain", FieldPhantom: "phantom", FieldHeadamp: "headamp",
+	FieldGain: "gain", FieldPhantom: "phantom", FieldHeadamp: "headamp", FieldColour: "colour", FieldLinked: "linked",
+	FieldSendLevel: "sendLevel", FieldSendOn: "sendOn", FieldSendPan: "sendPan", FieldSendTap: "sendTap",
 }
 
 func (f Field) String() string {
@@ -107,10 +125,16 @@ func ParseField(s string) (Field, error) {
 // ValueKind returns the kind of value the field holds (0 for unknown fields).
 func (f Field) ValueKind() ValueKind {
 	switch f {
-	case FieldFader, FieldGain:
+	case FieldFader, FieldGain, FieldSendLevel:
 		return KindLevel
-	case FieldMute, FieldPhantom:
+	case FieldMute, FieldPhantom, FieldLinked, FieldSendOn:
 		return KindBool
+	case FieldSendPan:
+		return KindPan
+	case FieldSendTap:
+		return KindTap
+	case FieldColour:
+		return KindColour
 	case FieldHeadamp:
 		return KindIndex
 	case FieldName:
@@ -122,13 +146,20 @@ func (f Field) ValueKind() ValueKind {
 	}
 }
 
-// ParamRef identifies one parameter: a strip and a field.
+// ParamRef identifies one parameter: a strip and a field, and for a send
+// field (Field.IsSend) the bus it sends to.
 type ParamRef struct {
 	Strip StripRef
 	Field Field
+	Bus   int // send fields only: the destination bus index; 0 otherwise
 }
 
-func (p ParamRef) String() string { return p.Strip.String() + " " + p.Field.String() }
+func (p ParamRef) String() string {
+	if p.Bus != 0 {
+		return fmt.Sprintf("%s %s bus %d", p.Strip, p.Field, p.Bus)
+	}
+	return p.Strip.String() + " " + p.Field.String()
+}
 
 // Strip is the state of one channel strip in engineering units.
 type Strip struct {
@@ -141,7 +172,9 @@ type Strip struct {
 	GainDB     float64 // headamp strips only
 	Phantom    bool    // headamp strips with HasPhantom only
 	HasPhantom bool
-	Headamp    int // input strips: the headamp feeding it, 0 = none
+	Headamp    int    // input strips: the headamp feeding it, 0 = none
+	Colour     Colour // with Shape.Colours
+	Linked     bool   // the odd bus of a linkable pair, with Shape.BusLinks
 }
 
 // Value returns the value of field f.
@@ -167,6 +200,11 @@ func (s Strip) Value(f Field) (Value, bool) {
 	case FieldHeadamp:
 		v, err := Index(s.Headamp)
 		return v, err == nil && s.Ref.Kind == StripInput
+	case FieldColour:
+		v, err := ColourValue(s.Colour)
+		return v, err == nil
+	case FieldLinked:
+		return Bool(s.Linked), s.Ref.Kind == StripBus
 	default:
 		return Value{}, false
 	}
@@ -194,8 +232,14 @@ func (s Strip) with(f Field, v Value) (Strip, error) {
 			return s, fmt.Errorf("%s %s: %w", s.Ref, f, ErrUnknownParam)
 		}
 		s.Headamp, _ = v.Index()
-	default:
+	case FieldColour:
+		s.Colour, _ = v.Colour()
+	case FieldLinked:
+		s.Linked, _ = v.Bool()
+	case FieldName:
 		s.Name, _ = v.Text()
+	default:
+		return s, fmt.Errorf("%s %s: %w", s.Ref, f, ErrUnknownParam)
 	}
 	return s, nil
 }
@@ -215,7 +259,13 @@ type State struct {
 	hasMain    bool
 	muteGroups []bool    // engaged, by group number - 1
 	dcaMutes   []bool    // muted, by DCA number - 1
+	dcaMasters []Strip   // name, fader, colour by DCA number - 1 (Shape.DCAMasters)
 	headamps   []Headamp // sorted by index
+	buses      []Strip   // sorted by index (bus.go)
+	busInfos   []BusInfo // aligned with buses
+	matrices   []Strip   // by matrix number - 1
+	sends      [][]Send  // [input - 1][position in buses]; rows are replaced, never changed in place
+	shape      Shape
 }
 
 // NewState builds a state from input strips numbered 1..n in order and an
@@ -266,10 +316,17 @@ func (s State) Strip(ref StripRef) (Strip, bool) {
 	case ref == MainRef && s.hasMain:
 		return s.main, true
 	case ref.Kind == StripMuteGroup || ref.Kind == StripDCA:
-		on, ok := groupAt(s.groupList(ref.Kind), ref.Index)
-		return Strip{Ref: ref, Muted: on}, ok
+		return s.groupStrip(ref)
 	case ref.Kind == StripHeadamp:
 		return s.headampStrip(ref)
+	case ref.Kind == StripBus:
+		i, ok := s.busAt(ref.Index)
+		if !ok {
+			return Strip{}, false
+		}
+		return s.buses[i], true
+	case ref.Kind == StripMatrix && ref.Index >= 1 && ref.Index <= len(s.matrices):
+		return s.matrices[ref.Index-1], true
 	default:
 		return Strip{}, false
 	}
@@ -277,17 +334,49 @@ func (s State) Strip(ref StripRef) (Strip, bool) {
 
 // Value returns the current value of p.
 func (s State) Value(p ParamRef) (Value, bool) {
+	if p.Field.IsSend() {
+		return s.sendValue(p)
+	}
 	st, ok := s.Strip(p.Strip)
-	if !ok || (p.Strip.isGroup() && p.Field != FieldMute) || (p.Strip.Kind == StripHeadamp) != isHeadampField(p.Field) {
+	if !ok || !s.has(p) {
 		return Value{}, false
 	}
 	return st.Value(p.Field)
 }
 
+// has reports whether p (not a send) exists in this state's shape.
+func (s State) has(p ParamRef) bool {
+	k := p.Strip.Kind
+	switch {
+	case p.Bus != 0 || (k == StripHeadamp) != isHeadampField(p.Field):
+		return false
+	case p.Field == FieldColour:
+		return s.shape.Colours && (k != StripDCA || s.shape.DCAMasters) && k != StripMuteGroup
+	case p.Field == FieldLinked:
+		return k == StripBus && s.hasLink(p.Strip.Index)
+	case k == StripMuteGroup:
+		return p.Field == FieldMute
+	case k == StripDCA:
+		return p.Field == FieldMute || (s.shape.DCAMasters && (p.Field == FieldName || p.Field == FieldFader))
+	case k == StripBus || k == StripMatrix:
+		return p.Field == FieldName || p.Field == FieldFader || p.Field == FieldMute
+	}
+	return true
+}
+
 // With returns a new State with p set to v. The receiver is not modified.
 func (s State) With(p ParamRef, v Value) (State, error) {
-	if p.Strip.isGroup() {
+	if p.Field.IsSend() {
+		return s.withSend(p, v)
+	}
+	if !s.has(p) && p.Strip.Kind != StripHeadamp && !isHeadampField(p.Field) {
+		return s, fmt.Errorf("%s: %w", p, ErrUnknownParam)
+	}
+	switch p.Strip.Kind {
+	case StripMuteGroup, StripDCA:
 		return s.withGroup(p, v)
+	case StripBus, StripMatrix:
+		return s.withOutput(p, v)
 	}
 	if p.Strip.Kind == StripHeadamp || isHeadampField(p.Field) {
 		return s.withHeadamp(p, v)
@@ -331,4 +420,22 @@ type Capabilities struct {
 	InputMeters     bool
 	EchoesOwnWrites bool
 	MaxPushClients  int
+	// Buses that answered, sorted by index (core-api v0.4); the state
+	// carries the same list (State.BusInfos) and which send fields exist
+	// (State.Shape).
+	Buses []BusInfo
+	// Matrices is the number of read-only matrices (x32 6, X32-F87).
+	Matrices int
+	// FaderSteps and SendLevelSteps are the console's grids of the fader
+	// law: valid positions are k/steps (x32 X32-F41, X32-F83: 1023 and 160;
+	// xair XA-F41 the same). 0: unknown, values compare exactly.
+	FaderSteps, SendLevelSteps int
+	// EchoWindow is how long the driver matches its own writes against the
+	// console's pushes (xosc Timing.EchoWindow): a write older than that
+	// can no longer come back as its echo. 0: unknown.
+	EchoWindow time.Duration
+	// TapLabels are the console's own words for the taps TapInput..TapGroup
+	// (index tap - 1), when the console reports send taps (X32-F85,
+	// xair.md 3.3); shown untranslated (CR-16).
+	TapLabels [TapCount]string
 }

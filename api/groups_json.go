@@ -20,10 +20,14 @@ type effectiveMuteJSON struct {
 	DCAs       []int `json:"dcas"`
 }
 
-// groupStateJSON is one entry of the snapshot's muteGroups or dcas list.
+// groupStateJSON is one entry of the snapshot's muteGroups or dcas list;
+// v0.4 DCA masters add name, colour and faderDB.
 type groupStateJSON struct {
-	Index int  `json:"index"`
-	Mute  bool `json:"mute"`
+	Index   int     `json:"index"`
+	Mute    bool    `json:"mute"`
+	Name    *string `json:"name,omitempty"`
+	Colour  string  `json:"colour,omitempty"`
+	FaderDB any     `json:"faderDB,omitempty"`
 }
 
 func effectiveJSON(e model.EffectiveMute) *effectiveMuteJSON {
@@ -49,6 +53,10 @@ func stripsJSON(st model.State, caps model.Capabilities) []stripStateJSON {
 		}
 		if caps.InputHeadamps && s.Ref.Kind == model.StripInput {
 			j.Headamp = rawIndex(s.Headamp)
+		}
+		j.Colour = colourJSON(st, s.Ref)
+		if s.Ref.Kind == model.StripInput {
+			j.Sends = sendsJSON(st, s.Ref.Index)
 		}
 		out = append(out, j)
 	}

@@ -45,6 +45,30 @@ type Layout struct {
 	// HeadampIndexes: inputs 1..N carry /-ha/NN/index (NN = input - 1), the
 	// headamp feeding the channel (x32 X32-F74); 0: not modelled (xair).
 	HeadampIndexes int
+
+	// Buses (core-api v0.4, buses.go): mix buses and FX send masters in
+	// index order (x32.md X32-F80; xair.md 3.1). Inputs send to each of
+	// them at <ch>/mix/MM/... with MM the two-digit bus index (X32-F82,
+	// xair.md 3.3).
+	Buses []BusGroup
+	// SendOn: <ch>/mix/MM/on exists (X32-F82); xair has none (3.3).
+	SendOn bool
+	// SendPan: <ch>/mix/MM/pan exists (X32-F84, xair.md 3.3).
+	SendPan bool
+	// SendTapLeaf is the tap leaf, "type" (X32-F85) or "tap" (xair.md
+	// 3.3); empty: no tap.
+	SendTapLeaf string
+	// SendPairScoped: pan and tap exist for odd MM only and belong to the
+	// bus pair (X32-F84, X32-F85).
+	SendPairScoped bool
+	// Matrices are read-only outputs /mtx/NN (MatrixRoot, X32-F87); 0: none.
+	Matrices   int
+	MatrixRoot string
+	// Colours: <strip>/config/color is read on inputs, main, buses,
+	// matrices and, with DCAMasters, DCAs (X32-F89, xair.md 3.2).
+	Colours bool
+	// DCAMasters: /dca/N/fader and /dca/N/config/name (X32-F88, xair.md 3.2).
+	DCAMasters bool
 }
 
 // HeadampLaw is a linear Gain law: dB = MinDB + StepDB k, f = k / Steps,
@@ -121,6 +145,9 @@ const (
 	convGain                     // float 0..1, the headamp's linear Gain law (X32-F71, XA-F111)
 	convFlag                     // int, 1 = on: model true = wire 1 (phantom, X32-F73)
 	convHaIndex                  // int, headamp wire number or -1 (X32-F74)
+	convPan                      // float 0..1 = -100..+100, 101 values (X32-F84, xair.md section 4)
+	convTap                      // int 0..5 = model.TapInput..TapGroup (X32-F85, xair.md 3.3)
+	convColour                   // int 0..15 (X32-F89, xair.md 3.2)
 )
 
 // feature groups parameters that only exist together; if the console does
@@ -133,6 +160,15 @@ const (
 	featureDCAs
 	featureHeadampIndex // /-ha/NN/index: unverified (x32.md item 19), absent if unanswered
 	featurePhantom      // /headamp/NN/phantom: read-only, absent if unanswered
+	// v0.4 (buses.go): each absent if the console does not answer it.
+	featureColours
+	featureDCAMasters
+	featureBusLinks
+	featureMatrices
+	featureSends
+	featureSendOn
+	featureSendPan
+	featureSendTap
 )
 
 // param is one console parameter the driver reads and maybe writes.
@@ -156,16 +192,40 @@ type param struct {
 	// haOffset and haMax describe convHaIndex: model index = wire - haOffset,
 	// 1..haMax.
 	haOffset, haMax int
+	// levelSteps is the grid of convLevel: 1023 (faders, X32-F41) or 160
+	// (send levels, X32-F83, XA-F41); 0 means 1023.
+	levelSteps float64
+	// bus is the model bus a bus-master or send parameter belongs to (0:
+	// none); absent when that bus did not answer. pairBus is the even bus
+	// of a link parameter, which needs both.
+	bus, pairBus int
+	// needs is a second feature the parameter exists only with (a DCA
+	// colour needs DCA masters); featureCore (never absent) by default.
+	needs feature
 }
 
 // halfStep is how far apart two wire floats may be and still be the same
 // console value: half a step of this parameter's law (X32-F41, X32-F72).
 func (p param) halfStep() float32 {
+	if steps := p.wireSteps(); steps > 0 {
+		return float32(0.5 / steps)
+	}
+	return 0
+}
+
+// wireSteps is the grid of a float parameter: its valid wire values are
+// k/wireSteps (0 for an int or string parameter).
+func (p param) wireSteps() float64 {
 	switch p.conv {
 	case convLevel:
-		return 0.5 / faderSteps
+		if p.levelSteps > 0 {
+			return p.levelSteps
+		}
+		return faderSteps
 	case convGain:
-		return 0.5 / float32(p.gainSteps)
+		return float64(p.gainSteps)
+	case convPan:
+		return panWireSteps
 	default:
 		return 0
 	}
@@ -177,6 +237,10 @@ type paramTable struct {
 	byAddr map[string]int
 	byPar  map[model.ParamRef]int
 	layout Layout
+	// v03 is the number of v0.3 parameters (faders, mutes, names, groups,
+	// Gain); every one after them is a v0.4 parameter (buses.go). The
+	// background re-read reads the first every pass, the rest in slices.
+	v03 int
 }
 
 func newParamTable(l Layout) paramTable {
@@ -210,6 +274,8 @@ func newParamTable(l Layout) paramTable {
 			addr: fmt.Sprintf("/dca/%d/on", d), typ: osc.TypeInt, conv: convOnSwitch, feature: featureDCAs})
 	}
 	t.addHeadamps(l)
+	t.v03 = len(t.all)
+	t.addV04(l)
 	return t
 }
 
@@ -278,6 +344,13 @@ func (d *Driver) Addresses() []string {
 		out[i] = p.addr
 	}
 	return out
+}
+
+// RereadPassLen is how many parameters one background re-read pass reads
+// at most: every v0.3 parameter and one slice of the v0.4 ones (absent
+// ones are skipped). With 16 reads per ping it bounds a pass's length.
+func (d *Driver) RereadPassLen() int {
+	return d.params.v03 + min(rereadSlice, len(d.params.all)-d.params.v03)
 }
 
 // Address returns the console address of a model parameter.

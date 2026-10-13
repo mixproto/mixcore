@@ -40,9 +40,7 @@ func TestConnect_ReadsFullStateAndSendsNoWrites(t *testing.T) {
 		if id.Model != "MR18V2" || id.Name != "XR18-1D-DA-B4" || id.Firmware != "1.22" || id.Address != mixerIP {
 			t.Fatalf("identity %+v", id)
 		}
-		want := model.Capabilities{Headamps: wantHeadamps(16), InputCount: 16, HasMain: true, MuteGroups: 4, DCAs: 4, MainMuteGroups: false,
-			InputMeters: true, EchoesOwnWrites: true, MaxPushClients: 8}
-		if c := sess.Capabilities(); !reflect.DeepEqual(c, want) {
+		if c, want := sess.Capabilities(), wantCapabilities(); !reflect.DeepEqual(c, want) {
 			t.Fatalf("capabilities %+v, want %+v", c, want)
 		}
 		st := sess.Snapshot()
@@ -96,8 +94,11 @@ func TestMain_HasNoMuteGroupMembership(t *testing.T) {
 				t.Errorf("%v -> %s, want %s", addr, got, want)
 			}
 		}
-		if n := len(r.drv.Addresses()); n != 16*5+2+4+4+16*2+1 {
-			t.Fatalf("%d addresses; 90 reads of the v1 table (xair.md section 12) plus 16 mic gains and phantoms and the aux gain", n)
+		v03 := 16*5 + 2 + 4 + 4 + 16*2 + 1 // 90 reads of the v1 table (xair.md section 12), 16 mic gains and phantoms, the aux gain
+		// colours, DCA masters, 10 buses, 3 links, sends: level and tap to all 10, pan to buses 1..6 only (xair.md 3.3)
+		v04 := 17 + 4*3 + 10*4 + 3 + 16*(10*2+6)
+		if n := len(r.drv.Addresses()); n != v03+v04 {
+			t.Fatalf("%d addresses, want %d + %d", n, v03, v04)
 		}
 	})
 }
@@ -270,6 +271,27 @@ func wantHeadamps(n int) []model.HeadampInfo {
 	}
 	if n == 16 {
 		out = append(out, model.HeadampInfo{Index: 17, Bank: model.BankAux, Number: 1, MinDB: -12, MaxDB: 20, WriteMaxDB: 19.5, StepDB: 0.5})
+	}
+	return out
+}
+
+// wantCapabilities are those of the default simulator (an XR18).
+func wantCapabilities() model.Capabilities {
+	return model.Capabilities{Headamps: wantHeadamps(16), InputCount: 16, HasMain: true, MuteGroups: 4, DCAs: 4, MainMuteGroups: false,
+		InputMeters: true, EchoesOwnWrites: true, MaxPushClients: 8, Buses: wantBuses(), FaderSteps: 1023, SendLevelSteps: 160, EchoWindow: DefaultTiming.EchoWindow,
+		TapLabels: [model.TapCount]string{"IN", "PREEQ", "POSTEQ", "PRE", "POST", "GRP"}}
+}
+
+// wantBuses are the buses of the default simulator: 1..6 mix (pairs
+// linkable), FX sends 1..4 as buses 7..10 (xair.md section 3.1).
+func wantBuses() []model.BusInfo {
+	var out []model.BusInfo
+	for b := 1; b <= 10; b++ {
+		kind := model.BusMix
+		if b > 6 {
+			kind = model.BusFX
+		}
+		out = append(out, model.BusInfo{Index: b, Kind: kind, Linkable: b <= 6, SendPan: b <= 6})
 	}
 	return out
 }

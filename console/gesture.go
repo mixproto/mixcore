@@ -7,6 +7,7 @@ package console
 import (
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"time"
 
@@ -35,36 +36,71 @@ func (s *Supervisor) Write(w Write) (Result, error) {
 	if (w.Typed || w.Confirmed) && w.Origin.Kind != driver.OriginGesture {
 		return Result{}, ErrTypedOrigin
 	}
-	sess, res, err := s.prepare(&w)
-	if err != nil || !res.Written {
-		return res, err
-	}
-	err = sess.Apply(w.Command)
-	if err != nil && w.Param.Field == model.FieldGain {
-		s.mu.Lock()
-		s.safe.forgetSent(w.Param, dbOf(w.Value)) // never sent: not in flight (re-review MEDIUM A)
-		s.mu.Unlock()
-	}
+	res, err := s.checkAndApply(&w)
 	if errors.Is(err, driver.ErrClosed) {
 		return Result{}, driver.ErrStale // the session died between the check and the call
 	}
 	return res, err
 }
 
-// prepare checks a write under mu (released even if a rule panics).
-func (s *Supervisor) prepare(w *Write) (driver.Session, Result, error) {
+// checkAndApply checks a write and hands it to the session under one hold
+// of mu (released even if a rule panics), so no role change, hold end or
+// stale can slip between the check and the send (review Sec L4).
+// Session.Apply never blocks and never calls back into the supervisor.
+func (s *Supervisor) checkAndApply(w *Write) (Result, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.prepareLocked(w)
+	sess, res, err := s.prepareLocked(w)
+	if err != nil || !res.Written {
+		return res, err
+	}
+	if err := sess.Apply(w.Command); err != nil {
+		if w.Param.Field == model.FieldGain {
+			s.safe.forgetSent(w.Param, dbOf(w.Value)) // never sent: not in flight (re-review MEDIUM A)
+		}
+		return Result{}, err
+	}
+	s.safe.noteSeatSent(w.Origin, w.Param, dbOf(w.Value), s.sameLevelLocked, time.Now())
+	return res, nil
+}
+
+// sameLevelLocked reports whether levels a and b of p are one console
+// value: within half a step of p's grid (send levels 160 steps, faders
+// 1023, capabilities) in fader positions; exactly equal without a grid.
+func (s *Supervisor) sameLevelLocked(p model.ParamRef, a, b float64) bool {
+	steps, law := s.caps.FaderSteps, s.cfg.Driver.FaderLaw()
+	if p.Field == model.FieldSendLevel {
+		steps = s.caps.SendLevelSteps
+	}
+	if steps <= 0 || law == nil {
+		return a == b
+	}
+	return math.Abs(law.PositionFromDB(a)-law.PositionFromDB(b)) <= 0.5/float64(steps)+1e-9
+}
+
+// gateLocked refuses a write before any value rule: the client's role
+// (first: below every UI, invariant 4), not live (rule 3), a read-only
+// parameter, one this console does not have (never faked).
+func (s *Supervisor) gateLocked(w *Write) error {
+	if err := s.checkRoleLocked(w.Param, w.Origin); err != nil {
+		return err
+	}
+	if s.status != StatusLive || s.sess == nil || s.limited != "" {
+		return driver.ErrStale
+	}
+	if s.readOnlyLocked(w.Param) {
+		return fmt.Errorf("console: %s is read-only: %w", w.Param, driver.ErrUnsupported)
+	}
+	if _, ok := s.state.Value(w.Param); !ok && w.Param.Strip.Kind != model.StripHeadamp {
+		return fmt.Errorf("console: %s: not on this console: %w", w.Param, driver.ErrUnsupported)
+	}
+	return nil
 }
 
 // prepareLocked checks a write and sets w.Value to what may be written.
 func (s *Supervisor) prepareLocked(w *Write) (driver.Session, Result, error) {
-	if s.status != StatusLive || s.sess == nil || s.limited != "" {
-		return nil, Result{}, driver.ErrStale
-	}
-	if s.readOnlyLocked(w.Param) {
-		return nil, Result{}, fmt.Errorf("console: %s is read-only: %w", w.Param, driver.ErrUnsupported)
+	if err := s.gateLocked(w); err != nil {
+		return nil, Result{}, err
 	}
 	k := holdKey{param: w.Param, client: w.Origin.ClientID}
 	if s.holds.isEnded(w.Param, w.Origin.ClientID) {
@@ -123,11 +159,14 @@ func (s *Supervisor) fullSetCapLocked(w *Write, cur float64, win *Window) Result
 }
 
 // readOnlyLocked reports a parameter the core never writes, whatever the
-// value: headamp phantom, an input's headamp, and the Gain of a headamp
-// whose law or ownership is unconfirmed (capabilities writable false).
+// value: headamp phantom, an input's headamp, the Gain of a headamp whose
+// law or ownership is unconfirmed (capabilities writable false) and, in
+// core-api v0.4, send taps, colours, bus links and matrices.
 func (s *Supervisor) readOnlyLocked(p model.ParamRef) bool {
 	switch {
 	case p.Field == model.FieldPhantom || p.Field == model.FieldHeadamp:
+		return true
+	case p.Field == model.FieldSendTap || p.Field == model.FieldColour || p.Field == model.FieldLinked || p.Strip.Kind == model.StripMatrix:
 		return true
 	case p.Strip.Kind != model.StripHeadamp:
 		return false
@@ -170,6 +209,12 @@ func (s *Supervisor) HoldWindowWith(p model.ParamRef, origin driver.Origin, held
 	k := holdKey{param: p, client: origin.ClientID}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer s.syncHeldLocked()
+	if held {
+		if err := s.checkRoleLocked(p, origin); err != nil {
+			return Result{}, err
+		}
+	}
 	if held && (s.status != StatusLive || s.limited != "") {
 		return Result{}, driver.ErrStale
 	}
@@ -207,6 +252,9 @@ func (s *Supervisor) OpenWall(p model.ParamRef, origin driver.Origin) (Result, e
 	k := holdKey{param: p, client: origin.ClientID}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.checkRoleLocked(p, origin); err != nil {
+		return Result{}, err
+	}
 	if s.holds.isEnded(p, origin.ClientID) {
 		return Result{}, ErrGestureEnded
 	}

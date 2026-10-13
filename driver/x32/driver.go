@@ -14,6 +14,12 @@
 // banks 1 and 2 as linear float32 (X32-F51..F55) and the scene markers
 // /-undo/time and /-show/prepos/current (X32-F61, X32-F62).
 //
+// Buses and sends (core-api v0.4, X32-F80..F90): mix buses /bus/01..16
+// (pairs linkable by /config/buslink), sends /ch/NN/mix/MM/on and /level
+// (161 steps), pan and tap (/type) on odd sends only, belonging to the bus
+// pair; matrices /mtx/01..06 read-only; DCA faders and names; colours read.
+// The tap and colour are read-only.
+//
 // Echo behaviour: the console does not push a change back to the client that
 // sent it (X32-F23), so writes leave from a second socket and come back as
 // pushes on the /xremote socket (EchoesOwnWrites = true). Nothing in the
@@ -82,8 +88,13 @@ var profile = xosc.Profile{
 		Inputs: inputChannels, RequiredInputs: inputChannels, MainRoot: "/main/st", MainMuteGroups: true,
 		MuteGroups: muteGroupCount, DCAs: dcaCount,
 		Headamps: headamps, HeadampAddr: headampFormat, HeadampWireOffset: headampWireOff, HeadampIndexes: inputChannels,
+		Buses:  []xosc.BusGroup{{First: 1, Count: mixBuses, Root: "/bus/%02d", Kind: model.BusMix, Linkable: true, SendPan: true}}, // X32-F80, X32-F81, X32-F84
+		SendOn: true, SendPan: true, SendTapLeaf: "type", SendPairScoped: true,                                                     // X32-F82, X32-F84, X32-F85
+		Matrices: matrixCount, MatrixRoot: "/mtx/%02d", Colours: true, DCAMasters: true, // X32-F87..F89
 	},
-	Meters: meterCodec{},
+	// X32-F85: the console's words, S4 InputTap (IN/LC, <-EQ, EQ->, PRE, POST, GRP).
+	TapLabels: [model.TapCount]string{"IN/LC", "<-EQ", "EQ->", "PRE", "POST", "GRP"},
+	Meters:    meterCodec{},
 	Markers: []xosc.Marker{
 		{Addr: addrUndoTime, Kind: xosc.MarkerRecall, Signal: driver.SignalUndoTime}, // X32-F62
 		{Addr: addrPrepos, Kind: xosc.MarkerHighlight},                               // X32-F61: highlighted, not loaded

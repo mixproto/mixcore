@@ -54,6 +54,24 @@ func positionToDB(p float64) float64 {
 	return math.Inf(-1) // unreachable: the last segment starts at 0
 }
 
+// stepToDB is the dB of step k of a grid of steps, computed as
+// slope*k/steps + offset so that a step the console prints as a round
+// value (X32-F83 table: k 128 = +2.0 dB) comes out exactly.
+func stepToDB(k, steps float64) float64 {
+	switch {
+	case k <= 0:
+		return math.Inf(-1)
+	case k >= steps:
+		return faderMaxDB
+	}
+	for _, s := range faderSegments {
+		if k/steps >= s.lo {
+			return s.slope*k/steps + s.offset
+		}
+	}
+	return math.Inf(-1) // unreachable: the last segment starts at 0
+}
+
 // dbToPosition is the continuous inverse; NaN and anything at or below -90 dB give 0.
 func dbToPosition(db float64) float64 {
 	switch {
@@ -80,12 +98,51 @@ func faderToDB(f float32) (float64, error) {
 
 // dbToFader converts dB to the wire float, clamped and rounded to the nearest
 // console step (X32-F41).
-func dbToFader(db float64) (float32, error) {
+func dbToFader(db float64) (float32, error) { return dbToLevel(db, faderSteps) }
+
+// dbToLevel converts dB to a level-law wire float on a grid of steps:
+// 1023 for faders (X32-F41), 160 for send levels (X32-F83, XA-F41).
+func dbToLevel(db, steps float64) (float32, error) {
 	if math.IsNaN(db) {
-		return 0, fmt.Errorf("fader: NaN dB: %w", model.ErrInvalidValue)
+		return 0, fmt.Errorf("level: NaN dB: %w", model.ErrInvalidValue)
 	}
-	k := math.Round(dbToPosition(db) * faderSteps)
-	return float32(k / faderSteps), nil
+	k := math.Round(dbToPosition(db) * steps)
+	return float32(k / steps), nil
+}
+
+// panToWire converts a pan (-100..+100, model-validated) to the wire float
+// on the console's step of 2 (X32-F84, xair.md section 4): f = k/100.
+func panToWire(pan float64) float32 {
+	k := math.Round((pan - model.PanLeft) / panStepWidth)
+	return float32(k / panWireSteps)
+}
+
+// panFromWire converts a wire float to a pan on the step of 2.
+func panFromWire(f float32) (model.Value, error) {
+	if !(f >= 0 && f <= 1) {
+		return model.Value{}, fmt.Errorf("pan wire %v: %w", f, errBadWire)
+	}
+	k := math.Round(float64(f) * panWireSteps)
+	return model.Pan(model.PanLeft + k*panStepWidth)
+}
+
+// panStepWidth is the pan step in model units (X32-F84: linf step 2.000).
+const panStepWidth = 2.0
+
+// tapFromWire converts the tap int 0..5 to a model tap (X32-F85, xair.md 3.3).
+func tapFromWire(v int32) (model.Value, error) {
+	if v < 0 || v >= int32(model.TapCount) {
+		return model.Value{}, fmt.Errorf("tap %d: %w", v, errBadWire)
+	}
+	return model.TapValue(model.Tap(v) + model.TapInput)
+}
+
+// colourFromWire converts config/color 0..15 (X32-F89, xair.md 3.2).
+func colourFromWire(v int32) (model.Value, error) {
+	if v < 0 || v > colourMax {
+		return model.Value{}, fmt.Errorf("colour %d: %w", v, errBadWire)
+	}
+	return model.ColourValue(model.Colour(v))
 }
 
 // faderLaw is the UI-facing law: continuous, never blocks, never fails.
@@ -162,8 +219,11 @@ func toWire(p param, v model.Value) (osc.Arg, error) {
 	switch p.conv {
 	case convLevel:
 		db, _ := v.DB()
-		f, err := dbToFader(db)
+		f, err := dbToLevel(db, p.wireSteps())
 		return osc.Float(f), err
+	case convPan:
+		pan, _ := v.Pan()
+		return osc.Float(panToWire(pan)), nil
 	case convOnSwitch, convEngaged, convFlag:
 		m, _ := v.Bool()
 		return osc.Int(switchToWire(p.conv, m)), nil
@@ -175,7 +235,7 @@ func toWire(p param, v model.Value) (osc.Arg, error) {
 		db, _ := v.DB()
 		f, err := gainToWire(p, db)
 		return osc.Float(f), err
-	default: // membership and /-ha are read-only (Apply refuses them before)
+	default: // membership, /-ha, tap and colour are read-only (Apply refuses them before)
 		return osc.Arg{}, fmt.Errorf("%s is read-only: %w", p.addr, model.ErrInvalidValue)
 	}
 }
@@ -191,6 +251,9 @@ func fromWire(p param, a osc.Arg) (model.Value, error) {
 		if err != nil {
 			return model.Value{}, err
 		}
+		if p.levelSteps > 0 { // a send: the console keeps only k/160 (X32-F83, XA-F41); report that step's own dB
+			db = stepToDB(math.Round(math.Min(math.Max(float64(a.Float), 0), 1)*p.levelSteps), p.levelSteps)
+		}
 		return model.Level(db)
 	case convOnSwitch, convEngaged, convFlag:
 		m, err := switchFromWire(p.conv, a.Int)
@@ -199,6 +262,12 @@ func fromWire(p param, a osc.Arg) (model.Value, error) {
 		return maskFromWire(p, a.Int)
 	case convHaIndex:
 		return haIndexFromWire(p, a.Int)
+	case convPan:
+		return panFromWire(a.Float)
+	case convTap:
+		return tapFromWire(a.Int)
+	case convColour:
+		return colourFromWire(a.Int)
 	case convGain:
 		db, err := gainFromWire(p, a.Float)
 		if err != nil {

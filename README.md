@@ -19,10 +19,10 @@ It is the core of [Mixhand](https://mixhand.dybyskz.com), and you can use it in 
 |---|---|
 | `model/` | console model in engineering units (dB, on/off, names), immutable snapshots |
 | `driver/` | the contract every console family implements (sessions, origins, errors) |
-| `driver/x32/` | X32 / M32 family over OSC/UDP: discovery, connect and full read, subscriptions, fader law, meters |
+| `driver/x32/` | X32 / M32 family over OSC/UDP: discovery, connect and full read, subscriptions, fader law, meters, buses and sends |
 | `driver/xair/` | X Air / M Air family (XR12, XR16, XR18, X18, MR12, MR18, V2 units) over OSC/UDP, from `docs/protocols/xair.md` |
 | `driver/internal/xosc/` | the session engine both OSC families share: two sockets, echo, liveness, client limit, re-read, scene heuristic |
-| `console/` | supervisor: connect, live, stale, reconnect with backoff; write gate and held-fader rule |
+| `console/` | supervisor: connect, live, stale, reconnect with backoff; write gate, held-fader rule, phone safety and roles (owner, engineer, monitor, viewer) |
 | `api/` | in-process facade for apps: JSON state listener, `Apply`, `MeterFrame`, fader law, `Discover`, log sink |
 | `mobile/` | the gomobile binding of `api/` (iOS, iPadOS, macOS xcframework; Android AAR) |
 | `capi/` | the c-shared binding of `api/` (Windows DLL via P/Invoke; dylib/.so for interop tests), ABI in `contracts/core-api/capi.md` |
@@ -37,13 +37,14 @@ It is the core of [Mixhand](https://mixhand.dybyskz.com), and you can use it in 
 ## Development
 ```bash
 make tools          # pinned golangci-lint, govulncheck, benchstat, gomobile, gobind into ./bin
+                    # (a git worktree without ./bin uses the main checkout's bin; BIN=<dir> overrides)
 make lint test      # unit tests run on an in-memory network with fake time
 make sim-test       # driver and API against the simulator on loopback UDP
 make fuzz           # every parser fuzz target, 30 s each
 make mobile-check   # gobind type check of mobile/ (no Xcode or NDK needed)
 make capi-check     # host c-shared library into build/capi + C smoke test against mixsim
 make xcframework DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer   # build/Mixcore.xcframework
-go run ./cmd/mixsim -demo   # a simulated X32 on 127.0.0.1:10023
+go run ./cmd/mixsim -demo   # a simulated X32 on 127.0.0.1:10023 (named channels, six monitor buses with sends)
 go run ./cmd/mixsim -family xair -demo   # a simulated XR18 on 127.0.0.1:10024
 go run ./cmd/mixprobe --lab -host 192.168.1.62   # hardware session (amplifiers off; see the package doc)
 go run ./cmd/mixprobe --lab -family xair -host 192.168.1.1   # the X Air checklist of docs/protocols/xair.md section 13

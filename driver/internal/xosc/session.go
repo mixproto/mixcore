@@ -64,13 +64,14 @@ type session struct {
 	headamps int              // unit headamps that answered, set during connect
 	extra    bool             // the extra headamp groups answered, set during connect
 	present  headampSet       // headamps read and reported (units, extras, patched in use)
+	buses    headampSet       // buses that answered (indexes), set during connect (core-api v0.4)
 	// knownUnits are the optional unit counts an earlier session of the same
 	// link read (nil: first connect); those units are required (XA-F72).
 	knownUnits *unitCounts
 
 	mu      sync.Mutex
 	order   []int                // pending parameter indexes, first-seen order
-	rrSkip  map[int]bool         // parameters to leave out of the next re-read pass (held)
+	rrSkip  map[int]bool         // held parameters the re-read leaves out, read per batch; replaced, never changed in place
 	pending map[int]pendingWrite // latest value per parameter (coalesced)
 
 	done        chan struct{} // closed by Close
@@ -117,6 +118,7 @@ func newSession(d *Driver, c *conn, opts driver.Options) *session {
 		pending: map[int]pendingWrite{}, done: make(chan struct{}), cmdReady: make(chan struct{}, 1), meterReady: make(chan struct{}, 1),
 		rereadReady: make(chan struct{}, 1), tx: make([]byte, 0, rxBufSize), sent: map[int][]sentWrite{}, unconfirmed: map[int]osc.Arg{},
 		rr: rereadPass{asked: map[int]bool{}}, scene: newSceneState(), present: newHeadampSet(d.params.layout.maxHeadamp()),
+		buses: newHeadampSet(d.params.layout.maxBus()),
 	}
 }
 
@@ -310,10 +312,8 @@ func (s *session) flushPending() {
 			continue
 		}
 		idx := s.params.index(w.param.ref)
-		// Gain echo is unverified (X32-F79, XA-F116): a missing Gain echo is
-		// no client-limit evidence (follow-up 1).
 		s.rememberSent(idx, sentWrite{arg: w.arg, origin: w.origin, at: now, changes: s.changesKnown(idx, w),
-			evidence: w.param.feature == featureCore && w.param.conv != convGain})
+			evidence: limitEvidence(w.param)})
 		s.markTouched(idx)
 		if w.param.conv == convGain {
 			s.unconfirmed[idx] = w.arg

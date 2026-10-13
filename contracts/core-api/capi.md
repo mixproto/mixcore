@@ -31,7 +31,7 @@ numbers are part of the ABI and never change; new codes get new numbers.
 | 8 | `MIX_ERR_NOT_STARTED` | `ERR_NOT_STARTED` |
 | 9 | `MIX_ERR_ALREADY_STARTED` | `ERR_ALREADY_STARTED` |
 | 10 | `MIX_ERR_INTERNAL` | `ERR_INTERNAL` (also: a recovered Go panic) |
-| 11 | `MIX_ERR_ROLE` | `ERR_ROLE` (reserved) |
+| 11 | `MIX_ERR_ROLE` | `ERR_ROLE` (v0.4: the client's role does not allow the command) |
 | 12 | `MIX_ERR_BUSY` | `ERR_BUSY` (also `MixStop`, `MixPause`, `MixStopDemo` from inside the state callback, v0.3) |
 | 13 | `MIX_ERR_NETWORK` | `ERR_NETWORK` (only inside discovery results) |
 | 14 | `MIX_ERR_INVALID_ARGUMENT` | NULL pointer or negative length |

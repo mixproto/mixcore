@@ -45,6 +45,7 @@ import (
 
 	"github.com/mixproto/mixcore/driver"
 	"github.com/mixproto/mixcore/internal/safe"
+	"github.com/mixproto/mixcore/model"
 )
 
 // Timing holds every interval of the session. Defaults are documented in
@@ -112,6 +113,9 @@ type Profile struct {
 	Markers []Marker
 	// BadEndpoint is the family's error for an endpoint that is not an IP address.
 	BadEndpoint error
+	// TapLabels are the console's words for the send taps, in model.Tap
+	// order (X32-F85; xair.md 3.3).
+	TapLabels [model.TapCount]string
 }
 
 // Driver implements driver.Driver and driver.LinkOpener for one family.

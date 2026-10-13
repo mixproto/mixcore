@@ -119,50 +119,75 @@ func TestStateJSON_Golden(t *testing.T) {
 }
 
 func FuzzParseCommand(f *testing.F) {
-	f.Add(cmd("fader", "-3.5", "gesture"))
-	f.Add(cmd("fader", `"-inf"`, "macro"))
-	f.Add(cmd("mute", "true", "console"))
-	f.Add(`{"version":0,"type":"holdBegin","param":{"strip":{"kind":"main"},"field":"fader"},"origin":{"kind":"gesture"}}`)
-	f.Add(`{"version":0,"type":"toggle","param":{"strip":{"kind":"muteGroup","index":2},"field":"mute"},"origin":{"kind":"gesture"}}`)
-	f.Add(`{"version":0,"type":"set","param":{"strip":{"kind":"input","index":3},"field":"muteGroups"},"value":[1,6],"origin":{"kind":"gesture"}}`)
-	// v0.3 phone safety fields (CR-22..CR-26).
-	f.Add(`{"version":0,"type":"set","param":{"strip":{"kind":"headamp","index":3},"field":"gain"},"value":45,"typed":true,"confirmed":true,"origin":{"kind":"gesture","clientId":"ui"}}`)
-	f.Add(`{"version":0,"type":"set","param":{"strip":{"kind":"headamp","index":3},"field":"gain"},"value":35.5,"undo":true,"origin":{"kind":"gesture"}}`)
-	f.Add(`{"version":0,"type":"openWall","param":{"strip":{"kind":"input","index":1},"field":"fader"},"origin":{"kind":"gesture"}}`)
-	f.Add(`{"version":0,"type":"unlock","param":{"strip":{"kind":"headamp","index":3},"field":"gain"},"origin":{"kind":"gesture"}}`)
-	f.Add(`{"version":0,"type":"setShowMode","value":true,"origin":{"kind":"gesture"}}`)
-	f.Add(`{"version":0,"type":"setSlipGuard","value":false,"origin":{"kind":"gesture","clientId":"ui"}}`)
-	f.Add(`{"version":0,"type":"holdBegin","param":{"strip":{"kind":"input","index":1},"field":"fader"},"typed":true,"origin":{"kind":"gesture"}}`)
-	f.Add(`{"version":0,"type":"holdBegin","param":{"strip":{"kind":"input","index":1},"field":"fader"},"trackLengthPt":152,"origin":{"kind":"gesture"}}`)
-	f.Fuzz(func(t *testing.T, in string) {
-		c, err := parseCommand(in)
-		if err != nil {
-			if CodeOf(err) != CodeInvalidCommand && CodeOf(err) != CodeInvalidValue {
-				t.Fatalf("parse error with code %s", CodeOf(err))
-			}
-			return
+	for _, seed := range parseCommandSeeds() {
+		f.Add(seed)
+	}
+	f.Fuzz(fuzzParseCommand)
+}
+
+// parseCommandSeeds are the seeds of FuzzParseCommand, one per command shape.
+func parseCommandSeeds() []string {
+	return []string{
+		cmd("fader", "-3.5", "gesture"),
+		cmd("fader", `"-inf"`, "macro"),
+		cmd("mute", "true", "console"),
+		`{"version":0,"type":"holdBegin","param":{"strip":{"kind":"main"},"field":"fader"},"origin":{"kind":"gesture"}}`,
+		`{"version":0,"type":"toggle","param":{"strip":{"kind":"muteGroup","index":2},"field":"mute"},"origin":{"kind":"gesture"}}`,
+		`{"version":0,"type":"set","param":{"strip":{"kind":"input","index":3},"field":"muteGroups"},"value":[1,6],"origin":{"kind":"gesture"}}`,
+		// v0.3 phone safety fields (CR-22..CR-26).
+		`{"version":0,"type":"set","param":{"strip":{"kind":"headamp","index":3},"field":"gain"},"value":45,"typed":true,"confirmed":true,"origin":{"kind":"gesture","clientId":"ui"}}`,
+		`{"version":0,"type":"set","param":{"strip":{"kind":"headamp","index":3},"field":"gain"},"value":35.5,"undo":true,"origin":{"kind":"gesture"}}`,
+		`{"version":0,"type":"openWall","param":{"strip":{"kind":"input","index":1},"field":"fader"},"origin":{"kind":"gesture"}}`,
+		`{"version":0,"type":"unlock","param":{"strip":{"kind":"headamp","index":3},"field":"gain"},"origin":{"kind":"gesture"}}`,
+		`{"version":0,"type":"setShowMode","value":true,"origin":{"kind":"gesture"}}`,
+		`{"version":0,"type":"setSlipGuard","value":false,"origin":{"kind":"gesture","clientId":"ui"}}`,
+		`{"version":0,"type":"holdBegin","param":{"strip":{"kind":"input","index":1},"field":"fader"},"typed":true,"origin":{"kind":"gesture"}}`,
+		`{"version":0,"type":"holdBegin","param":{"strip":{"kind":"input","index":1},"field":"fader"},"trackLengthPt":152,"origin":{"kind":"gesture"}}`,
+		// v0.4 buses and sends.
+		`{"version":0,"type":"set","param":{"strip":{"kind":"input","index":4},"field":"sendLevel","bus":2},"value":4,"origin":{"kind":"gesture"}}`,
+		`{"version":0,"type":"set","param":{"strip":{"kind":"input","index":4},"field":"sendPan","bus":1},"value":-40,"origin":{"kind":"gesture"}}`,
+		`{"version":0,"type":"toggle","param":{"strip":{"kind":"input","index":5},"field":"sendOn","bus":2},"origin":{"kind":"gesture"}}`,
+		`{"version":0,"type":"set","param":{"strip":{"kind":"bus","index":2},"field":"colour"},"value":"blueInverted","origin":{"kind":"gesture"}}`,
+		`{"version":0,"type":"set","param":{"strip":{"kind":"input","index":1},"field":"sendTap","bus":3},"value":"postFader","origin":{"kind":"gesture"}}`,
+	}
+}
+
+// fuzzParseCommand: any input is parsed or refused with a command code,
+// and an accepted command keeps every rule of the contract.
+func fuzzParseCommand(t *testing.T, in string) {
+	c, err := parseCommand(in)
+	if err != nil {
+		if CodeOf(err) != CodeInvalidCommand && CodeOf(err) != CodeInvalidValue {
+			t.Fatalf("parse error with code %s", CodeOf(err))
 		}
-		if c.trackPt != 0 && (c.kind != cmdHoldBegin || !(c.trackPt >= minTrackPt && c.trackPt <= maxTrackPt)) {
-			t.Fatalf("trackLengthPt %v accepted on %s", c.trackPt, c.kind)
+		return
+	}
+	if c.trackPt != 0 && (c.kind != cmdHoldBegin || !(c.trackPt >= minTrackPt && c.trackPt <= maxTrackPt)) {
+		t.Fatalf("trackLengthPt %v accepted on %s", c.trackPt, c.kind)
+	}
+	if (c.typed || c.confirmed) && c.origin.Kind != driver.OriginGesture {
+		t.Fatalf("typed/confirmed accepted from origin %s", c.origin.Kind)
+	}
+	if c.kind != cmdSet && (c.typed || c.confirmed || c.undo) {
+		t.Fatalf("%s accepted with typed/confirmed/undo", c.kind)
+	}
+	if (c.kind == cmdSlipGuard || c.kind == cmdShowMode) != (c.param == model.ParamRef{}) {
+		t.Fatalf("%s with param %v", c.kind, c.param)
+	}
+	if c.param.Field.IsSend() != (c.param.Bus > 0) || c.param.Bus < 0 {
+		t.Fatalf("param %v: a bus goes with send fields only (v0.4)", c.param)
+	}
+	if p, ok := c.value.Pan(); ok && (p < model.PanLeft || p > model.PanRight) {
+		t.Fatalf("pan %v accepted", p)
+	}
+	if c.kind == cmdSet {
+		if db, ok := c.value.DB(); ok && (math.IsNaN(db) || math.IsInf(db, 1)) {
+			t.Fatalf("parser accepted level %v", db)
 		}
-		if (c.typed || c.confirmed) && c.origin.Kind != driver.OriginGesture {
-			t.Fatalf("typed/confirmed accepted from origin %s", c.origin.Kind)
+		if c.value.Kind() != c.param.Field.ValueKind() {
+			t.Fatalf("value kind %d for field %s", c.value.Kind(), c.param.Field)
 		}
-		if c.kind != cmdSet && (c.typed || c.confirmed || c.undo) {
-			t.Fatalf("%s accepted with typed/confirmed/undo", c.kind)
-		}
-		if (c.kind == cmdSlipGuard || c.kind == cmdShowMode) != (c.param == model.ParamRef{}) {
-			t.Fatalf("%s with param %v", c.kind, c.param)
-		}
-		if c.kind == cmdSet {
-			if db, ok := c.value.DB(); ok && (math.IsNaN(db) || math.IsInf(db, 1)) {
-				t.Fatalf("parser accepted level %v", db)
-			}
-			if c.value.Kind() != c.param.Field.ValueKind() {
-				t.Fatalf("value kind %d for field %s", c.value.Kind(), c.param.Field)
-			}
-		}
-	})
+	}
 }
 
 // FuzzParseConfig: any config is parsed or refused with ERR_INVALID_CONFIG;
@@ -173,6 +198,9 @@ func FuzzParseConfig(f *testing.F) {
 	f.Add(`{"version":0,"family":"x32","host":"10.0.0.1","safety":{"monitorCeiling":"off"}}`)
 	f.Add(`{"version":0,"family":"x32","host":"10.0.0.1","safety":{"monitorCeiling":null}}`)
 	f.Add(`{"version":0,"family":"x32","host":"10.0.0.1","safety":{"monitorCeiling":{"headroomDB":11}}}`)
+	f.Add(`{"version":0,"family":"x32","host":"10.0.0.1","role":{"kind":"monitor","buses":[{"bus":2},{"bus":3,"monitorCeiling":"off"}]}}`)
+	f.Add(`{"version":0,"family":"x32","host":"10.0.0.1","role":{"kind":"viewer"}}`)
+	f.Add(`{"version":0,"family":"x32","host":"10.0.0.1","role":null}`)
 	f.Fuzz(func(t *testing.T, in string) {
 		c, err := parseConfig(in)
 		if err != nil {
@@ -183,6 +211,9 @@ func FuzzParseConfig(f *testing.F) {
 		}
 		if m := c.safety().Client.Monitor; m != nil && (m.HeadroomDB < 0 || m.HeadroomDB > maxHeadroomDB) {
 			t.Fatalf("headroom %v accepted", m.HeadroomDB)
+		}
+		if r, err := c.role(); err != nil || r.Validate() != nil {
+			t.Fatalf("accepted config has an invalid role %+v: %v", r, err)
 		}
 	})
 }

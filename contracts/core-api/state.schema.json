@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/state.schema.json",
-  "title": "mixcore core API v0.3: StateListener.OnState(stateJSON)",
+  "title": "mixcore core API v0.4: StateListener.OnState(stateJSON)",
   "description": "A snapshot replaces everything the UI holds; a diff lists changes since the previous message. seq grows by one per message; a gap never happens within one Start. Values are the console's, never the UI's. events report holds that ended without the user releasing them; they appear in snapshots and diffs and are never dropped by coalescing (up to 256 between two messages).",
   "type": "object",
   "additionalProperties": false,
@@ -55,7 +55,7 @@
         "noEchoOfOwnWrites",
         "rereadFoundUnpushedChanges"
       ],
-      "description": "v0.1. Present with limited: the evidence. noEchoOfOwnWrites: three writes that changed a value got no confirmation while the console answered. rereadFoundUnpushedChanges: two background re-reads in a row found values that changed without an update."
+      "description": "v0.1. Present with limited: the evidence. noEchoOfOwnWrites: three writes that changed an input or main fader or mute got no confirmation while the console answered. rereadFoundUnpushedChanges: two background re-reads in a row found an input or main fader or mute that changed without an update. v0.4: bus, send, colour, link, group, name and Gain values never count (x32.md \"Client limit detection\")."
     },
     "offline": {
       "type": "boolean",
@@ -93,7 +93,7 @@
     },
     "strips": {
       "type": "array",
-      "description": "snapshot only: inputs in order, then main.",
+      "description": "snapshot only: inputs in order, then main. v0.4: inputs carry sends.",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -142,6 +142,17 @@
             ],
             "minimum": 1,
             "description": "v0.3, inputs on x32 only (/-ha/NN/index, X32-F74): the headamp feeding this channel, null when its source has none (card, USB, internal: the channel has no Gain). Absent when the family does not model it (xair) or the console did not answer /-ha. Several channels may use one headamp: one Gain write changes all of them. Read-only."
+          },
+          "colour": {
+            "$ref": "common.schema.json#/$defs/colour",
+            "description": "v0.4: the strip colour (inputs and main, X32-F89, xair section 3.2). Absent when the console did not answer colours."
+          },
+          "sends": {
+            "type": "array",
+            "description": "v0.4, inputs only: this channel's send to every bus of the snapshot's buses list, in bus order. Changes arrive in diffs as param {strip: {kind: input, index}, field: sendLevel | sendOn | sendPan | sendTap, bus}.",
+            "items": {
+              "$ref": "#/$defs/send"
+            }
           }
         }
       }
@@ -299,9 +310,10 @@
                 "enum": [
                   "stale",
                   "stopped",
-                  "limited"
+                  "limited",
+                  "role"
                 ],
-                "description": "limited is v0.1."
+                "description": "limited is v0.1. role (v0.4): the client's role changed (Go API SetClientRole, the hub) and no longer allows this parameter."
               }
             }
           },
@@ -420,10 +432,144 @@
           },
           "mute": {
             "type": "boolean"
+          },
+          "name": {
+            "type": "string",
+            "description": "v0.4: present when the console has DCA masters (x32 X32-F88, xair section 3.2)."
+          },
+          "colour": {
+            "$ref": "common.schema.json#/$defs/colour"
+          },
+          "faderDB": {
+            "$ref": "common.schema.json#/$defs/level",
+            "description": "v0.4: the DCA fader, writable (param {strip: {kind: dca, index}, field: fader}); present with DCA masters."
           }
         }
       },
-      "description": "v0.1, snapshot only: every DCA group; mute true = DCA muted."
+      "description": "v0.1, snapshot only: every DCA group; mute true = DCA muted. v0.4: name, colour and faderDB where the console has DCA masters."
+    },
+    "buses": {
+      "type": "array",
+      "description": "v0.4, snapshot only: every bus the console answered for, in index order (x32: mix buses 1..16; xair: buses 1..6 (kind mix) and the FX send masters 1..4 as buses 7..10 (kind fx)). A bus that did not answer at the engine's first connect is absent with every send to it (small xair models, XA-F72). Changes arrive in diffs as param {strip: {kind: bus, index}, field}.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "index",
+          "kind",
+          "name",
+          "faderDB",
+          "mute"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "kind": {
+            "enum": [
+              "mix",
+              "fx"
+            ],
+            "description": "mix: a mix (aux) bus, the usual monitor mix. fx: an FX send master (xair FX 1..4 = buses 7..10). Name it 'FX 1' .. 'FX 4' when its name is empty."
+          },
+          "name": {
+            "type": "string"
+          },
+          "colour": {
+            "$ref": "common.schema.json#/$defs/colour"
+          },
+          "faderDB": {
+            "$ref": "common.schema.json#/$defs/level",
+            "description": "The bus master ('My level' in the monitor view)."
+          },
+          "mute": {
+            "type": "boolean"
+          },
+          "linked": {
+            "type": "boolean",
+            "description": "Present on the odd bus of each pair the console can link (x32 1-2 .. 15-16, X32-F81; xair 1-2, 3-4, 5-6): true = the pair is one stereo bus, the odd bus is left, the even bus right. Show the pair as one mix ('Mon 1 (stereo)'). Read-only. Whether the console copies a write on one side to the other is unverified (x32.md item 25): the core writes exactly the parameter it is given."
+          },
+          "sendPan": {
+            "type": "boolean",
+            "description": "Present (true) when inputs have a send pan into this bus, in the scope sendFields.pan gives. The family's protocol doc decides, not the console's answer: x32 every bus, the pan living on the odd send of each pair (X32-F84); xair buses 1..6, never the FX sends 7..10 (xair.md 3.3, item 10). Absent: no pan bar for sends into this bus."
+          }
+        }
+      }
+    },
+    "matrices": {
+      "type": "array",
+      "description": "v0.4, snapshot only, x32: matrices 1..6 (X32-F87), read-only (a set is ERR_UNSUPPORTED). Absent on xair and when the console did not answer them.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "index",
+          "name",
+          "faderDB",
+          "mute"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "name": {
+            "type": "string"
+          },
+          "colour": {
+            "$ref": "common.schema.json#/$defs/colour"
+          },
+          "faderDB": {
+            "$ref": "common.schema.json#/$defs/level"
+          },
+          "mute": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "sendFields": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "v0.4, snapshot only, present when inputs carry sends: which send fields this console has. level is always there. on: the console has a send on/off (x32 yes, xair no: show no SEND ON/OFF switch and never send sendOn). pan and tap: 'send' = every send has its own; 'pair' = only the odd bus of each pair has it and it belongs to the pair (x32, X32-F84/F85: the tap shown under an even bus's send is the one of the odd bus below it, and a sendPan set must name the odd bus); absent = the console has none or did not answer. A bus without sendPan in its buses entry has no send pan whatever sendFields.pan says.",
+      "properties": {
+        "on": {
+          "type": "boolean"
+        },
+        "pan": {
+          "enum": [
+            "send",
+            "pair"
+          ]
+        },
+        "tap": {
+          "enum": [
+            "send",
+            "pair"
+          ]
+        }
+      }
+    },
+    "sendTaps": {
+      "type": "array",
+      "description": "v0.4, snapshot only, with sendFields.tap: the console's own word for each sendTap token, in signal-flow order (x32: IN/LC, <-EQ, EQ->, PRE, POST, GRP; xair: IN, PREEQ, POSTEQ, PRE, POST, GRP). Show the label, untranslated (CR-16).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "tap",
+          "label"
+        ],
+        "properties": {
+          "tap": {
+            "$ref": "common.schema.json#/$defs/sendTap"
+          },
+          "label": {
+            "type": "string"
+          }
+        }
+      }
     }
   },
   "allOf": [
@@ -455,5 +601,37 @@
         ]
       }
     }
-  ]
+  ],
+  "$defs": {
+    "send": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bus",
+        "levelDB"
+      ],
+      "properties": {
+        "bus": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "levelDB": {
+          "$ref": "common.schema.json#/$defs/level",
+          "description": "The send level (x32 X32-F82/F83, xair section 3.3: the fader law in 161 steps)."
+        },
+        "on": {
+          "type": "boolean",
+          "description": "true = the send is on. Absent when the console has no send on/off (sendFields.on false: xair)."
+        },
+        "pan": {
+          "$ref": "common.schema.json#/$defs/pan",
+          "description": "Present where sendFields.pan says (x32: odd buses only)."
+        },
+        "tap": {
+          "$ref": "common.schema.json#/$defs/sendTap",
+          "description": "Present where sendFields.tap says (x32: odd buses only). Read-only in v0.4."
+        }
+      }
+    }
+  }
 }

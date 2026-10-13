@@ -11,7 +11,25 @@
 // losing the console cancels every hold. It never queues writes: a write that
 // cannot be sent now is rejected, so nothing can be replayed after a reconnect.
 // While live it asks the session for a slow, read-only background re-read
-// (DefaultRereadEvery), skipped while any fader is held.
+// (DefaultRereadEvery); held parameters are left out of it.
+//
+// Roles (roles.go) are checked below every UI: each write, hold, openWall,
+// unlock, relock and SetShowModeBy is refused with ErrRole when the role of
+// its origin's client does not allow it.
+//
+// # Hub
+//
+// A hub (MixLink, ADR-0004/0008) must, for this layer to hold:
+//   - derive Origin.ClientID from the device token of the connection,
+//     never from the message (the core does not authenticate client ids);
+//   - give every client a role with SetClientRole before it routes the
+//     first message of that client; the default for a paired device is
+//     viewer (Config.Role's zero value, owner, is only for the device user
+//     on a direct connection);
+//   - on revoke, set the client to viewer (which also ends its holds)
+//     before closing its sockets;
+//   - use SetShowModeBy for a client's show-mode request; SetShowMode and
+//     SetClientSafety are unchecked owner-only internals it never exposes.
 package console
 
 import (
@@ -123,6 +141,9 @@ type Config struct {
 	// RereadEvery is the background re-read interval while live (sessions
 	// that implement driver.Rereader). Zero: DefaultRereadEvery; negative: off.
 	RereadEvery time.Duration
+	// Role is the role of every client without SetClientRole (roles.go);
+	// the zero value is the owner (a direct connection).
+	Role Role
 }
 
 // Supervisor owns the connection lifecycle of one console.
@@ -152,6 +173,10 @@ type Supervisor struct {
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
 
+	// heldSent is the held set last given to the session (syncHeldLocked);
+	// nil: none yet for this session.
+	heldSent *[]model.ParamRef
+
 	// link is the long-lived transport of drivers that implement
 	// driver.LinkOpener. Only the run goroutine uses it; Stop closes it after
 	// joining that goroutine, Pause keeps it for the next Start.
@@ -169,6 +194,9 @@ func New(cfg Config) (*Supervisor, error) {
 	if err := cfg.Policy.Validate(); err != nil {
 		return nil, err
 	}
+	if err := cfg.Role.Validate(); err != nil {
+		return nil, err
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
@@ -180,7 +208,7 @@ func New(cfg Config) (*Supervisor, error) {
 	}
 	return &Supervisor{
 		cfg: cfg, notify: make(chan struct{}, 1),
-		holds: newHolds(), safe: newSafety(cfg.Safety),
+		holds: newHolds(), safe: newSafety(cfg.Safety, cfg.Role),
 	}, nil
 }
 
@@ -377,9 +405,11 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 func (s *Supervisor) adopt(sess driver.Session) {
 	s.mu.Lock()
 	s.sess = sess
+	s.heldSent = nil
 	s.ident = sess.Identity()
-	s.caps = sess.Capabilities()
-	s.safe.adoptState(s.state, sess.Snapshot())
+	s.caps = sess.Capabilities() // before adoptState: its grids (sameLevelLocked) and echo window
+	s.safe.window = s.caps.EchoWindow
+	s.safe.adoptState(s.state, sess.Snapshot(), s.sameLevelLocked)
 	s.safe.dropAllPending() // the fresh read is the console's value (re-review MEDIUM A)
 	s.state = sess.Snapshot()
 	s.changes = nil
@@ -445,6 +475,7 @@ func (s *Supervisor) runSession(ctx context.Context, sess driver.Session) error 
 func (s *Supervisor) handleEvent(ev driver.Event) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer s.syncHeldLocked() // an external change, a recall or the limit may have ended holds
 	switch e := ev.(type) {
 	case driver.ParamChanged:
 		s.applyChangeLocked(Change{Param: e.Param, Value: e.Value, Origin: e.Origin, Authoritative: e.Authoritative, OwnWrite: e.OwnWrite})
@@ -493,7 +524,10 @@ func (s *Supervisor) applyChangeLocked(c Change) {
 	if (!had || !prev.Equal(c.Value)) && !c.OwnWrite {
 		s.holds.external(c)
 	}
-	s.safe.noteChange(c)
+	s.safe.noteChange(c, s.sameLevelLocked)
+	if c.Param.Field == model.FieldLinked {
+		s.recheckHoldsLocked(nil) // a pair linked at the console (review Sec M2)
+	}
 	if c.Param.Field == model.FieldGain {
 		s.safe.noteReport(c, s.halfStepDB(c.Param.Strip.Index)) // review pass 3, HIGH 1
 	}
