@@ -407,5 +407,9 @@ signature or error code changes. Behringer WING, WING BK, WING Rack and WING Com
   `200 + n` (read-only). The Gain law of each comes from the console itself (2.5 dB steps on local inputs in the
   console's own definition).
 - While the console's TCP remote lock is on, every set is `ERR_UNSUPPORTED` (the core cannot tell the UI why yet).
+- **`reasonCode: "ERR_PROTOCOL_MISMATCH"`** in a state message (status connecting or stale): the console answers but
+  its protocol is not what the core understands (its schema lacks or contradicts what the core needs, or it sends
+  undefined bytes). The core retries by itself with a backoff of 1 s up to 30 s, forever, and goes live when it matches.
+  UI text (localized): "This mixer's firmware speaks a protocol Mixhand does not understand yet".
 - `StartDemo` has no `wing` demo.
 - Status: in development until hardware verification.

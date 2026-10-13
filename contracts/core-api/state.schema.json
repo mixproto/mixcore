@@ -38,6 +38,12 @@
       ],
       "description": "live: input unlocked. stale: connection lost (no packet from the console for 1.5 s, or the console stopped answering), last values shown, Apply returns ERR_STALE. connecting: not yet connected since Start/Resume. stopped: Stop or Pause. status, reason, staleSinceMs, offline (and the v0.1 connection fields below) describe the connection in every message, snapshot or diff; an absent optional field means false or none."
     },
+    "reasonCode": {
+      "enum": [
+        "ERR_PROTOCOL_MISMATCH"
+      ],
+      "description": "Additive (wing): a stable code for why the status is not live, when the core knows one; absent otherwise (reason stays diagnostic text). ERR_PROTOCOL_MISMATCH: the console answers, but its protocol is not what this core understands (wing: its schema lacks or contradicts the nodes the core needs, or it sends bytes the protocol does not define). The core keeps retrying with a backoff of 1, 2, 4 ... up to 30 s, and goes live by itself when the console's protocol matches. Suggested UI text: 'This mixer's firmware speaks a protocol Mixhand does not understand yet'."
+    },
     "reason": {
       "type": "string",
       "description": "Diagnostic text for logs, never shown to users as is."
