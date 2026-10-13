@@ -12,7 +12,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"go.uber.org/goleak"
 
@@ -262,20 +261,21 @@ func TestChoose(t *testing.T) {
 }
 
 // Regression (go-reviewer M1): an object that never closes was rescanned from
-// its start on every chunk (quadratic: 128 KiB took 20 s). The scan state now
-// survives feeds and a pending object is capped, so the stream stays linear
-// and recovers for the next object.
+// its start on every chunk (quadratic: 128 KiB in 1-byte segments took 20 s).
+// The scan state now survives feeds and a pending object is capped, so the
+// stream stays linear and recovers for the next object. Linearity is proven
+// by counting scan steps, not by wall-clock time: the old rescan needed about
+// n*n/2 steps here, the linear scan exactly one per byte, under any load.
 func TestJSONUnclosedObjectIsLinearAndCapped(t *testing.T) {
 	const quadratic = 128 << 10 // one byte per segment: 11 s with the old rescan
 	stream := append([]byte(`{"a":"`), bytes.Repeat([]byte("x"), maxPendingJSON+quadratic)...)
 	s := JSON{}.NewStream(netpkt.TCP, nil)
-	start := time.Now()
 	for i := range quadratic {
 		s.Feed(stream[i:i+1], func(Message) {})
 	}
 	s.Feed(stream[quadratic:], func(Message) {}) // the rest at once, past the cap
-	if d := time.Since(start); d > jsonTimeBudget {
-		t.Fatalf("feeding an unclosed object took %s (budget %s)", d, jsonTimeBudget)
+	if got := scanSteps(t, s); got != len(stream) {
+		t.Fatalf("scanned %d steps for %d bytes; every byte must be looked at exactly once", got, len(stream))
 	}
 	// The oversized object was dropped and counted; a later object still decodes.
 	got := feedAll(s, [][]byte{[]byte(`"} {"path":"a/b","value":3}`)})
@@ -285,6 +285,35 @@ func TestJSONUnclosedObjectIsLinearAndCapped(t *testing.T) {
 	if n := s.(Dropper).Dropped(); n != 1 {
 		t.Fatalf("Dropped() = %d, want 1", n)
 	}
+}
+
+// The scan cost does not depend on how the stream is cut into chunks: an
+// unclosed object, a closed one and bytes between objects, fed whole, in
+// 1-byte and in 7-byte segments, take one step per byte every time.
+func TestJSONScanStepsAreIndependentOfChunking(t *testing.T) {
+	// Two closed objects (one leaf each; braces and an escaped quote inside a
+	// string; nesting), then one that never closes.
+	stream := []byte(`noise {"path":"a/b","value":"}\"{"} more {"c":[{"d":1}]} tail {"x":"` + strings.Repeat("y", 4096))
+	for _, seg := range []int{len(stream), 1, 7} {
+		s := JSON{}.NewStream(netpkt.TCP, nil)
+		messages := 0
+		for i := 0; i < len(stream); i += seg {
+			s.Feed(stream[i:min(i+seg, len(stream))], func(Message) { messages++ })
+		}
+		if got := scanSteps(t, s); got != len(stream) || messages != 2 {
+			t.Errorf("segments of %d: %d steps for %d bytes, %d messages (want 2)", seg, got, len(stream), messages)
+		}
+	}
+}
+
+// scanSteps returns how many bytes the stream's object scanner examined.
+func scanSteps(t *testing.T, s Stream) int {
+	t.Helper()
+	js, ok := s.(*jsonStream)
+	if !ok {
+		t.Fatalf("stream is %T, want *jsonStream", s)
+	}
+	return js.sc.scanned
 }
 
 // go-reviewer nit 3: with a linear scan the pending cap is 1 MiB again, so
@@ -301,6 +330,3 @@ func TestJSONLargeObjectsDecodeAndDropsAreCounted(t *testing.T) {
 		t.Fatalf("Dropped() = %d, want 1 (the too deep object)", n)
 	}
 }
-
-// jsonTimeBudget is generous for -race; the quadratic scan needed ~20 s.
-const jsonTimeBudget = 2 * time.Second

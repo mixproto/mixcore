@@ -13,8 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -256,37 +254,30 @@ func TestCreateReportsTheDirectoriesItMade(t *testing.T) {
 
 // Regression (go-reviewer L4): the recorder called out while holding its lock,
 // so one slow consumer stalled every relay goroutine that records. out now
-// runs after the lock is released.
+// runs after the lock is released. Checked directly (the lock is free while
+// out runs) instead of by a wall-clock wait, which false-fails under load.
 func TestRecorderDoesNotHoldItsLockWhileHandingFramesOn(t *testing.T) {
-	release := make(chan struct{})
-	entered := make(chan struct{}, 1)
 	var pcap bytes.Buffer
-	var calls atomic.Int32
+	var rec *Recorder
+	var calls, heldDuringOut int
 	rec, err := NewRecorder(&pcap, FileCapture, func(flow.Frame) {
-		if calls.Add(1) == 1 { // the first frame's consumer is stuck
-			entered <- struct{}{}
-			<-release
+		calls++
+		if !rec.mu.TryLock() {
+			heldDuringOut++
+			return
 		}
+		rec.mu.Unlock()
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var wg sync.WaitGroup
-	wg.Go(func() { _ = rec.Datagram(t0, app, console, []byte("a")) })
-	<-entered
-	done := make(chan error, 1)
-	go func() { done <- rec.Datagram(t0, console, app, []byte("b")) }()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(time.Second):
-		close(release)
-		wg.Wait()
-		<-done
-		t.Fatal("a second Datagram waited for the first frame's consumer")
+	if err := rec.Datagram(t0, app, console, []byte("a")); err != nil {
+		t.Fatal(err)
 	}
-	close(release)
-	wg.Wait()
+	if err := rec.Stream(t0, console, app, []byte("b")); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 3 || heldDuringOut != 0 { // datagram, SYN, data segment
+		t.Fatalf("out ran %d times, %d of them with the recorder lock held", calls, heldDuringOut)
+	}
 }

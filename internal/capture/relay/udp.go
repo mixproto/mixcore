@@ -128,13 +128,13 @@ func (u *UDP) app(ctx context.Context, wg *sync.WaitGroup, mu *sync.Mutex, apps 
 	return a, nil
 }
 
+// forward records b as app -> console, then sends it (order: package doc).
 func (u *UDP) forward(a *udpApp, b []byte) {
-	if _, err := a.up.WriteTo(b, net.UDPAddrFromAddrPort(u.Console)); err != nil {
-		u.Logger.Debug("relay: to console", "err", err)
-		return
-	}
 	if err := u.Rec.Datagram(time.Now(), a.addr, u.Console, b); err != nil {
 		u.Logger.Error("relay: record", "err", err)
+	}
+	if _, err := a.up.WriteTo(b, net.UDPAddrFromAddrPort(u.Console)); err != nil {
+		u.Logger.Debug("relay: to console", "err", err)
 	}
 }
 
@@ -156,12 +156,11 @@ func (u *UDP) readConsole(ctx context.Context, a *udpApp) {
 		if !ok || unmapped(ua.AddrPort()) != u.Console {
 			continue // only the console may reach the app through us
 		}
-		if _, err := u.Listen.WriteTo(buf[:n], net.UDPAddrFromAddrPort(a.addr)); err != nil {
-			u.Logger.Debug("relay: to app", "err", err)
-			continue
-		}
 		if err := u.Rec.Datagram(time.Now(), u.Console, a.addr, buf[:n]); err != nil {
 			u.Logger.Error("relay: record", "err", err)
+		}
+		if _, err := u.Listen.WriteTo(buf[:n], net.UDPAddrFromAddrPort(a.addr)); err != nil {
+			u.Logger.Debug("relay: to app", "err", err)
 		}
 	}
 }

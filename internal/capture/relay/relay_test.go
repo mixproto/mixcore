@@ -153,8 +153,11 @@ func TestUDPRelayForwardsBothWaysAndOnlyWhatTheAppSent(t *testing.T) {
 		if !strings.HasPrefix(log[0].From.String(), relayIP+":") {
 			t.Fatalf("console saw %s, want the relay's upstream socket", log[0].From)
 		}
+		// Recorded in causal order (relay records before it forwards): the
+		// request, its reply, then the request the app sent after the reply.
 		got := r.rec.all()
-		if len(got) != 3 || !strings.HasPrefix(got[0], "udp "+appIP) || !strings.Contains(got[1], consoleAddr+">"+appIP) {
+		if len(got) != 3 || !strings.HasPrefix(got[0], "udp "+appIP) || !strings.Contains(got[1], consoleAddr+">"+appIP) ||
+			!strings.Contains(got[2], "/ch/01/mix/fader") {
 			t.Fatalf("recorded:\n%s", strings.Join(got, "\n"))
 		}
 	})
@@ -259,6 +262,7 @@ func TestTCPRelayPipesAndRecords(t *testing.T) {
 	_ = app.Close()
 	cancel()
 	wg.Wait()
+	// Request before reply: the relay records before it forwards.
 	got := rec.all()
 	if len(got) != 2 || !strings.Contains(got[0], ">10.0.0.1:49280 \"devinfo productname\\n\"") ||
 		!strings.HasPrefix(got[1], "tcp 10.0.0.1:49280>") {
@@ -384,14 +388,14 @@ func TestTCPRelaySurvivesATransientAcceptError(t *testing.T) {
 	served := make(chan error, 1)
 	wg.Go(func() { served <- tr.Serve(ctx) })
 	client, server := net.Pipe()
+	// No wall-clock guard (it false-fails under load): either the relay
+	// accepts again or Serve returns; a hang is reported by the test timeout.
 	select {
 	case ln.conns <- server:
 	case err := <-served:
 		cancel()
 		wg.Wait()
 		t.Fatalf("relay stopped after one EMFILE: Serve returned %v", err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("relay did not accept after a transient error")
 	}
 	app := client
 	if _, err := app.Write([]byte("x")); err != nil {
