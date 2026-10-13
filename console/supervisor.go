@@ -384,8 +384,8 @@ func (s *Supervisor) adopt(sess driver.Session) {
 	s.mu.Lock()
 	s.sess = sess
 	s.ident = sess.Identity()
-	s.caps = sess.Capabilities()
-	s.safe.adoptState(s.state, sess.Snapshot())
+	s.caps = sess.Capabilities() // before adoptState: its grids (sameLevelLocked)
+	s.safe.adoptState(s.state, sess.Snapshot(), s.sameLevelLocked)
 	s.safe.dropAllPending() // the fresh read is the console's value (re-review MEDIUM A)
 	s.state = sess.Snapshot()
 	s.changes = nil
@@ -499,7 +499,7 @@ func (s *Supervisor) applyChangeLocked(c Change) {
 	if (!had || !prev.Equal(c.Value)) && !c.OwnWrite {
 		s.holds.external(c)
 	}
-	s.safe.noteChange(c)
+	s.safe.noteChange(c, s.sameLevelLocked)
 	if c.Param.Field == model.FieldGain {
 		s.safe.noteReport(c, s.halfStepDB(c.Param.Strip.Index)) // review pass 3, HIGH 1
 	}

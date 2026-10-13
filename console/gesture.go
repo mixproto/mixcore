@@ -7,6 +7,7 @@ package console
 import (
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"time"
 
@@ -35,27 +36,46 @@ func (s *Supervisor) Write(w Write) (Result, error) {
 	if (w.Typed || w.Confirmed) && w.Origin.Kind != driver.OriginGesture {
 		return Result{}, ErrTypedOrigin
 	}
-	sess, res, err := s.prepare(&w)
-	if err != nil || !res.Written {
-		return res, err
-	}
-	err = sess.Apply(w.Command)
-	if err != nil && w.Param.Field == model.FieldGain {
-		s.mu.Lock()
-		s.safe.forgetSent(w.Param, dbOf(w.Value)) // never sent: not in flight (re-review MEDIUM A)
-		s.mu.Unlock()
-	}
+	res, err := s.checkAndApply(&w)
 	if errors.Is(err, driver.ErrClosed) {
 		return Result{}, driver.ErrStale // the session died between the check and the call
 	}
 	return res, err
 }
 
-// prepare checks a write under mu (released even if a rule panics).
-func (s *Supervisor) prepare(w *Write) (driver.Session, Result, error) {
+// checkAndApply checks a write and hands it to the session under one hold
+// of mu (released even if a rule panics), so no role change, hold end or
+// stale can slip between the check and the send (review Sec L4).
+// Session.Apply never blocks and never calls back into the supervisor.
+func (s *Supervisor) checkAndApply(w *Write) (Result, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.prepareLocked(w)
+	sess, res, err := s.prepareLocked(w)
+	if err != nil || !res.Written {
+		return res, err
+	}
+	if err := sess.Apply(w.Command); err != nil {
+		if w.Param.Field == model.FieldGain {
+			s.safe.forgetSent(w.Param, dbOf(w.Value)) // never sent: not in flight (re-review MEDIUM A)
+		}
+		return Result{}, err
+	}
+	s.safe.noteSeatSent(w.Origin, w.Param, dbOf(w.Value))
+	return res, nil
+}
+
+// sameLevelLocked reports whether levels a and b of p are one console
+// value: within half a step of p's grid (send levels 160 steps, faders
+// 1023, capabilities) in fader positions; exactly equal without a grid.
+func (s *Supervisor) sameLevelLocked(p model.ParamRef, a, b float64) bool {
+	steps, law := s.caps.FaderSteps, s.cfg.Driver.FaderLaw()
+	if p.Field == model.FieldSendLevel {
+		steps = s.caps.SendLevelSteps
+	}
+	if steps <= 0 || law == nil {
+		return a == b
+	}
+	return math.Abs(law.PositionFromDB(a)-law.PositionFromDB(b)) <= 0.5/float64(steps)+1e-9
 }
 
 // gateLocked refuses a write before any value rule: the client's role

@@ -239,3 +239,26 @@ func mustText(t *testing.T, s string) model.Value {
 	}
 	return v
 }
+
+// Sec L4: a write is handed to the session while the supervisor still holds
+// the lock it checked the role under, so SetClientRole (which takes that
+// lock) can never land between the check and the send.
+func TestRole_WriteLeavesUnderTheLockOfItsRoleCheck(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, drv := startRole(t, Role{}, busFixture())
+		locked := false
+		drv.session(0).onApply = func() {
+			if sup.mu.TryLock() {
+				sup.mu.Unlock()
+				return
+			}
+			locked = true
+		}
+		if _, err := sup.Write(set(sendLevel(1, 2), lvl(t, -9), musician)); err != nil {
+			t.Fatal(err)
+		}
+		if !locked {
+			t.Fatal("Apply ran after the role check released the lock: a role change could slip in between")
+		}
+	})
+}

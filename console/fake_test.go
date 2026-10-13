@@ -93,6 +93,7 @@ type fakeSession struct {
 	rereads int
 	skips   [][]model.ParamRef // RereadExcept calls (selective sessions)
 	failing error              // Apply returns it (a send that failed)
+	onApply func()             // called at the start of Apply (tests of lock order)
 }
 
 // failApplies makes Apply return err (nil: succeed again).
@@ -136,6 +137,9 @@ func (s *fakeSession) Run(ctx context.Context, events chan<- driver.Event) error
 func (s *fakeSession) Apply(cmd driver.Command) error {
 	if !cmd.Origin.MayWrite() {
 		return driver.ErrNotUserOrigin
+	}
+	if s.onApply != nil {
+		s.onApply()
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -94,7 +94,7 @@ func TestMain_HasNoMuteGroupMembership(t *testing.T) {
 				t.Errorf("%v -> %s, want %s", addr, got, want)
 			}
 		}
-		v03 := 16*5 + 2 + 4 + 4 + 16*2 + 1   // 90 reads of the v1 table (xair.md section 12), 16 mic gains and phantoms, the aux gain
+		v03 := 16*5 + 2 + 4 + 4 + 16*2 + 1 // 90 reads of the v1 table (xair.md section 12), 16 mic gains and phantoms, the aux gain
 		// colours, DCA masters, 10 buses, 3 links, sends: level and tap to all 10, pan to buses 1..6 only (xair.md 3.3)
 		v04 := 17 + 4*3 + 10*4 + 3 + 16*(10*2+6)
 		if n := len(r.drv.Addresses()); n != v03+v04 {
@@ -278,7 +278,7 @@ func wantHeadamps(n int) []model.HeadampInfo {
 // wantCapabilities are those of the default simulator (an XR18).
 func wantCapabilities() model.Capabilities {
 	return model.Capabilities{Headamps: wantHeadamps(16), InputCount: 16, HasMain: true, MuteGroups: 4, DCAs: 4, MainMuteGroups: false,
-		InputMeters: true, EchoesOwnWrites: true, MaxPushClients: 8, Buses: wantBuses(),
+		InputMeters: true, EchoesOwnWrites: true, MaxPushClients: 8, Buses: wantBuses(), FaderSteps: 1023, SendLevelSteps: 160,
 		TapLabels: [model.TapCount]string{"IN", "PREEQ", "POSTEQ", "PRE", "POST", "GRP"}}
 }
 

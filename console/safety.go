@@ -67,9 +67,13 @@ type safety struct {
 	windows  map[holdKey]*window
 	showMode bool
 	unlocks  unlocks
-	engineer map[model.ParamRef]float64    // latest value not from a monitor client (SR-28)
-	roles    map[string]Role               // per client (roles.go)
-	defRole  Role                          // every other client
+	engineer map[model.ParamRef]float64 // latest value not from a monitor client (SR-28)
+	roles    map[string]Role            // per client (roles.go)
+	defRole  Role                       // every other client
+	// seatSent is the last value each monitor client sent per level
+	// parameter: a console report of it is the seat's, not the engineer's
+	// (a late or lost echo, a re-read; review Sec M1).
+	seatSent map[model.ParamRef]map[string]float64
 	pending  map[model.ParamRef][]inFlight // Gain values in flight (pending.go)
 	latest   map[model.ParamRef]lastSend   // latest Gain value sent, no report since (pending.go)
 }
@@ -77,7 +81,7 @@ type safety struct {
 func newSafety(cfg SafetyConfig, role Role) safety {
 	return safety{cfg: cfg, clients: map[string]ClientSafety{}, windows: map[holdKey]*window{}, showMode: cfg.ShowMode,
 		unlocks: newUnlocks(), engineer: map[model.ParamRef]float64{}, pending: map[model.ParamRef][]inFlight{}, latest: map[model.ParamRef]lastSend{},
-		roles: map[string]Role{}, defRole: role}
+		roles: map[string]Role{}, defRole: role, seatSent: map[model.ParamRef]map[string]float64{}}
 }
 
 func (s *safety) client(id string) ClientSafety {
@@ -124,23 +128,55 @@ func (s *safety) isMonitorOrigin(o driver.Origin) bool {
 	return o.MayWrite() && (s.client(o.ClientID).Monitor != nil || s.role(o.ClientID).Kind == RoleMonitor)
 }
 
+// sameLevel reports whether two levels of p are one console value (half
+// a step of p's grid apart at most); see Supervisor.sameLevelLocked.
+type sameLevel func(p model.ParamRef, a, b float64) bool
+
 // noteChange keeps the engineer's latest value (SR-28): every fader and
-// send level except the writes of a monitor client.
-func (s *safety) noteChange(c Change) {
-	if isCeilingField(c.Param.Field) && !s.isMonitorOrigin(c.Origin) {
-		s.engineer[c.Param] = dbOf(c.Value)
+// send level except the writes of a monitor client, our own writes read
+// back (OwnWrite) and any report of a value a monitor seat sent last.
+func (s *safety) noteChange(c Change, same sameLevel) {
+	if !isCeilingField(c.Param.Field) || s.isMonitorOrigin(c.Origin) || c.OwnWrite || s.seatValue(c.Param, dbOf(c.Value), same) {
+		return
 	}
+	s.engineer[c.Param] = dbOf(c.Value)
+	delete(s.seatSent, c.Param) // the engineer moved it since
+}
+
+// noteSeatSent remembers a monitor client's write that left for the console.
+func (s *safety) noteSeatSent(o driver.Origin, p model.ParamRef, db float64) {
+	if !isCeilingField(p.Field) || !s.isMonitorOrigin(o) {
+		return
+	}
+	if s.seatSent[p] == nil {
+		s.seatSent[p] = map[string]float64{}
+	}
+	s.seatSent[p][o.ClientID] = db
+}
+
+// seatValue: db is the last value some monitor seat sent for p.
+func (s *safety) seatValue(p model.ParamRef, db float64, same sameLevel) bool {
+	for _, sent := range s.seatSent[p] {
+		if same(p, sent, db) {
+			return true
+		}
+	}
+	return false
 }
 
 // adoptState takes the values of a (re)connect: a value that changed
-// meanwhile has an unknown origin and counts as the engineer's.
-func (s *safety) adoptState(prev, next model.State) {
+// meanwhile has an unknown origin and counts as the engineer's, unless it
+// is a value a monitor seat sent.
+func (s *safety) adoptState(prev, next model.State, same sameLevel) {
 	for _, p := range ceilingParams(next) {
 		v, _ := next.Value(p)
 		old, _ := prev.Value(p)
-		if _, seen := s.engineer[p]; !seen || old.Kind() == 0 || !old.Equal(v) {
-			s.engineer[p] = dbOf(v)
+		_, seen := s.engineer[p]
+		if seen && old.Kind() != 0 && (old.Equal(v) || s.seatValue(p, dbOf(v), same)) {
+			continue
 		}
+		s.engineer[p] = dbOf(v)
+		delete(s.seatSent, p)
 	}
 }
 
@@ -150,6 +186,12 @@ func ceilingParams(st model.State) []model.ParamRef {
 	for _, strips := range [][]model.Strip{st.Strips(), st.Buses()} {
 		for _, s := range strips {
 			out = append(out, model.ParamRef{Strip: s.Ref, Field: model.FieldFader})
+		}
+	}
+	for _, d := range st.DCAs() { // DCA masters (review Go B1)
+		p := model.ParamRef{Strip: d.Ref, Field: model.FieldFader}
+		if _, ok := st.Value(p); ok {
+			out = append(out, p)
 		}
 	}
 	for i := 1; i <= len(st.Inputs()); i++ {
@@ -173,7 +215,7 @@ func (s *safety) ceiling(p model.ParamRef, client string, cur float64) (float64,
 	}
 	ref, ok := s.engineer[p]
 	if !ok {
-		ref = cur
+		ref = ceilingFloorDB // never the current value: a seat may have pushed it up (review Go B1)
 	}
 	return finiteOr(ref, ceilingFloorDB) + m.HeadroomDB, true
 }

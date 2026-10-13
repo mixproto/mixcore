@@ -65,6 +65,7 @@ func (s *session) capabilities() model.Capabilities {
 		EchoesOwnWrites: true, MaxPushClients: s.prof.MaxPushClients,
 		Headamps: s.headampInfos(), InputHeadamps: l.HeadampIndexes > 0 && !s.absent[featureHeadampIndex],
 		Buses: s.busInfos(), Matrices: groupCount(s.absent[featureMatrices], l.Matrices),
+		FaderSteps: int(faderSteps), SendLevelSteps: int(sendLevelSteps),
 	}
 	if sh := s.shape(); sh.Sends.Tap {
 		c.TapLabels = s.prof.TapLabels

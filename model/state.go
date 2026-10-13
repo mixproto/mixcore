@@ -425,6 +425,10 @@ type Capabilities struct {
 	Buses []BusInfo
 	// Matrices is the number of read-only matrices (x32 6, X32-F87).
 	Matrices int
+	// FaderSteps and SendLevelSteps are the console's grids of the fader
+	// law: valid positions are k/steps (x32 X32-F41, X32-F83: 1023 and 160;
+	// xair XA-F41 the same). 0: unknown, values compare exactly.
+	FaderSteps, SendLevelSteps int
 	// TapLabels are the console's own words for the taps TapInput..TapGroup
 	// (index tap - 1), when the console reports send taps (X32-F85,
 	// xair.md 3.3); shown untranslated (CR-16).
