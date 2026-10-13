@@ -15,17 +15,24 @@ Layout, all little-endian:
 | 24 | 4*n | levels, IEEE-754 float32 in **dBFS**; `-inf` means no signal; never NaN |
 
 The channel map depends on the family of the session (`session.schema.json` `family`). In every family the levels
-are the input channels in order, then **Main L** and **Main R** as the last two levels (`n-2` and `n-1`). A UI draws
-`inputCount` input meters, where `inputCount` is the number of input strips in the latest snapshot (levels `0` ..
-`inputCount-1`), and Main is always at `n-2`/`n-1`; it never needs the family. `n` does not shrink on a small model:
+are the input channels in order, then (v0.5) the **bus meters** where the family has them, then **Main L** and **Main R**
+as the last two levels (`n-2` and `n-1`). A UI draws `inputCount` input meters, where `inputCount` is the number of
+input strips in the latest snapshot (levels `0` .. `inputCount-1`), Main is always at `n-2`/`n-1`, and the meter of a
+bus is at the level its snapshot entry names in `buses[].meterIndex` (absent: no meter for that bus); it never needs the
+family. A v0.4 UI that reads inputs from 0 and Main at `n-2`/`n-1` keeps working: v0.5 only inserts levels between them
+(as v0.1 appended Main L/R to the v0 frame). `n` does not shrink on a small model:
 levels of inputs the console did not answer (snapshot `absentInputs`) are always `-inf`. `n` = 0 while meters are off, stale, paused or stopped.
 A UI that sees the same `seq` twice has nothing new to draw.
 
 | Family | `n` | Levels | Source and conversion (inside the driver) |
 |---|---|---|---|
-| x32 | 34 | 0..31 inputs 1..32, 32 Main L, 33 Main R | inputs from bank `/meters/1`, Main L/R from bank `/meters/2` (`docs/protocols/x32.md` X32-F51..F55); linear amplitude, 1.0 = 0 dBFS, up to +18 dBFS. Main L/R read `-inf` until the first bank 2 packet arrives. Input tap point not documented. Since **v0.1** (v0 had `n` = 32; a v0 UI that reads the first 32 levels keeps working). |
-| xair (v0.2) | 18 | 0..15 inputs 1..16 (`-inf` for inputs listed in `absentInputs`), 16 Main L, 17 Main R | one bank, `/meters/1`: values 0..15 are the inputs (pre-fader), values 36 and 37 Main L/R (post-fader) (`docs/protocols/xair.md` XA-F51..F53); signed 16-bit in 1/256 dB, so dBFS = value / 256, and -32768 is `-inf` (XA-F52). Inputs and Main L/R arrive in the same packet. The 4 FX returns, the aux return, buses, FX sends and monitor values of the bank are not in the frame. |
-| wing (additive) | 42 | 0..39 inputs 1..40, 40 Main L, 41 Main R | one meter report over UDP to the engine's own port (`docs/protocols/wing.md` WG-F50..F53), renewed every 1.5 s (5 s lifetime): per channel the louder of input L and R (pre-fader, for gain staging), Main L/R are main 1's output; signed 16-bit big-endian in 1/256 dB, -32768 is `-inf` (WG-F52). Packets of any other length or report id are dropped. Whether the console sends meters to the client's IP over a routed path is unverified (item 16). |
+| x32 | 50 | 0..31 inputs 1..32, 32..47 bus masters 1..16 (v0.5), 48 Main L, 49 Main R | inputs from bank `/meters/1`; bus masters and Main L/R from bank `/meters/2` values 0..15 and 22, 23 (`docs/protocols/x32.md` X32-F51..F55); linear amplitude, 1.0 = 0 dBFS, up to +18 dBFS. Bus and Main levels read `-inf` until the first bank 2 packet arrives. Input and bus tap points not documented. Since **v0.1** (v0 had `n` = 32; a v0 UI that reads the first 32 levels keeps working); v0.4 had `n` = 34 (Main L/R at 32, 33). |
+| xair (v0.2) | 28 | 0..15 inputs 1..16 (`-inf` for inputs listed in `absentInputs`), 16..21 buses 1..6 and 22..25 FX sends 1..4 (= buses 7..10, v0.5), 26 Main L, 27 Main R | one bank, `/meters/1`: values 0..15 are the inputs (pre-fader), 26..31 buses 1..6 and 32..35 FX sends 1..4 (the vendor document says "all pre": before the bus master fader, so a bus meter moves while its master is down), 36 and 37 Main L/R (post-fader) (`docs/protocols/xair.md` XA-F51..F53); signed 16-bit in 1/256 dB, so dBFS = value / 256, and -32768 is `-inf` (XA-F52). Everything arrives in one packet. The 4 FX returns, the aux return and monitor values of the bank are not in the frame. v0.4 had `n` = 18 (Main L/R at 16, 17). |
+| wing (additive) | 42 | 0..39 inputs 1..40, 40 Main L, 41 Main R (no bus meters yet: no buses entry carries meterIndex) | one meter report over UDP to the engine's own port (`docs/protocols/wing.md` WG-F50..F53), renewed every 1.5 s (5 s lifetime): per channel the louder of input L and R (pre-fader, for gain staging), Main L/R are main 1's output; signed 16-bit big-endian in 1/256 dB, -32768 is `-inf` (WG-F52). Packets of any other length or report id are dropped. Whether the console sends meters to the client's IP over a routed path is unverified (item 16). |
+
+Bus meters (v0.5, design CR-32, redesign CC-13) are for the mix picker rows and chips and the Buses layer ("which wedge is
+ringing"): a UI finds them only through `buses[].meterIndex`. A bus that did not answer at connect has no snapshot entry,
+so its level is never read even though the frame keeps its slot; `n` never shrinks.
 
 ## Drawing meters the same way on every UI (v0.1)
 The display scale and ballistics come from the core, not from each UI (design CR-17, open question 24):

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mixproto/mixcore/contracts/core-api/v0/command.schema.json",
-  "title": "mixcore core API v0.4: Apply(commandJSON) and Gesture(commandJSON)",
-  "description": "One user gesture. set writes a value; holdBegin/holdEnd mark a fader as held by a finger (no write). Only origin kinds gesture and macro are accepted; console and system are rejected with ERR_NOT_USER_ORIGIN. A set for a fader whose hold was ended by an external change or by losing the console is rejected with ERR_GESTURE_ENDED until the same client sends holdBegin or holdEnd for it. v0.1: toggle (field mute only, no value) reads the console's current value in the core and writes the inverse as an absolute value; it is the way to toggle a mute group or a DCA mute. muteGroups, dcas and effectiveMute cannot be written (ERR_UNSUPPORTED / ERR_INVALID_COMMAND). v0.3 (phone safety, docs/design/phone-safety.md): every set inside a hold is a gesture candidate the core clamps to the gesture window (slip guard, Gain caps, monitor ceiling, CR-22); openWall re-opens a slip-guard wall after the UI measured a rest; Gain writes are bounded to 6 dB from the console value (CR-23); typed raises over 6 dB need confirmed (CR-26); show mode locks raising Gain (CR-24). setSlipGuard and setShowMode change settings and never write. v0.4 (buses and sends): set, holdBegin, holdEnd and openWall work on a send level (param field sendLevel with bus) and a bus or DCA fader like on a channel fader, with the same gesture window and, for a monitor seat, the monitor ceiling of that bus; toggle also flips sendOn; sendPan is set as an absolute pan. Roles (config role, v0.4): a command the client's role does not allow is ERR_ROLE and writes nothing (a monitor role writes only sends into its buses and those buses' fader and mute; a viewer writes nothing).",
+  "title": "mixcore core API v0.5: Apply(commandJSON) and Gesture(commandJSON)",
+  "description": "One user gesture. set writes a value; holdBegin/holdEnd mark a fader as held by a finger (no write). Only origin kinds gesture and macro are accepted; console and system are rejected with ERR_NOT_USER_ORIGIN. A set for a fader whose hold was ended by an external change or by losing the console is rejected with ERR_GESTURE_ENDED until the same client sends holdBegin or holdEnd for it. v0.1: toggle (field mute only, no value) reads the console's current value in the core and writes the inverse as an absolute value; it is the way to toggle a mute group or a DCA mute. muteGroups, dcas and effectiveMute cannot be written (ERR_UNSUPPORTED / ERR_INVALID_COMMAND). v0.3 (phone safety, docs/design/phone-safety.md): every set inside a hold is a gesture candidate the core clamps to the gesture window (slip guard, Gain caps, monitor ceiling, CR-22); openWall re-opens a slip-guard wall after the UI measured a rest; Gain writes are bounded to 6 dB from the console value (CR-23); typed raises over 6 dB need confirmed (CR-26); show mode locks raising Gain (CR-24). setSlipGuard and setShowMode change settings and never write. v0.4 (buses and sends): set, holdBegin, holdEnd and openWall work on a send level (param field sendLevel with bus) and a bus or DCA fader like on a channel fader, with the same gesture window and, for a monitor seat, the monitor ceiling of that bus; toggle also flips sendOn; sendPan is set as an absolute pan. Roles (config role, v0.4): a command the client's role does not allow is ERR_ROLE and writes nothing (a monitor role writes only sends into its buses and those buses' fader and mute; a viewer writes nothing). v0.5 (redesign, docs/design/redesign/fader-and-gain.md 15): the slip guard is retired (setSlipGuard accepted and ignored, openWall ERR_UNSUPPORTED; removed in v0.6); a Gain hold's window is the headamp's range and each write inside a hold is bounded against the previous write of that hold; new types undo (the newest entry of this client's undo history, README rule 14), cancelHold (end an open hold and write its grab value once), watch (the bus on screen, rule 15), setFavourites (rule 17), lockShowMode and unlockShowMode (rule 16).",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -24,9 +24,15 @@
         "unlock",
         "relock",
         "setSlipGuard",
-        "setShowMode"
+        "setShowMode",
+        "undo",
+        "cancelHold",
+        "watch",
+        "setFavourites",
+        "lockShowMode",
+        "unlockShowMode"
       ],
-      "description": "v0.3 adds: openWall (param, after a 300 ms rest at a slip-guard wall: the next upward move continues from the wall, CR-22; the core checks the 300 ms of stillness itself, candidates within 0.5 dB of fader travel, and keeps the state atWall before that); unlock and relock (param {strip: headamp, field: gain}: the UI measured the 1 s 'Hold to adjust' in show mode / the sheet closed, CR-24); setSlipGuard (value boolean: 'Stop faders every 6 dB' for this origin's clientId, SR-26); setShowMode (value boolean: show mode for this engine, SR-27). None of them writes to the console."
+      "description": "v0.3 adds: openWall (v0.5: deprecated, always ERR_UNSUPPORTED; removed in v0.6); unlock and relock (param {strip: headamp, field: gain}: the UI's one-tap Adjust in show mode / the sheet closed, CR-24); setSlipGuard (value boolean; v0.5: accepted and ignored, removed in v0.6); setShowMode (value boolean: show mode for this engine, SR-27). v0.5 adds: undo (no param: undo the newest entry of this origin's clientId; with confirmed when the state's undo entry asks), cancelHold (param of this client's open hold: one write of its grab value, the hold ends, no undo entry), watch (scope: the bus on screen, absent clears), setFavourites (favourites: the ordered layer), lockShowMode (pin, owner only) and unlockShowMode (pin). None of the settings writes to the console."
     },
     "param": {
       "$ref": "common.schema.json#/$defs/param"
@@ -43,17 +49,31 @@
     },
     "confirmed": {
       "type": "boolean",
-      "description": "v0.3, set only, with typed: the user confirmed the big raise ('Raise ... from -20.0 to -2.0 dB?'). Without it a typed raise of more than 6 dB returns ERR_NEEDS_CONFIRM. Only with origin kind gesture."
+      "description": "v0.3, set only, with typed: the user confirmed the big raise ('Raise ... from -20.0 to -2.0 dB?'). Without it a typed raise of more than 6 dB returns ERR_NEEDS_CONFIRM. v0.5: also on undo, after the UI asked for the reasons in the state's undo asks (README rule 14). Only with origin kind gesture."
     },
     "trackLengthPt": {
       "type": "number",
       "minimum": 50,
       "maximum": 10000,
-      "description": "v0.3, holdBegin only, optional: the length of the control's track on screen in pt (Apple) or dp (Android), so the core can check the rest before openWall in the spec's own unit: the finger stays within 9 pt (wall.restSpeed 30 pt/s for wall.dwell 300 ms, phone-safety.md 4.1) for 300 ms, but never more than 2 dB of fader travel: a track length only makes the check stricter. Without it the core allows 2 dB of fader travel. Below 50 pt it is ERR_INVALID_COMMAND. Example: portrait 490, landscape 152 on a 6.1 inch phone."
+      "description": "v0.3, holdBegin only, optional: the length of the control's track on screen in pt (Apple) or dp (Android). v0.5: the slip guard is retired and the core no longer uses it; still accepted (50..10000, ERR_INVALID_COMMAND outside) until v0.6."
     },
     "undo": {
       "type": "boolean",
       "description": "v0.3, set only: this write undoes an earlier entry. In show mode an undo that raises Gain is allowed for 10 s after the relock of the unlock it was made in, only back to a value Gain had before an entry of that unlock (SR-27); it is still bounded to 6 dB unless typed and confirmed (SR-31)."
+    },
+    "scope": {
+      "$ref": "common.schema.json#/$defs/busScope",
+      "description": "v0.5, watch only: the bus this client shows; absent clears the watch."
+    },
+    "favourites": {
+      "$ref": "common.schema.json#/$defs/favourites",
+      "description": "v0.5, setFavourites only (required there): the whole layer, replacing the previous one."
+    },
+    "pin": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 4,
+      "description": "v0.5, lockShowMode and unlockShowMode only (required there): exactly 4 ASCII digits 0-9 (ERR_INVALID_COMMAND otherwise). Never logged, never stored as is."
     }
   },
   "allOf": [
@@ -77,7 +97,8 @@
           "type": {
             "enum": [
               "holdBegin",
-              "holdEnd"
+              "holdEnd",
+              "cancelHold"
             ]
           }
         }
@@ -92,7 +113,7 @@
                   "gain",
                   "sendLevel"
                 ],
-                "description": "gain is v0.3, sendLevel v0.4."
+                "description": "gain is v0.3, sendLevel v0.4; cancelHold v0.5."
               }
             }
           }
@@ -162,7 +183,8 @@
               "toggle",
               "openWall",
               "unlock",
-              "relock"
+              "relock",
+              "cancelHold"
             ]
           }
         }
@@ -271,14 +293,186 @@
             },
             {
               "required": [
-                "confirmed"
-              ]
-            },
-            {
-              "required": [
                 "undo"
               ]
             }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "not": {
+          "properties": {
+            "type": {
+              "enum": [
+                "set",
+                "undo"
+              ]
+            }
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "confirmed"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "undo",
+              "watch"
+            ]
+          }
+        }
+      },
+      "then": {
+        "allOf": [
+          {
+            "not": {
+              "required": [
+                "param"
+              ]
+            }
+          },
+          {
+            "not": {
+              "required": [
+                "value"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "setFavourites"
+            ]
+          }
+        }
+      },
+      "then": {
+        "allOf": [
+          {
+            "not": {
+              "required": [
+                "param"
+              ]
+            }
+          },
+          {
+            "not": {
+              "required": [
+                "value"
+              ]
+            }
+          }
+        ],
+        "required": [
+          "favourites"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "lockShowMode",
+              "unlockShowMode"
+            ]
+          }
+        }
+      },
+      "then": {
+        "allOf": [
+          {
+            "not": {
+              "required": [
+                "param"
+              ]
+            }
+          },
+          {
+            "not": {
+              "required": [
+                "value"
+              ]
+            }
+          }
+        ],
+        "required": [
+          "pin"
+        ]
+      }
+    },
+    {
+      "if": {
+        "not": {
+          "properties": {
+            "type": {
+              "enum": [
+                "watch"
+              ]
+            }
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "scope"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "not": {
+          "properties": {
+            "type": {
+              "enum": [
+                "setFavourites"
+              ]
+            }
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "favourites"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "not": {
+          "properties": {
+            "type": {
+              "enum": [
+                "lockShowMode",
+                "unlockShowMode"
+              ]
+            }
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "pin"
           ]
         }
       }
@@ -575,6 +769,104 @@
         "kind": "gesture",
         "clientId": "ios-1",
         "seq": 59
+      }
+    },
+    {
+      "version": 0,
+      "type": "undo",
+      "origin": {
+        "kind": "gesture",
+        "clientId": "ios-1",
+        "seq": 60
+      }
+    },
+    {
+      "version": 0,
+      "type": "undo",
+      "confirmed": true,
+      "origin": {
+        "kind": "gesture",
+        "clientId": "ios-1",
+        "seq": 61
+      }
+    },
+    {
+      "version": 0,
+      "type": "cancelHold",
+      "param": {
+        "strip": {
+          "kind": "input",
+          "index": 1
+        },
+        "field": "fader"
+      },
+      "origin": {
+        "kind": "gesture",
+        "clientId": "ios-1",
+        "seq": 62
+      }
+    },
+    {
+      "version": 0,
+      "type": "watch",
+      "scope": {
+        "bus": 2
+      },
+      "origin": {
+        "kind": "gesture",
+        "clientId": "ios-1",
+        "seq": 63
+      }
+    },
+    {
+      "version": 0,
+      "type": "watch",
+      "origin": {
+        "kind": "gesture",
+        "clientId": "ios-1",
+        "seq": 64
+      }
+    },
+    {
+      "version": 0,
+      "type": "setFavourites",
+      "favourites": [
+        {
+          "kind": "input",
+          "index": 1
+        },
+        {
+          "kind": "bus",
+          "index": 2
+        },
+        {
+          "kind": "main"
+        }
+      ],
+      "origin": {
+        "kind": "gesture",
+        "clientId": "ios-1",
+        "seq": 65
+      }
+    },
+    {
+      "version": 0,
+      "type": "lockShowMode",
+      "pin": "2468",
+      "origin": {
+        "kind": "gesture",
+        "clientId": "ios-1",
+        "seq": 66
+      }
+    },
+    {
+      "version": 0,
+      "type": "unlockShowMode",
+      "pin": "2468",
+      "origin": {
+        "kind": "gesture",
+        "clientId": "ios-1",
+        "seq": 67
       }
     }
   ]
