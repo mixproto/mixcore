@@ -172,7 +172,7 @@ func TestXAir_SceneRecallEvent(t *testing.T) {
 		e.rec.mu.Lock()
 		joined := strings.Join(e.rec.raw, "\n")
 		e.rec.mu.Unlock()
-		want := `{"type":"sceneRecalledAtConsole","confidence":"low","signals":["burst","snapshotIndex"],"loadedScene":7}` // the index only enriches the burst (XA-F60)
+		want := `{"type":"sceneRecalledAtConsole","confidence":"low","signals":["burst","snapshotIndex"],"loadedScene":7,"sceneNumber":7}` // the index only enriches the burst (XA-F60); v0.5 sceneNumber (CC-10)
 		if !strings.Contains(joined, want) {
 			t.Fatalf("no %s in\n%s", want, joined)
 		}

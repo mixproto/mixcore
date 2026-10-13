@@ -291,7 +291,7 @@ func TestSchemaCheck_RejectsBadInput(t *testing.T) {
 // against its own schema (and, by TestContractExamples_Parse, accepted).
 func TestSchemaCheck_ContractExamplesAreValid(t *testing.T) {
 	s := loadSchemas(t)
-	for _, file := range []string{"command.schema.json", "config.schema.json", "discover.schema.json", "demo.schema.json"} {
+	for _, file := range []string{"command.schema.json", "config.schema.json", "discover.schema.json", "demo.schema.json", "gesture-result.schema.json"} {
 		doc, _ := s.docs[file].(map[string]any)
 		for i, ex := range asSlice(doc["examples"]) {
 			b, _ := json.Marshal(ex)

@@ -28,12 +28,14 @@ type gestureResultJSON struct {
 	Value   any         `json:"value,omitempty"`
 	Written bool        `json:"written"`
 	Window  *windowJSON `json:"window,omitempty"`
+	// PinRecord: v0.5, lockShowMode only: the record to store (CC-12).
+	PinRecord string `json:"pinRecord,omitempty"`
 }
 
 func ptr(v float64) *float64 { return &v }
 
 func resultJSON(r console.Result) gestureResultJSON {
-	out := gestureResultJSON{Version: contractVersion, State: r.State.String(), Written: r.Written}
+	out := gestureResultJSON{Version: contractVersion, State: r.State.String(), Written: r.Written, PinRecord: r.PinRecord}
 	if db, ok := r.Value.DB(); ok {
 		out.Value = levelJSON(db)
 	}
@@ -103,5 +105,6 @@ func unlockEventsJSON(evs []console.UnlockEvent) []eventJSON {
 // validated it).
 func (c configJSON) safety() console.SafetyConfig {
 	m, _ := c.Safety.monitor()
-	return console.SafetyConfig{Client: console.ClientSafety{Monitor: m}, ShowMode: c.Safety.ShowMode} // slipGuard: ignored since v0.5
+	return console.SafetyConfig{Client: console.ClientSafety{Monitor: m}, ShowMode: c.Safety.ShowMode, // slipGuard: ignored since v0.5
+		ShowModeLock: c.showModeLock()}
 }

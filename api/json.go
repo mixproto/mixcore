@@ -56,6 +56,8 @@ type configJSON struct {
 	Safety safetyJSON `json:"safety"`
 	// Role is config.schema.json role (v0.4, role_json.go).
 	Role json.RawMessage `json:"role,omitempty"`
+	// Favourites is config.schema.json favourites (v0.5, CC-7).
+	Favourites *[]stripJSON `json:"favourites,omitempty"`
 }
 
 // safetyJSON is config.schema.json safety (v0.3).
@@ -63,6 +65,12 @@ type safetyJSON struct {
 	SlipGuard      bool            `json:"slipGuard"` // deprecated in v0.5: accepted and ignored
 	ShowMode       bool            `json:"showMode"`
 	MonitorCeiling json.RawMessage `json:"monitorCeiling,omitempty"`
+	ShowModeLock   *showLockJSON   `json:"showModeLock,omitempty"` // v0.5, CC-12
+}
+
+// showLockJSON is config.schema.json safety.showModeLock (v0.5).
+type showLockJSON struct {
+	PinRecord string `json:"pinRecord"`
 }
 
 type stripJSON struct {
@@ -93,6 +101,7 @@ type commandJSON struct {
 	Undo      *bool           `json:"undo"`      // v0.3, set only
 	// TrackLengthPt: v0.3, holdBegin only, optional; ignored since v0.5.
 	TrackLengthPt *float64 `json:"trackLengthPt"`
+	v05Fields              // v0.5: scope, favourites, pin (v05_json.go)
 }
 
 // command is a parsed, validated Apply input.
@@ -103,6 +112,7 @@ type command struct {
 	origin                 driver.Origin
 	typed, confirmed, undo bool // set only (v0.3)
 	on                     bool // setSlipGuard, setShowMode
+	v05                    v05Command
 }
 
 func decodeStrict(data string, v any) error {
@@ -141,6 +151,9 @@ func parseConfig(data string) (configJSON, error) {
 		return c, codeErr(CodeInvalidConfig, err)
 	}
 	if _, err := c.role(); err != nil {
+		return c, codeErr(CodeInvalidConfig, err)
+	}
+	if err := c.checkV05(); err != nil {
 		return c, codeErr(CodeInvalidConfig, err)
 	}
 	return c, nil
@@ -188,8 +201,8 @@ func parseCommand(data string) (command, error) {
 		return command{}, err
 	}
 	cmd := command{kind: c.Type, origin: o}
-	if (c.Typed != nil || c.Confirmed != nil || c.Undo != nil) && c.Type != cmdSet {
-		return command{}, codeErr(CodeInvalidCommand, errors.New("typed, confirmed and undo go with set only"))
+	if err := checkV05Fields(c); err != nil {
+		return command{}, codeErr(CodeInvalidCommand, err)
 	}
 	if c.TrackLengthPt != nil {
 		if c.Type != cmdHoldBegin || !(*c.TrackLengthPt >= minTrackPt && *c.TrackLengthPt <= maxTrackPt) {
@@ -200,7 +213,9 @@ func parseCommand(data string) (command, error) {
 	switch c.Type {
 	case cmdSlipGuard, cmdShowMode:
 		return parseSetting(c, cmd)
-	case cmdSet, cmdHoldBegin, cmdHoldEnd, cmdToggle, cmdOpenWall, cmdUnlock, cmdRelock:
+	case cmdUndo, cmdWatch, cmdFavourites, cmdLockShow, cmdUnlockShow:
+		return parseV05(c, cmd)
+	case cmdSet, cmdHoldBegin, cmdHoldEnd, cmdToggle, cmdOpenWall, cmdUnlock, cmdRelock, cmdCancelHold:
 	default:
 		return command{}, codeErr(CodeInvalidCommand, fmt.Errorf("type %q", c.Type))
 	}
@@ -406,6 +421,11 @@ type eventJSON struct {
 	HighlightedScene *int        `json:"highlightedScene,omitempty"`
 	Index            *int        `json:"index,omitempty"`       // v0.3 gainUnlockEnded
 	LoadedScene      *int        `json:"loadedScene,omitempty"` // v0.2
+	// v0.5: the recalled scene (CC-10) and watch events (CC-11).
+	SceneNumber *int          `json:"sceneNumber,omitempty"`
+	SceneName   string        `json:"sceneName,omitempty"`
+	Scope       *busScopeJSON `json:"scope,omitempty"`
+	Count       int           `json:"count,omitempty"`
 }
 
 type stateJSON struct {
@@ -425,7 +445,7 @@ type stateJSON struct {
 	ShowMode      bool             `json:"showMode,omitempty"`         // v0.3
 	Unlocked      []int            `json:"unlockedHeadamps,omitempty"` // v0.3
 	Console       *consoleJSON     `json:"console,omitempty"`
-	Strips        []stripStateJSON `json:"strips,omitempty"`
+	Strips        []stripStateJSON `json:"strips,omitzero"`        // snapshots always carry it (schema), [] before the first connect
 	AbsentInputs  []int            `json:"absentInputs,omitempty"` // v0.2, snapshot only
 	Headamps      []headampJSON    `json:"headamps,omitempty"`     // v0.3, snapshot only
 	MuteGroups    []groupStateJSON `json:"muteGroups,omitempty"`   // v0.1, snapshot only
@@ -439,14 +459,23 @@ type stateJSON struct {
 	// MuteGroupMembership is false (snapshot only) when strips' mute-group
 	// membership is unknown (wing); absent means true.
 	MuteGroupMembership *bool `json:"muteGroupMembership,omitempty"`
+	v05StateJSON              // v0.5: showModeLocked, favourites, undo (v05_state.go)
 }
 
 // encodeUpdate renders a supervisor update as a state message with sequence
 // seq; demo marks a session to the demo mixer.
 func encodeUpdate(u console.Update, seq uint64, full, demo bool) ([]byte, error) {
+	return encodeUpdateWith(u, seq, full, demo, false)
+}
+
+// encodeUpdateWith is encodeUpdate; favourites adds them to a diff (the
+// first message after they changed).
+func encodeUpdateWith(u console.Update, seq uint64, full, demo, favourites bool) ([]byte, error) {
+	events := append(append(eventsJSON(u.Events), sceneEventsJSON(u.Scenes)...), unlockEventsJSON(u.UnlockEnded)...)
 	out := stateJSON{Version: contractVersion, Demo: demo, Seq: seq, Status: u.Status.String(), Reason: u.Reason,
-		Events:  append(append(eventsJSON(u.Events), sceneEventsJSON(u.Scenes)...), unlockEventsJSON(u.UnlockEnded)...),
-		Offline: u.Offline, Limited: u.Limited, LimitedReason: u.LimitedReason, ShowMode: u.ShowMode}
+		Events:  append(events, scopeEventsJSON(u.Scopes)...),
+		Offline: u.Offline, Limited: u.Limited, LimitedReason: u.LimitedReason, ShowMode: u.ShowMode,
+		v05StateJSON: v05StateOf(u, favourites || (full && len(u.Favourites) > 0))}
 	if u.ShowMode {
 		out.Unlocked = u.Unlocked
 	}
@@ -472,7 +501,7 @@ func encodeUpdate(u console.Update, seq uint64, full, demo bool) ([]byte, error)
 	out.Type = "snapshot"
 	id := u.Identity
 	out.Console = &consoleJSON{Address: id.Address, Name: id.Name, Model: id.Model, Firmware: id.Firmware}
-	out.Strips = stripsJSON(u.State, u.Capabilities)
+	out.Strips = append([]stripStateJSON{}, stripsJSON(u.State, u.Capabilities)...) // never nil in a snapshot
 	out.AbsentInputs = absentInputsJSON(u.Capabilities)
 	out.Headamps = headampsJSON(u.State, u.Capabilities)
 	out.MuteGroups, out.DCAs = groupStatesJSON(u.State.MuteGroups()), dcasJSON(u.State)

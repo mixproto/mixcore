@@ -20,10 +20,10 @@ import (
 // any lowering never ask; from -inf every typed value asks.
 func TestRedesign_TypedRaiseConfirmOnEveryLevel(t *testing.T) {
 	levels := map[string]string{ // param -> console address, each at -20 dB
-		`{"strip":{"kind":"input","index":1},"field":"fader"}`:              "/ch/01/mix/fader",
-		`{"strip":{"kind":"main"},"field":"fader"}`:                         "/lr/mix/fader",
-		`{"strip":{"kind":"bus","index":2},"field":"fader"}`:                "/bus/2/mix/fader",
-		`{"strip":{"kind":"dca","index":1},"field":"fader"}`:                "/dca/1/fader",
+		`{"strip":{"kind":"input","index":1},"field":"fader"}`:             "/ch/01/mix/fader",
+		`{"strip":{"kind":"main"},"field":"fader"}`:                        "/lr/mix/fader",
+		`{"strip":{"kind":"bus","index":2},"field":"fader"}`:               "/bus/2/mix/fader",
+		`{"strip":{"kind":"dca","index":1},"field":"fader"}`:               "/dca/1/fader",
 		`{"strip":{"kind":"input","index":4},"field":"sendLevel","bus":2}`: "/ch/04/mix/02/level",
 	}
 	synctest.Test(t, func(t *testing.T) {

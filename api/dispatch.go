@@ -67,8 +67,9 @@ func (e *Engine) deliver(s dispatchSession, seq *uint64) {
 	u := s.sup.Drain()
 	full := u.Full || e.wantFull.Swap(false)
 	safetyMoved := e.safetyChanged(u)
+	favMoved := e.favouritesChanged(u)
 	if !full && len(u.Changes) == 0 && len(u.Effective) == 0 && len(u.Events) == 0 && len(u.Scenes) == 0 &&
-		len(u.UnlockEnded) == 0 && !safetyMoved {
+		len(u.UnlockEnded) == 0 && len(u.Scopes) == 0 && !safetyMoved && !favMoved {
 		return
 	}
 	box := e.lis.Load()
@@ -77,12 +78,23 @@ func (e *Engine) deliver(s dispatchSession, seq *uint64) {
 		return
 	}
 	*seq++
-	b, err := encodeUpdate(u, *seq, full, s.demo)
+	b, err := encodeUpdateWith(u, *seq, full, s.demo, favMoved)
 	if err != nil {
 		e.opts.Logger.Error("api: encode state", "err", err)
 		return
 	}
 	e.callListener(box.l, string(b))
+}
+
+// favouritesChanged reports a change of the favourites since the last
+// delivered message: the next message carries them (v0.5).
+func (e *Engine) favouritesChanged(u console.Update) bool {
+	key := favouritesKey(u)
+	if key == e.lastFavourites {
+		return false
+	}
+	e.lastFavourites = key
+	return true
 }
 
 // callListener contains a panic in app code: the dispatcher keeps running.
@@ -97,10 +109,11 @@ func (e *Engine) callListener(l StateListener, msg string) {
 	l.OnState(msg)
 }
 
-// safetyChanged reports a change of show mode or the unlocked headamps since
-// the last delivered message (they travel in every message, v0.3).
+// safetyChanged reports a change of show mode, the unlocked headamps or
+// (v0.5) the PIN lock and undo entries since the last delivered message
+// (they travel in every message).
 func (e *Engine) safetyChanged(u console.Update) bool {
-	key := fmt.Sprint(u.ShowMode, u.Unlocked)
+	key := fmt.Sprint(u.ShowMode, u.Unlocked) + v05Key(u)
 	if key == e.lastSafety {
 		return false
 	}

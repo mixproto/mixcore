@@ -89,8 +89,9 @@ type Engine struct {
 	// check; nil in production.
 	afterGenCheck atomic.Pointer[func()]
 	// lastSafety is the show mode and unlock list of the last message
-	// (guarded by deliverMu).
-	lastSafety string
+	// (guarded by deliverMu); lastFavourites the favourites (v0.5).
+	lastSafety     string
+	lastFavourites string
 }
 
 // NewEngine returns an engine with the built-in drivers.
@@ -161,6 +162,7 @@ func (e *Engine) Start(configJSON string) (out string, err error) {
 		RereadEvery: e.opts.RereadEvery,
 		Safety:      cfg.safety(),
 		Role:        cfg.mustRole(),
+		Favourites:  cfg.favourites(),
 	})
 	if err != nil {
 		return "", err
@@ -323,6 +325,9 @@ func (e *Engine) run(commandJSON string) (console.Result, error) {
 	sup, err := e.current()
 	if err != nil {
 		return console.Result{}, err
+	}
+	if res, handled, err := runV05(sup, cmd); handled {
+		return res, err
 	}
 	switch cmd.kind {
 	case cmdHoldBegin:

@@ -62,6 +62,8 @@ type Result struct {
 	State   GestureState
 	Written bool
 	Window  *Window // the active window, if any
+	// PinRecord is the stored form of a show-mode PIN lock (LockShowMode).
+	PinRecord string
 }
 
 // safety is the supervisor's safety state. Guarded by Supervisor.mu.
