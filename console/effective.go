@@ -49,10 +49,10 @@ func (e *effective) update(st model.State, origin driver.Origin, list bool) {
 	}
 }
 
-// affectsMute: own mutes, group states (field mute of a group strip) and
-// membership change effective mutes.
+// affectsMute: own mutes, group states (field mute of a group strip),
+// membership and the console's own mute report change effective mutes.
 func affectsMute(f model.Field) bool {
-	return f == model.FieldMute || f == model.FieldMuteGroups || f == model.FieldDCAs
+	return f == model.FieldMute || f == model.FieldMuteGroups || f == model.FieldDCAs || f == model.FieldConsoleMute
 }
 
 // Toggle flips a mute (an input, main, bus, mute group or DCA) or, core-api

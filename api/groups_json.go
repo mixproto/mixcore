@@ -12,12 +12,14 @@ import (
 	"github.com/mixproto/mixcore/model"
 )
 
-// effectiveMuteJSON is common.schema.json#/$defs/effectiveMute (v0.1).
+// effectiveMuteJSON is common.schema.json#/$defs/effectiveMute (v0.1;
+// muted null and basis are additive, wing).
 type effectiveMuteJSON struct {
-	Muted      bool  `json:"muted"`
-	Own        bool  `json:"own"`
-	MuteGroups []int `json:"muteGroups"`
-	DCAs       []int `json:"dcas"`
+	Muted      *bool  `json:"muted"` // null: the core cannot tell (basis partial)
+	Basis      string `json:"basis"`
+	Own        bool   `json:"own"`
+	MuteGroups []int  `json:"muteGroups"`
+	DCAs       []int  `json:"dcas"`
 }
 
 // groupStateJSON is one entry of the snapshot's muteGroups or dcas list;
@@ -31,14 +33,20 @@ type groupStateJSON struct {
 }
 
 func effectiveJSON(e model.EffectiveMute) *effectiveMuteJSON {
-	return &effectiveMuteJSON{Muted: e.Muted, Own: e.Own, MuteGroups: model.MaskMembers(e.MuteGroups), DCAs: model.MaskMembers(e.DCAs)}
+	j := &effectiveMuteJSON{Basis: e.Basis.String(), Own: e.Own, MuteGroups: model.MaskMembers(e.MuteGroups), DCAs: model.MaskMembers(e.DCAs)}
+	if e.Known {
+		muted := e.Muted
+		j.Muted = &muted
+	}
+	return j
 }
 
 // stripsJSON renders inputs and main with membership (when the console has
 // those groups, and for main only when its console has a main membership:
 // xair has none, XA section 3.2) and effective mute.
 func stripsJSON(st model.State, caps model.Capabilities) []stripStateJSON {
-	hasMG, hasDCA := len(st.MuteGroups()) > 0, len(st.DCAs()) > 0
+	hasMG := len(st.MuteGroups()) > 0 && !caps.MuteGroupMembershipUnknown // never claim a membership the core cannot read
+	hasDCA := len(st.DCAs()) > 0
 	out := make([]stripStateJSON, 0, len(st.Inputs())+1)
 	for _, s := range st.Strips() {
 		j := stripStateJSON{Kind: s.Ref.Kind.String(), Index: s.Ref.Index, Name: s.Name, FaderDB: levelJSON(s.FaderDB), Mute: s.Muted,

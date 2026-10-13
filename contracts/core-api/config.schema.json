@@ -16,9 +16,10 @@
     "family": {
       "enum": [
         "x32",
-        "xair"
+        "xair",
+        "wing"
       ],
-      "description": "x32: X32/M32 family (docs/protocols/x32.md). xair (v0.2): X Air / M Air family, XR12, XR16, XR18, X18, MR12, MR18 including V2 units (docs/protocols/xair.md)."
+      "description": "x32: X32/M32 family (docs/protocols/x32.md). xair (v0.2): X Air / M Air family, XR12, XR16, XR18, X18, MR12, MR18 including V2 units (docs/protocols/xair.md). wing (additive, family only; status in development until hardware verification): Behringer WING, WING BK, WING Rack, WING Compact over the native protocol on TCP 2222 (docs/protocols/wing.md). Inputs ch 1..40, main = main 1 (mains 2..4 not modelled), DCAs 1..16, mute groups 1..8 (a strip's mute-group membership is unknown, item 11, so strips report none), DCA membership from #D1..#D16 tags (empty while the console's DCA-mute preference /cfg/dcamgrp is off, because a DCA mute then silences nothing). Headamp index: local n is n (8 on WING, 24 on Rack and Compact), AES50 A n is 100 + n, AES50 B n is 200 + n (read-only, X32 rule); Gain law from the console's own definition. The TCP remote lock makes every set ERR_UNSUPPORTED. faderLaw wing is the x32 display law (WING writes dB, WG-F60)."
     },
     "host": {
       "type": "string",
@@ -30,7 +31,7 @@
       "type": "integer",
       "minimum": 1,
       "maximum": 65535,
-      "description": "Omitted: the family default (x32: 10023, xair: 10024)."
+      "description": "Omitted: the family default (x32: 10023, xair: 10024, wing: 2222)."
     },
     "meters": {
       "type": "object",
@@ -178,6 +179,14 @@
       "version": 0,
       "family": "xair",
       "host": "192.168.1.1",
+      "meters": {
+        "inputs": true
+      }
+    },
+    {
+      "version": 0,
+      "family": "wing",
+      "host": "192.168.1.71",
       "meters": {
         "inputs": true
       }

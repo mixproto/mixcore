@@ -97,9 +97,12 @@ type Change struct {
 // the previous Drain. Full means the state was replaced (connect, reconnect,
 // or too many changes to list). Events are never folded into Full.
 type Update struct {
-	Seq        uint64
-	Status     Status
-	Reason     string    // why the status last changed (empty when live)
+	Seq    uint64
+	Status Status
+	Reason string // why the status last changed (empty when live)
+	// Cause is the error behind Reason (a connect or session error), nil
+	// when there is none; the API maps known sentinels to stable codes.
+	Cause      error
 	StaleSince time.Time // when the status became stale; zero unless stale
 	Offline    bool      // stale for at least OfflineAfter
 	// Limited: live, but the console does not send us updates (client slots
@@ -155,6 +158,7 @@ type Supervisor struct {
 	mu         sync.Mutex
 	status     Status
 	reason     string
+	cause      error // behind reason (Update.Cause)
 	staleSince time.Time
 	offline    bool
 	limited    string // reason while the console does not send us updates
@@ -290,7 +294,7 @@ func (s *Supervisor) Snapshot() Update {
 
 func (s *Supervisor) snapshotLocked() Update {
 	s.seq++
-	return Update{Seq: s.seq, Status: s.status, Reason: s.reason, StaleSince: s.staleSince, Offline: s.offline,
+	return Update{Seq: s.seq, Status: s.status, Reason: s.reason, Cause: s.cause, StaleSince: s.staleSince, Offline: s.offline,
 		Limited: s.limited != "", LimitedReason: s.limited, Identity: s.ident, Capabilities: s.caps, State: s.state,
 		ShowMode: s.safe.showMode, Unlocked: s.safe.unlocks.list()}
 }
@@ -304,6 +308,9 @@ func (s *Supervisor) signal() {
 
 func (s *Supervisor) setStatusLocked(st Status, reason string) {
 	s.limited = "" // every status change starts a new session's evidence
+	if st != StatusStale {
+		s.cause = nil
+	}
 	if st == StatusStale && s.status != StatusStale {
 		s.staleSince = time.Now()
 		s.offlineT = time.AfterFunc(OfflineAfter, s.markOffline)
@@ -422,6 +429,23 @@ func (s *Supervisor) adopt(sess driver.Session) {
 	s.mu.Unlock()
 }
 
+// silentLocked locks input like a lost connection (rule 3: holds end,
+// writes are refused, nothing in flight) while the session stays (review
+// go M1). Callers hold mu.
+func (s *Supervisor) silentLocked() {
+	if s.status != StatusLive {
+		return
+	}
+	s.holds.cancelAll(StatusStale.String())
+	s.safe.unlocks.endAll(UnlockStale)
+	s.safe.dropAllPending()
+	s.cfg.Logger.Info("console: silent; input locked", "endpoint", s.cfg.Endpoint.Host)
+	s.setStatusLocked(StatusStale, reasonSilent)
+}
+
+// reasonSilent is the stale reason while the console is silent.
+const reasonSilent = "console not answering"
+
 // markStale keeps the last values, locks input and forgets the session.
 func (s *Supervisor) markStale(ctx context.Context, cause error) {
 	if s.cfg.Options.Meters != nil {
@@ -440,6 +464,7 @@ func (s *Supervisor) markStale(ctx context.Context, cause error) {
 	if cause != nil {
 		reason = cause.Error()
 	}
+	s.cause = cause
 	if s.status == StatusConnecting {
 		s.reason = reason
 		s.signal()
@@ -499,6 +524,17 @@ func (s *Supervisor) handleEvent(ev driver.Event) {
 		if len(s.scenes) < maxPendingEvents {
 			s.scenes = append(s.scenes, e)
 		}
+		s.signal()
+	case driver.ConsoleSilent:
+		s.silentLocked()
+	case driver.ConsoleResponding:
+		if s.status == StatusStale && s.sess != nil {
+			s.cfg.Logger.Info("console: answering again", "endpoint", s.cfg.Endpoint.Host)
+			s.setStatusLocked(StatusLive, "")
+		}
+	case driver.MuteRulesChanged:
+		s.state = s.state.WithMuteRules(e.Rules)
+		s.eff.update(s.state, driver.Origin{Kind: driver.OriginConsole}, !s.full)
 		s.signal()
 	case driver.ClientLimitCleared:
 		s.cfg.Logger.Info("console: updates arrive again")

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mixproto/mixcore/driver"
+	"github.com/mixproto/mixcore/driver/internal/burst"
 )
 
 // Scene-recall heuristic (docs/protocols/x32.md X32-F60..F62, xair.md
@@ -47,15 +48,9 @@ type Marker struct {
 	MinScene, MaxScene int32
 }
 
-type burstEntry struct {
-	idx int
-	at  time.Time
-}
-
 // sceneState is the owner-goroutine state of the heuristic.
 type sceneState struct {
-	recent      []burstEntry // console-origin pushes within burstWindow
-	seen        map[int]struct{}
+	window      *burst.Window // distinct console-origin pushes within burstWindow
 	open        bool
 	first, last time.Time
 	burst       bool
@@ -68,19 +63,14 @@ type sceneState struct {
 }
 
 func newSceneState() sceneState {
-	return sceneState{seen: map[int]struct{}{}, scene: driver.NoScene, loaded: driver.NoScene}
+	return sceneState{window: burst.New(burstWindow), scene: driver.NoScene, loaded: driver.NoScene}
 }
 
-// onConsolePush records a console-origin push of parameter idx (never our echo).
+// onConsolePush records a console-origin push of parameter idx (never our
+// echo) in amortized O(1) (review sec M3).
 func (s *session) onConsolePush(idx int, at time.Time) {
 	sc := &s.scene
-	sc.recent = slices.DeleteFunc(append(sc.recent, burstEntry{idx: idx, at: at}),
-		func(e burstEntry) bool { return at.Sub(e.at) > burstWindow })
-	clear(sc.seen)
-	for _, e := range sc.recent {
-		sc.seen[e.idx] = struct{}{}
-	}
-	if len(sc.seen) >= burstParams {
+	if sc.window.Add(idx, at) >= burstParams {
 		sc.burst = true
 		s.sceneSignal(at)
 	}
@@ -137,7 +127,8 @@ func (s *session) sceneTick(now time.Time) {
 		HighlightedScene: sc.scene, LoadedScene: sc.loaded, At: sc.first}
 	s.log.Info(s.name+": scene recalled at the console", "confidence", ev.Confidence, "signals", ev.Signals)
 	s.emit(ev)
-	*sc = sceneState{seen: sc.seen, scene: driver.NoScene, loaded: driver.NoScene}
+	sc.window.Reset()
+	*sc = sceneState{window: sc.window, scene: driver.NoScene, loaded: driver.NoScene}
 	s.startReread(now)
 }
 

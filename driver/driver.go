@@ -80,6 +80,11 @@ type Endpoint struct {
 // bind sockets to a network (Android) and tests to use an in-memory network.
 type ListenPacketFunc func(ctx context.Context, network, address string) (net.PacketConn, error)
 
+// DialFunc opens a stream connection (TCP). Apps override it to bind the
+// socket to a network (Android: the same binder as ListenPacket) and tests to
+// use an in-memory pipe. Families that speak TCP (wing) use it for every dial.
+type DialFunc func(ctx context.Context, network, address string) (net.Conn, error)
+
 // WriteRecord is one parameter write a driver put on the wire. Tests join these
 // with the simulator's write log: every console-side write must match one record.
 type WriteRecord struct {
@@ -94,6 +99,7 @@ type Options struct {
 	Logger       *slog.Logger     // nil: discard
 	Meters       *meters.Slot     // where meter frames go; nil: meters are dropped
 	ListenPacket ListenPacketFunc // nil: the operating system's UDP sockets
+	Dial         DialFunc         // nil: the operating system's TCP sockets
 	WriteAudit   func(WriteRecord)
 }
 
@@ -255,6 +261,26 @@ type ClientLimitHit struct {
 // ClientLimitCleared means updates arrive again after a ClientLimitHit.
 type ClientLimitCleared struct{}
 
+// ConsoleSilent means nothing has arrived from the console for the
+// family's stale time while the connection is still up (a lossy link may
+// recover): the supervisor marks the state stale, cancels every hold and
+// refuses writes, exactly as for a lost connection, but the session goes
+// on. ConsoleResponding ends it; nothing is replayed (queued writes were
+// dropped) and the session re-reads in the background.
+type ConsoleSilent struct {
+	Since time.Time
+}
+
+// ConsoleResponding means messages arrive again after a ConsoleSilent.
+type ConsoleResponding struct{}
+
+// MuteRulesChanged means the console changed a setting the effective-mute
+// rule depends on (wing /cfg/dcamgrp: whether a DCA mute mutes its
+// members). The state takes the new rules; no parameter changed.
+type MuteRulesChanged struct {
+	Rules model.MuteRules
+}
+
 // Scene recall confidences and signals (SceneRecalled).
 const (
 	ConfidenceHigh   = "high"   // a burst and the family's recall marker
@@ -285,6 +311,9 @@ func (SceneRecalled) isEvent()      {}
 func (StateReplaced) isEvent()      {}
 func (ClientLimitHit) isEvent()     {}
 func (ClientLimitCleared) isEvent() {}
+func (MuteRulesChanged) isEvent()   {}
+func (ConsoleSilent) isEvent()      {}
+func (ConsoleResponding) isEvent()  {}
 
 // Sentinel errors. Compare with errors.Is.
 var (
@@ -293,4 +322,9 @@ var (
 	ErrNotUserOrigin  = errors.New("write without a user gesture")
 	ErrUnsupported    = errors.New("capability not supported by this console")
 	ErrClosed         = errors.New("session closed")
+	// ErrProtocolMismatch: the console answers, but in a protocol this
+	// driver does not understand (wing: a schema that lacks or contradicts
+	// the modelled nodes, undefined bytes). Drivers retry it with a backoff
+	// and never give up; the API reports it as a stable code.
+	ErrProtocolMismatch = errors.New("console protocol not understood")
 )

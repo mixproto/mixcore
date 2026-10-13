@@ -73,3 +73,11 @@ func FuzzBinaryStream(f *testing.F) {
 		fuzzDecoder(t, d, b, cut)
 	})
 }
+
+func FuzzWINGStream(f *testing.F) {
+	f.Add([]byte{0xDF, 0xD1, 0xD7, 0x38, 0xAE, 0x75, 0xC2, 0xD5, 0xC3, 0x10, 0, 0}, uint16(5))
+	f.Add([]byte{0xDF, 0xD3, 0xD3, 0x37, 0x37, 0xD4, 0, 0, 0, 2, 0xDC, 0xA0, 0x01, 0xDE, 0xDF, 0xD1}, uint16(4))
+	f.Add([]byte{0xDF, 0xDE, 0, 0, 0x7F, 0xFF, 0xFF, 0xFF}, uint16(2))
+	f.Add([]byte("WING,192.168.1.71,PGM,ngc-full,NO_SERIAL,1.07.2-40-g1b1b292b:develop"), uint16(0))
+	f.Fuzz(func(t *testing.T, b []byte, cut uint16) { fuzzDecoder(t, WING{}, b, cut) })
+}

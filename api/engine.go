@@ -44,6 +44,8 @@ type Options struct {
 	Drivers map[string]driver.Driver
 	// ListenPacket opens every socket; nil: OS sockets through SetSocketBinder.
 	ListenPacket driver.ListenPacketFunc
+	// Dial opens every TCP connection (wing); nil: OS sockets through SetSocketBinder.
+	Dial driver.DialFunc
 	// Logger; nil: records go to the LogSink set with SetLogSink.
 	Logger *slog.Logger
 	// WriteAudit receives every write a driver sends (tests, diagnostics).
@@ -106,6 +108,9 @@ func NewEngineWith(opts Options) *Engine {
 	if opts.ListenPacket == nil {
 		opts.ListenPacket = e.listenPacket
 	}
+	if opts.Dial == nil {
+		opts.Dial = e.dial
+	}
 	e.opts = opts
 	e.disc.ctx, e.disc.cancel = context.WithCancel(context.Background())
 	if d, ok := opts.Drivers[familyX32]; ok { // the law FaderPosition uses before Start (xair has the same, XA-F40)
@@ -150,7 +155,7 @@ func (e *Engine) Start(configJSON string) (out string, err error) {
 	sup, err := console.New(console.Config{
 		Driver:      drv,
 		Endpoint:    driver.Endpoint{Host: cfg.Host, Port: cfg.Port},
-		Options:     driver.Options{Logger: e.opts.Logger, Meters: e.slot, ListenPacket: e.sessionListen(isDemo), WriteAudit: e.opts.WriteAudit},
+		Options:     driver.Options{Logger: e.opts.Logger, Meters: e.slot, ListenPacket: e.sessionListen(isDemo), Dial: e.opts.Dial, WriteAudit: e.opts.WriteAudit},
 		Meters:      driver.MeterRequest{Inputs: cfg.Meters.Inputs},
 		Logger:      e.opts.Logger,
 		RereadEvery: e.opts.RereadEvery,

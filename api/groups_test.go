@@ -21,7 +21,7 @@ func TestToggle_MuteGroupAndEffectiveMute(t *testing.T) {
 		_ = e.sim.SurfaceSet("/ch/02/grp/mute", osc.Int(1<<2)) // ch 2 is in mute group 3
 		e.startLive(t)
 		snap := e.rec.last()
-		if len(snap.MuteGroups) != 6 || len(snap.DCAs) != 8 || snap.Strips[1].EffectiveMute == nil || snap.Strips[1].EffectiveMute.Muted {
+		if len(snap.MuteGroups) != 6 || len(snap.DCAs) != 8 || snap.Strips[1].EffectiveMute == nil || mutedTrue(snap.Strips[1].EffectiveMute) {
 			t.Fatalf("snapshot groups %v, DCAs %v, ch2 %+v", snap.MuteGroups, snap.DCAs, snap.Strips[1])
 		}
 		if err := e.eng.Apply(toggleMG3); err != nil {

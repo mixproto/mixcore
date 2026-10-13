@@ -416,6 +416,8 @@ type stateJSON struct {
 	Seq     uint64 `json:"seq"`
 	Status  string `json:"status"`
 	Reason  string `json:"reason,omitempty"`
+	// ReasonCode is a stable code for Reason when the core knows one (wing).
+	ReasonCode string `json:"reasonCode,omitempty"`
 	// v0.1 connection fields, in every message.
 	StaleSinceMs  int64            `json:"staleSinceMs,omitempty"`
 	Offline       bool             `json:"offline,omitempty"`
@@ -435,6 +437,9 @@ type stateJSON struct {
 	SendTaps      []tapLabelJSON   `json:"sendTaps,omitempty"`     // v0.4, snapshot only
 	Changes       *[]changeJSON    `json:"changes,omitempty"`      // present (maybe empty) in every diff
 	Events        []eventJSON      `json:"events,omitempty"`
+	// MuteGroupMembership is false (snapshot only) when strips' mute-group
+	// membership is unknown (wing); absent means true.
+	MuteGroupMembership *bool `json:"muteGroupMembership,omitempty"`
 }
 
 // encodeUpdate renders a supervisor update as a state message with sequence
@@ -449,10 +454,16 @@ func encodeUpdate(u console.Update, seq uint64, full, demo bool) ([]byte, error)
 	if !u.StaleSince.IsZero() {
 		out.StaleSinceMs = u.StaleSince.UnixMilli()
 	}
+	if errors.Is(u.Cause, driver.ErrProtocolMismatch) {
+		out.ReasonCode = CodeProtocolMismatch
+	}
 	if !full {
 		out.Type = "diff"
 		changes := make([]changeJSON, 0, len(u.Changes)+len(u.Effective))
 		for _, c := range u.Changes {
+			if c.Param.Field == model.FieldConsoleMute {
+				continue // internal: clients see it through effectiveMute
+			}
 			changes = append(changes, changeJSON{Param: paramToJSON(c.Param), Value: valueJSON(c.Value), Origin: originToJSON(c.Origin)})
 		}
 		changes = append(changes, effectiveChangesJSON(u.Effective)...)
@@ -468,6 +479,10 @@ func encodeUpdate(u console.Update, seq uint64, full, demo bool) ([]byte, error)
 	out.MuteGroups, out.DCAs = groupStatesJSON(u.State.MuteGroups()), dcasJSON(u.State)
 	out.Buses, out.Matrices = busesJSON(u.State), matricesJSON(u.State)
 	out.SendFields, out.SendTaps = sendFieldsOf(u.State), sendTapsJSON(u.State, u.Capabilities)
+	if u.Capabilities.MuteGroupMembershipUnknown {
+		known := false
+		out.MuteGroupMembership = &known
+	}
 	return json.Marshal(out)
 }
 

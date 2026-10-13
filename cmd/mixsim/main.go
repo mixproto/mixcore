@@ -7,6 +7,7 @@
 //
 //	mixsim -listen 127.0.0.1:10023 -name X32-SIM -demo
 //	mixsim -family xair -demo                 # X Air on 127.0.0.1:10024
+//	mixsim -family wing -demo                 # WING on 127.0.0.1:2222, TCP and UDP
 //
 // Use -listen 0.0.0.0:<port> to reach it from a phone on the same LAN.
 package main
@@ -23,6 +24,7 @@ import (
 	"syscall"
 	"time"
 
+	simwing "github.com/mixproto/mixcore/sim/wing"
 	simx32 "github.com/mixproto/mixcore/sim/x32"
 	simxair "github.com/mixproto/mixcore/sim/xair"
 )
@@ -32,9 +34,10 @@ const (
 	demoPeriod = 4.0 // seconds per meter swing
 	familyX32  = "x32"
 	familyXAir = "xair"
+	familyWing = "wing"
 )
 
-var errFamily = errors.New("-family must be x32 or xair")
+var errFamily = errors.New("-family must be x32, xair or wing")
 
 func main() {
 	if err := run(); err != nil {
@@ -48,27 +51,30 @@ func main() {
 type flags struct {
 	family, listen, name, model, firmware string
 	demo, verbose, pushSnapIndex          bool
+	wing                                  wingOptions
 }
 
 func parseFlags() (flags, error) {
 	var f flags
-	flag.StringVar(&f.family, "family", familyX32, "console family: x32 or xair")
-	flag.StringVar(&f.listen, "listen", "", "UDP address to serve on (default 127.0.0.1:<family port>)")
+	flag.StringVar(&f.family, "family", familyX32, "console family: x32, xair or wing")
+	flag.StringVar(&f.listen, "listen", "", "address to serve on (default 127.0.0.1:<family port>; wing: TCP and UDP)")
 	flag.StringVar(&f.name, "name", "", "network name reported by /xinfo")
 	flag.StringVar(&f.model, "model", "", "model reported by /xinfo and /info")
 	flag.StringVar(&f.firmware, "firmware", "", "firmware version reported")
 	flag.BoolVar(&f.demo, "demo", false, "fill channel names, name six monitor buses with sends, animate input meters")
 	flag.BoolVar(&f.pushSnapIndex, "push-snap-index", false, "xair: push /-snap/index on a snapshot load (unverified, XA-F62)")
+	flag.BoolVar(&f.wing.echo, "wing-echo", false, "wing: push a client's own write back to it (unverified, item 4)")
+	flag.BoolVar(&f.wing.dataDE, "wing-data-de", false, "wing: end every data answer with DE (unverified, item 3)")
+	flag.BoolVar(&f.wing.markers, "wing-scene-markers", false, "wing: push $actidx/$active on a scene load (unverified, item 17)")
+	flag.IntVar(&f.wing.maxConns, "wing-max-conns", 0, "wing: TCP connection limit (default 16, 24 from firmware 3.1)")
 	flag.BoolVar(&f.verbose, "v", false, "debug logging")
 	flag.Parse()
-	if f.family != familyX32 && f.family != familyXAir {
+	ports := map[string]int{familyX32: simx32.DefaultPort, familyXAir: simxair.DefaultPort, familyWing: simwing.DefaultPort}
+	port, ok := ports[f.family]
+	if !ok {
 		return f, errFamily
 	}
 	if f.listen == "" {
-		port := simx32.DefaultPort
-		if f.family == familyXAir {
-			port = simxair.DefaultPort
-		}
 		f.listen = fmt.Sprintf("127.0.0.1:%d", port)
 	}
 	return f, nil
@@ -92,6 +98,9 @@ func run() error {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if f.family == familyWing {
+		return runWing(ctx, f, log)
+	}
 	pc, err := net.ListenPacket("udp4", f.listen)
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", f.listen, err)

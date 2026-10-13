@@ -18,6 +18,10 @@ import (
 	"github.com/mixproto/mixcore/internal/osc"
 )
 
+// MaxFound caps the consoles one probe lists (review sec L7): a flood of
+// replies on a hostile network cannot grow the list without bound.
+const MaxFound = 64
+
 // Found is one console that answered a discovery probe.
 type Found struct {
 	Endpoint driver.Endpoint
@@ -150,6 +154,9 @@ func collectReplies(pc net.PacketConn) ([]Found, error) {
 		ident, err := ParseXinfo(&m) // a reply without 4 strings, e.g. our own broadcast, is dropped (XA-F13)
 		if err != nil || seen[ap] {
 			continue
+		}
+		if len(found) >= MaxFound {
+			continue // keep reading until the deadline: later replies are dropped, never stored
 		}
 		seen[ap] = true
 		found = append(found, Found{

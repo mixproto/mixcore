@@ -26,7 +26,7 @@ import (
 const echoWait = 500 * time.Millisecond
 
 func TestParseDemoRequest(t *testing.T) {
-	for _, bad := range []string{``, `{}`, `{"version":1,"family":"xair"}`, `{"version":0,"family":"wing"}`,
+	for _, bad := range []string{``, `{}`, `{"version":1,"family":"xair"}`, `{"version":0,"family":"wing"}`, `{"version":0,"family":"dlive"}`,
 		`{"version":0,"family":"xair","host":"10.0.0.1"}`, `{"version":0,"family":"xair","deskChanges":"yes"}`} {
 		if _, err := parseDemoRequest(bad); CodeOf(err) != CodeInvalidConfig {
 			t.Fatalf("%s: %v", bad, err)
@@ -119,7 +119,7 @@ func demoJourney(t *testing.T, fam string) {
 	synctest.Wait()
 	st := d.rec.last()
 	if st.Status != "live" || !st.Demo || st.Strips[0].Name != "Kick" || st.Strips[12].EffectiveMute == nil ||
-		!st.Strips[12].EffectiveMute.Muted {
+		!mutedTrue(st.Strips[12].EffectiveMute) {
 		t.Fatalf("live snapshot %+v", st)
 	}
 	assertDemoHeadamps(t, st, fam)

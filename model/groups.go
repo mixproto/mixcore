@@ -21,9 +21,13 @@ type GroupState struct {
 
 // EffectiveMute says whether a strip is silenced toward Main LR and why
 // (design CR-01): its own mute, engaged mute groups it belongs to, muted DCAs
-// it belongs to. Masks use the membership bit layout.
+// it belongs to. Masks use the membership bit layout. Known false means
+// the core cannot tell (Muted is then meaningless): UIs show "mute state
+// unknown", never live. Basis says how it was found (mute.go).
 type EffectiveMute struct {
 	Muted      bool
+	Known      bool
+	Basis      MuteBasis
 	Own        bool
 	MuteGroups uint32
 	DCAs       uint32
@@ -106,7 +110,7 @@ func (s State) withGroup(p ParamRef, v Value) (State, error) {
 }
 
 // EffectiveMute returns the effective mute of an input or main strip toward
-// Main LR; group strips and unknown refs give the zero value.
+// Main LR (rule in mute.go); group strips and unknown refs give the zero value.
 func (s State) EffectiveMute(ref StripRef) EffectiveMute {
 	if ref.isGroup() {
 		return EffectiveMute{}
@@ -115,9 +119,7 @@ func (s State) EffectiveMute(ref StripRef) EffectiveMute {
 	if !ok {
 		return EffectiveMute{}
 	}
-	e := EffectiveMute{Own: st.Muted, MuteGroups: activeMembers(st.MuteGroups, s.muteGroups), DCAs: activeMembers(st.DCAs, s.dcaMutes)}
-	e.Muted = e.Own || e.MuteGroups != 0 || e.DCAs != 0
-	return e
+	return s.effectiveOf(st)
 }
 
 // activeMembers keeps the bits of member whose group is on.
