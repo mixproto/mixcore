@@ -269,6 +269,9 @@ func (s *Supervisor) SetShowModeBy(origin driver.Origin, on bool) error {
 	}
 	s.mu.Lock()
 	err := s.checkConsoleRoleLocked(origin)
+	if err == nil && !on && s.showLockedLocked() {
+		err = fmt.Errorf("%w: show mode is locked by a PIN", ErrRole)
+	}
 	s.mu.Unlock()
 	if err != nil {
 		return err

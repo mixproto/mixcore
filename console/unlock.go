@@ -127,6 +127,9 @@ func isHeadampGain(p model.ParamRef) bool {
 func (s *Supervisor) SetShowMode(on bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !on && s.showLockedLocked() {
+		return // locked by the owner's PIN (CC-12)
+	}
 	s.safe.showMode = on
 	if !on {
 		s.safe.unlocks.endAll(UnlockShowModeOff)
@@ -149,6 +152,9 @@ func (s *Supervisor) Unlock(p model.ParamRef, origin driver.Origin) error {
 	defer s.mu.Unlock()
 	if err := s.checkConsoleRoleLocked(origin); err != nil {
 		return err
+	}
+	if s.showLockedLocked() {
+		return fmt.Errorf("%w: show mode is locked by a PIN", ErrRole)
 	}
 	if s.status != StatusLive || s.limited != "" {
 		return driver.ErrStale

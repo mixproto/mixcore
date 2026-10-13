@@ -43,6 +43,9 @@ type ClientSafety struct {
 type SafetyConfig struct {
 	Client   ClientSafety // default for clients without SetClientSafety
 	ShowMode bool         // SR-27, restored by the UI at Start
+	// ShowModeLock is the PIN record of a show mode locked by the owner
+	// (showlock.go, CC-12); empty: not locked.
+	ShowModeLock string
 }
 
 // Write is one user write with the flags of the safety rules.

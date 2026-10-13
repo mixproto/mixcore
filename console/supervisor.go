@@ -37,6 +37,7 @@ import (
 	"errors"
 	"log/slog"
 	"math/rand/v2"
+	"slices"
 	"sync"
 	"time"
 
@@ -130,6 +131,13 @@ type Update struct {
 	// Undo is every client's newest undo entry with what undoing it would
 	// ask (core-api v0.5 rule 14), by client id.
 	Undo []UndoSummary
+	// Favourites is the favourites layer (core-api v0.5 rule 17).
+	Favourites []model.StripRef
+	// ShowModeLocked: show mode is locked on by the owner's PIN (rule 16).
+	ShowModeLocked bool
+	// Scopes are changes in watched buses since the last Drain (rule 15;
+	// never folded into Full, like Events).
+	Scopes []ScopeEvent
 }
 
 // Config configures a Supervisor.
@@ -150,6 +158,8 @@ type Config struct {
 	// Role is the role of every client without SetClientRole (roles.go);
 	// the zero value is the owner (a direct connection).
 	Role Role
+	// Favourites restores the favourites layer (favourites.go).
+	Favourites []model.StripRef
 }
 
 // Supervisor owns the connection lifecycle of one console.
@@ -172,7 +182,11 @@ type Supervisor struct {
 	sess       driver.Session
 	holds      holds
 	safe       safety
-	undo       undoHistory // per client (undo.go)
+	undo       undoHistory         // per client (undo.go)
+	favourites []model.StripRef    // the favourites layer (favourites.go); replaced, never changed in place
+	watches    map[string]*watcher // per client (watch.go)
+	lock       showLock            // show mode locked by a PIN (showlock.go)
+	scopes     []ScopeEvent        // watch events since the last Drain
 	changes    []Change
 	eff        effective
 	scenes     []driver.SceneRecalled
@@ -205,6 +219,17 @@ func New(cfg Config) (*Supervisor, error) {
 	if err := cfg.Role.Validate(); err != nil {
 		return nil, err
 	}
+	if err := validFavourites(cfg.Favourites); err != nil {
+		return nil, err
+	}
+	var lock showLock
+	if cfg.Safety.ShowModeLock != "" {
+		rec, err := parsePINRecord(cfg.Safety.ShowModeLock)
+		if err != nil {
+			return nil, err
+		}
+		lock.record, cfg.Safety.ShowMode = &rec, true
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
@@ -216,7 +241,8 @@ func New(cfg Config) (*Supervisor, error) {
 	}
 	return &Supervisor{
 		cfg: cfg, notify: make(chan struct{}, 1),
-		holds: newHolds(), safe: newSafety(cfg.Safety, cfg.Role), undo: newUndoHistory(),
+		holds: newHolds(), safe: newSafety(cfg.Safety, cfg.Role), undo: newUndoHistory(), favourites: slices.Clone(cfg.Favourites),
+		watches: map[string]*watcher{}, lock: lock,
 	}, nil
 }
 
@@ -282,8 +308,8 @@ func (s *Supervisor) Drain() Update {
 	if !s.full {
 		u.Changes, u.Effective = s.changes, s.eff.changes
 	}
-	u.Events, u.Scenes, u.UnlockEnded = s.holds.events, s.scenes, s.safe.unlocks.events
-	s.changes, s.full, s.holds.events, s.eff.changes, s.scenes = nil, false, nil, nil, nil
+	u.Events, u.Scenes, u.UnlockEnded, u.Scopes = s.holds.events, s.scenes, s.safe.unlocks.events, s.scopes
+	s.changes, s.full, s.holds.events, s.eff.changes, s.scenes, s.scopes = nil, false, nil, nil, nil, nil
 	s.safe.unlocks.events = nil
 	return u
 }
@@ -301,7 +327,8 @@ func (s *Supervisor) snapshotLocked() Update {
 	s.seq++
 	return Update{Seq: s.seq, Status: s.status, Reason: s.reason, Cause: s.cause, StaleSince: s.staleSince, Offline: s.offline,
 		Limited: s.limited != "", LimitedReason: s.limited, Identity: s.ident, Capabilities: s.caps, State: s.state,
-		ShowMode: s.safe.showMode, Unlocked: s.safe.unlocks.list(), Undo: s.undoSummariesLocked()}
+		ShowMode: s.safe.showMode, Unlocked: s.safe.unlocks.list(), Undo: s.undoSummariesLocked(),
+		Favourites: s.favourites, ShowModeLocked: s.showLockedLocked()}
 }
 
 func (s *Supervisor) signal() {
@@ -575,6 +602,7 @@ func (s *Supervisor) applyChangeLocked(c Change) {
 	if (!had || !prev.Equal(c.Value)) && !c.OwnWrite {
 		s.holds.external(c)
 		s.undo.markForeign(c.Param, c.Origin) // a later undo may meet a conflict (CC-6)
+		s.noteScopeChangeLocked(c)            // "Mon 2 changed at the mixer" (CC-11)
 	}
 	s.safe.noteChange(c, s.sameLevelLocked)
 	if c.Param.Field == model.FieldLinked {
