@@ -5,6 +5,7 @@
 package console
 
 import (
+	"fmt"
 	"slices"
 	"testing"
 	"testing/synctest"
@@ -70,6 +71,28 @@ func TestWatch_LinkedPartnerIsInScope(t *testing.T) {
 		synctest.Wait()
 		if u := sup.Drain(); len(u.Scopes) != 1 || u.Scopes[0].Bus != 1 {
 			t.Fatalf("partner change: %+v", u.Scopes)
+		}
+	})
+}
+
+// At most maxWatches clients watch; a new one drops the oldest watch, whose
+// client then gets no event.
+func TestWatch_BoundedByDroppingTheOldest(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, drv := startRole(t, Role{}, busFixture())
+		for i := range maxWatches + 1 {
+			o := driver.Origin{Kind: driver.OriginGesture, ClientID: fmt.Sprintf("dev-%02d", i)}
+			if err := sup.Watch(o, 2); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(time.Millisecond)
+		}
+		_ = sup.Drain()
+		drv.session(0).push <- driver.ParamChanged{Param: busFader(2), Value: lvl(t, -9), Origin: desk}
+		synctest.Wait()
+		u := sup.Drain()
+		if len(u.Scopes) != maxWatches || slices.ContainsFunc(u.Scopes, func(e ScopeEvent) bool { return e.ClientID == "dev-00" }) {
+			t.Fatalf("%d events, dev-00 dropped: %+v", len(u.Scopes), u.Scopes)
 		}
 	})
 }
