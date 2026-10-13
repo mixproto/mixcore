@@ -241,3 +241,36 @@ func TestLimit_UnechoedGainWritesAreNoEvidence(t *testing.T) {
 		}
 	})
 }
+
+// Review Go S2: changes to sends, bus names and colours and bus links that
+// the re-read finds unpushed are no client-limit evidence (their pushes
+// are not documented, X32-F90 item 23): two passes with such changes only
+// raise no ClientLimitHit. One predicate (limitEvidence) serves writes and
+// re-reads.
+func TestLimit_UnpushedBusAndSendChangesAreNoEvidence(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t, simx32.Options{})
+		r.fillSlots(simx32.DefaultMaxPushClients)
+		sess := r.connect()
+		events, _ := r.run(sess)
+		rr := sess.(driver.Rereader)
+		for pass, change := range []map[string]osc.Arg{
+			{"/ch/01/mix/02/level": osc.Float(0.5), "/bus/03/config/name": osc.String("Wedge"), "/ch/01/config/color": osc.Int(3)},
+			{"/ch/02/mix/02/level": osc.Float(0.5), "/bus/03/config/color": osc.Int(5), "/config/buslink/1-2": osc.Int(1)},
+		} {
+			for addr, a := range change {
+				_ = r.sim.SurfaceSet(addr, a) // nobody is told: the slots are full
+			}
+			if err := rr.Reread(); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(DefaultTiming.RereadGap + 2*passTime)
+			if _, ok := nextOf[driver.ClientLimitHit](events, 0); ok {
+				t.Fatalf("pass %d: ClientLimitHit from unpushed bus and send values", pass+1)
+			}
+		}
+		if hit, ok := nextOf[driver.ClientLimitHit](events, passTime); ok {
+			t.Fatalf("ClientLimitHit %+v", hit)
+		}
+	})
+}

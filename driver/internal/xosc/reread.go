@@ -165,7 +165,7 @@ func (s *session) rereadReply(idx int, v model.Value, at time.Time) (driver.Para
 	}
 	s.remember(idx, v)
 	ownReadBack := wrote && s.isOwnValue(idx, sent, v) // our own write read back is no unpushed change
-	if !unchanged && !ownReadBack {
+	if !unchanged && !ownReadBack && limitEvidence(s.params.all[idx]) {
 		s.lim.passFound = true // the push of this change never reached us
 	}
 	return driver.ParamChanged{Param: s.params.all[idx].ref, Value: v, Origin: driver.Origin{Kind: driver.OriginConsole}, At: at,

@@ -312,11 +312,8 @@ func (s *session) flushPending() {
 			continue
 		}
 		idx := s.params.index(w.param.ref)
-		// Gain echo is unverified (X32-F79, XA-F116): a missing Gain echo is
-		// no client-limit evidence (follow-up 1); nor is one of a bus or a
-		// send, whose pushes are not all documented (X32-F90).
 		s.rememberSent(idx, sentWrite{arg: w.arg, origin: w.origin, at: now, changes: s.changesKnown(idx, w),
-			evidence: w.param.feature == featureCore && w.param.conv != convGain && w.param.bus == 0})
+			evidence: limitEvidence(w.param)})
 		s.markTouched(idx)
 		if w.param.conv == convGain {
 			s.unconfirmed[idx] = w.arg
