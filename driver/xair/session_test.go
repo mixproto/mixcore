@@ -95,7 +95,8 @@ func TestMain_HasNoMuteGroupMembership(t *testing.T) {
 			}
 		}
 		v03 := 16*5 + 2 + 4 + 4 + 16*2 + 1   // 90 reads of the v1 table (xair.md section 12), 16 mic gains and phantoms, the aux gain
-		v04 := 17 + 4*3 + 10*4 + 3 + 16*10*3 // colours, DCA masters, 10 buses, 3 links, sends (level, pan, tap); xair.md "As implemented"
+		// colours, DCA masters, 10 buses, 3 links, sends: level and tap to all 10, pan to buses 1..6 only (xair.md 3.3)
+		v04 := 17 + 4*3 + 10*4 + 3 + 16*(10*2+6)
 		if n := len(r.drv.Addresses()); n != v03+v04 {
 			t.Fatalf("%d addresses, want %d + %d", n, v03, v04)
 		}
@@ -290,7 +291,7 @@ func wantBuses() []model.BusInfo {
 		if b > 6 {
 			kind = model.BusFX
 		}
-		out = append(out, model.BusInfo{Index: b, Kind: kind, Linkable: b <= 6})
+		out = append(out, model.BusInfo{Index: b, Kind: kind, Linkable: b <= 6, SendPan: b <= 6})
 	}
 	return out
 }

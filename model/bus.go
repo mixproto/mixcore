@@ -121,12 +121,12 @@ func (s State) hasSendField(p ParamRef) bool {
 	case FieldSendOn:
 		return sh.On
 	case FieldSendPan, FieldSendTap:
-		has := (p.Field == FieldSendPan && sh.Pan) || (p.Field == FieldSendTap && sh.Tap)
+		i, ok := s.busAt(p.Bus)
+		has := ok && ((p.Field == FieldSendPan && sh.Pan && s.busInfos[i].SendPan) || (p.Field == FieldSendTap && sh.Tap))
 		if !has || !sh.PairScoped || p.Bus%2 == 1 {
 			return has
 		}
-		i, ok := s.busAt(p.Bus)
-		return ok && !s.busInfos[i].Linkable // an FX bus has its own pan and tap
+		return !s.busInfos[i].Linkable // a bus outside the pairs has its own pan and tap
 	}
 	return false
 }

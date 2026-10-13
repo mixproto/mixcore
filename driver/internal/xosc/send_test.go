@@ -16,14 +16,14 @@ import (
 
 // x32BusLayout is the X32 layout with the v0.4 additions (x32.md X32-F80..F89).
 var x32BusLayout = Layout{Inputs: 32, RequiredInputs: 32, MainRoot: "/main/st", MainMuteGroups: true, MuteGroups: 6, DCAs: 8,
-	Buses:  []BusGroup{{First: 1, Count: 16, Root: "/bus/%02d", Kind: model.BusMix, Linkable: true}},
+	Buses:  []BusGroup{{First: 1, Count: 16, Root: "/bus/%02d", Kind: model.BusMix, Linkable: true, SendPan: true}},
 	SendOn: true, SendPan: true, SendTapLeaf: "type", SendPairScoped: true,
 	Matrices: 6, MatrixRoot: "/mtx/%02d", Colours: true, DCAMasters: true}
 
 // xairBusLayout is the X Air layout with the v0.4 additions (xair.md 3.1-3.3).
 var xairBusLayout = Layout{Inputs: 16, RequiredInputs: 12, MainRoot: "/lr", MuteGroups: 4, DCAs: 4,
 	Buses: []BusGroup{
-		{First: 1, Count: 6, Root: "/bus/%d", Kind: model.BusMix, Linkable: true},
+		{First: 1, Count: 6, Root: "/bus/%d", Kind: model.BusMix, Linkable: true, SendPan: true},
 		{First: 7, Count: 4, Root: "/fxsend/%d", Kind: model.BusFX},
 	},
 	SendPan: true, SendTapLeaf: "tap", Colours: true, DCAMasters: true}
@@ -177,14 +177,15 @@ func TestTable_XAirBusesAndSends(t *testing.T) {
 	tbl := newParamTable(xairBusLayout)
 	for _, addr := range []string{
 		"/bus/1/mix/fader", "/bus/6/config/name", "/fxsend/1/mix/on", "/fxsend/4/config/color", // xair 3.1
-		"/ch/01/mix/07/level", "/ch/16/mix/10/pan", "/ch/01/mix/02/pan", "/ch/01/mix/02/tap", // xair 3.3: per send
+		"/ch/01/mix/07/level", "/ch/16/mix/06/pan", "/ch/01/mix/02/pan", "/ch/01/mix/02/tap", "/ch/01/mix/07/tap", // xair 3.3
 		"/config/buslink/5-6", "/dca/4/fader", "/dca/4/config/color", "/lr/config/color",
 	} {
 		if _, ok := tbl.byAddress([]byte(addr)); !ok {
 			t.Fatalf("xair table lacks %s", addr)
 		}
 	}
-	for _, addr := range []string{"/ch/01/mix/01/on", "/config/buslink/7-8", "/mtx/01/mix/fader", "/bus/01/mix/fader"} {
+	for _, addr := range []string{"/ch/01/mix/01/on", "/config/buslink/7-8", "/mtx/01/mix/fader", "/bus/01/mix/fader",
+		"/ch/01/mix/07/pan", "/ch/16/mix/10/pan"} { // xair.md 3.3 (2026-10-13): no send pan to FX sends 07..10
 		if _, ok := tbl.byAddress([]byte(addr)); ok {
 			t.Fatalf("xair table must not have %s", addr)
 		}

@@ -38,6 +38,9 @@ type BusGroup struct {
 	Kind model.BusKind
 	// Linkable: odd/even pairs of the group can be linked (X32-F81, xair.md 3.2).
 	Linkable bool
+	// SendPan: inputs have a send pan into these buses (X32-F84; xair.md
+	// 3.3: buses 1..6 only, no send pan to the FX sends 07..10).
+	SendPan bool
 }
 
 func (g BusGroup) has(index int) bool { return index >= g.First && index < g.First+g.Count }
@@ -184,7 +187,7 @@ func (t *paramTable) addSends(l Layout, i int) {
 				t.add(send(model.FieldSendOn, "on", osc.TypeInt, convFlag, featureSendOn))
 			}
 			pairOnly := l.SendPairScoped && g.Linkable && b%2 == 0 // X32-F84, X32-F85: odd sends only
-			if l.SendPan && !pairOnly {
+			if l.SendPan && g.SendPan && !pairOnly {
 				t.add(send(model.FieldSendPan, "pan", osc.TypeFloat, convPan, featureSendPan))
 			}
 			if l.SendTapLeaf != "" && !pairOnly {
@@ -230,7 +233,7 @@ func (s *session) busInfos() []model.BusInfo {
 	var out []model.BusInfo
 	for _, b := range s.presentBuses() {
 		g, _ := l.busGroup(b)
-		out = append(out, model.BusInfo{Index: b, Kind: g.Kind, Linkable: g.Linkable})
+		out = append(out, model.BusInfo{Index: b, Kind: g.Kind, Linkable: g.Linkable, SendPan: l.SendPan && g.SendPan})
 	}
 	return out
 }

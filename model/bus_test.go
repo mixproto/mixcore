@@ -25,8 +25,8 @@ var x32Shape = Shape{Colours: true, DCAMasters: true, BusLinks: true,
 func busState(t *testing.T, sh Shape) State {
 	t.Helper()
 	st, err := testState(t).WithGroups(2, 2).WithBuses([]BusInfo{
-		{Index: 7, Kind: BusFX}, {Index: 1, Kind: BusMix, Linkable: true}, {Index: 2, Kind: BusMix, Linkable: true},
-		{Index: 3, Kind: BusMix, Linkable: true},
+		{Index: 7, Kind: BusFX}, {Index: 1, Kind: BusMix, Linkable: true, SendPan: true}, {Index: 2, Kind: BusMix, Linkable: true, SendPan: true},
+		{Index: 3, Kind: BusMix, Linkable: true, SendPan: true},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -228,7 +228,7 @@ func TestState_SendFieldsFollowTheShape(t *testing.T) {
 		{"x32 pan on an even bus is the pair's, absent", pair, sendRef(1, 2, FieldSendPan), pan, false},
 		{"x32 tap on an odd bus", pair, sendRef(1, 3, FieldSendTap), tap, true},
 		{"x32 tap on an even bus is absent", pair, sendRef(1, 2, FieldSendTap), tap, false},
-		{"pair rule does not apply to an FX bus", pair, sendRef(1, 7, FieldSendPan), pan, true},
+		{"an FX bus without send pan in the family table", pair, sendRef(1, 7, FieldSendPan), pan, false},
 		{"per-send pan (xair)", busState(t, Shape{Sends: SendShape{Level: true, Pan: true, Tap: true}}), sendRef(1, 2, FieldSendPan), pan, true},
 		{"no send on (xair)", busState(t, Shape{Sends: SendShape{Level: true}}), sendRef(1, 1, FieldSendOn), Bool(true), false},
 		{"no sends at all", busState(t, Shape{}), sendRef(1, 1, FieldSendLevel), mustLevel(t, 0), false},

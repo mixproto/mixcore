@@ -40,7 +40,8 @@
 //     then Main L/R from values 36/37 (XA-F51..F53).
 //   - Buses and sends (core-api v0.4, sections 3.1-3.3): buses /bus/1..6
 //     (pairs 1-2, 3-4, 5-6 linkable) and FX sends /fxsend/1..4 as buses
-//     7..10; sends /ch/NN/mix/MM/level (161 steps), pan and tap per send,
+//     7..10; sends /ch/NN/mix/MM/level (161 steps), tap per send, pan per
+//     send on buses 1..6 only (no send pan to FX sends, 3.3, item 10),
 //     no send on/off (absent, never faked). Every bus is probed once per
 //     link, so a model with fewer buses connects without them (XA-F72).
 //     DCA faders and names, and colours, are read; tap and colours are
@@ -114,8 +115,10 @@ var profile = xosc.Profile{
 		MuteGroups: muteGroupCount, DCAs: dcaCount,
 		Headamps: headamps, HeadampAddr: headampFormat,
 		Buses: []xosc.BusGroup{
-			{First: 1, Count: mixBuses, Root: "/bus/%d", Kind: model.BusMix, Linkable: true}, // section 3.1, 3.2 buslink
-			{First: mixBuses + 1, Count: fxSends, Root: "/fxsend/%d", Kind: model.BusFX},     // section 3.1: FX sends as buses 7..10
+			// Section 3.1, 3.2 buslink, 3.3 send pan per send on buses 1..6.
+			{First: 1, Count: mixBuses, Root: "/bus/%d", Kind: model.BusMix, Linkable: true, SendPan: true},
+			// Section 3.1: FX sends as buses 7..10; 3.3 (2026-10-13): no send pan to them, item 10.
+			{First: mixBuses + 1, Count: fxSends, Root: "/fxsend/%d", Kind: model.BusFX},
 		},
 		SendPan: true, SendTapLeaf: "tap", Colours: true, DCAMasters: true, // section 3.2, 3.3
 	},

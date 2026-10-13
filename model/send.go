@@ -101,6 +101,10 @@ type BusInfo struct {
 	// Linkable: the bus belongs to an odd/even pair the console can link
 	// as one stereo bus (x32.md X32-F81, xair.md section 3.2).
 	Linkable bool
+	// SendPan: the family's protocol doc gives inputs a send pan into this
+	// bus (x32 X32-F84: every bus, per pair; xair 3.3: buses 1..6, never
+	// the FX sends 7..10). A static table, never inferred from a reply.
+	SendPan bool
 }
 
 // Send is the send of one input strip to one bus, in engineering units.

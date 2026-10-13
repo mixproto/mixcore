@@ -29,7 +29,8 @@ type outputJSON struct {
 	Colour  string `json:"colour,omitempty"`
 	FaderDB any    `json:"faderDB"`
 	Mute    bool   `json:"mute"`
-	Linked  *bool  `json:"linked,omitempty"` // the odd bus of a linkable pair
+	Linked  *bool  `json:"linked,omitempty"`  // the odd bus of a linkable pair
+	SendPan bool   `json:"sendPan,omitempty"` // buses only: inputs have a send pan into it (with sendFields.pan)
 }
 
 // sendJSON is one send of an input strip.
@@ -69,7 +70,7 @@ func busesJSON(st model.State) []outputJSON {
 	out := make([]outputJSON, 0, len(infos))
 	for i, b := range st.Buses() {
 		j := outputJSON{Index: b.Ref.Index, Kind: infos[i].Kind.String(), Name: b.Name, Colour: colourJSON(st, b.Ref),
-			FaderDB: levelJSON(b.FaderDB), Mute: b.Muted}
+			FaderDB: levelJSON(b.FaderDB), Mute: b.Muted, SendPan: st.Shape().Sends.Pan && infos[i].SendPan}
 		if v, ok := st.Value(model.ParamRef{Strip: b.Ref, Field: model.FieldLinked}); ok {
 			on, _ := v.Bool()
 			j.Linked = &on

@@ -88,8 +88,8 @@ var profile = xosc.Profile{
 		Inputs: inputChannels, RequiredInputs: inputChannels, MainRoot: "/main/st", MainMuteGroups: true,
 		MuteGroups: muteGroupCount, DCAs: dcaCount,
 		Headamps: headamps, HeadampAddr: headampFormat, HeadampWireOffset: headampWireOff, HeadampIndexes: inputChannels,
-		Buses:  []xosc.BusGroup{{First: 1, Count: mixBuses, Root: "/bus/%02d", Kind: model.BusMix, Linkable: true}}, // X32-F80, X32-F81
-		SendOn: true, SendPan: true, SendTapLeaf: "type", SendPairScoped: true,                                      // X32-F82, X32-F84, X32-F85
+		Buses:  []xosc.BusGroup{{First: 1, Count: mixBuses, Root: "/bus/%02d", Kind: model.BusMix, Linkable: true, SendPan: true}}, // X32-F80, X32-F81, X32-F84
+		SendOn: true, SendPan: true, SendTapLeaf: "type", SendPairScoped: true,                                                     // X32-F82, X32-F84, X32-F85
 		Matrices: matrixCount, MatrixRoot: "/mtx/%02d", Colours: true, DCAMasters: true, // X32-F87..F89
 	},
 	// X32-F85: the console's words, S4 InputTap (IN/LC, <-EQ, EQ->, PRE, POST, GRP).

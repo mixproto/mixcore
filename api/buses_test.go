@@ -148,8 +148,8 @@ func TestSnapshot_X32BusesSendsAndTaps(t *testing.T) {
 		e.startLive(t)
 		raw := e.rec.raw[len(e.rec.raw)-1]
 		for _, want := range []string{
-			`"buses":[{"index":1,"kind":"mix","name":"","colour":"off","faderDB":"-inf","mute":false,"linked":true},` +
-				`{"index":2,"kind":"mix","name":"Mon 2 Keys","colour":"blue","faderDB":"-inf","mute":false}`,
+			`"buses":[{"index":1,"kind":"mix","name":"","colour":"off","faderDB":"-inf","mute":false,"linked":true,"sendPan":true},` +
+				`{"index":2,"kind":"mix","name":"Mon 2 Keys","colour":"blue","faderDB":"-inf","mute":false,"sendPan":true}`,
 			`"sends":[{"bus":1,"levelDB":"-inf","on":true,"pan":0,"tap":"preFader"},{"bus":2,"levelDB":2,"on":true},`,
 			`"sendFields":{"on":true,"pan":"pair","tap":"pair"}`,
 			`"sendTaps":[{"tap":"input","label":"IN/LC"},{"tap":"preEq","label":"\u003c-EQ"},{"tap":"postEq","label":"EQ-\u003e"},` +
@@ -244,6 +244,13 @@ func TestSnapshot_XAirSendsHaveNoOn(t *testing.T) {
 		s := st.Strips[0].Sends[1]
 		if s.On != nil || s.Pan == nil || s.Tap == "" {
 			t.Fatalf("xair send %+v", s)
+		}
+		// xair.md 3.3 (re-checked 2026-10-13): no send pan to FX sends 07..10.
+		if fx := st.Strips[0].Sends[6]; fx.Bus != 7 || fx.Pan != nil || st.Buses[6].SendPan || !st.Buses[0].SendPan {
+			t.Fatalf("FX send %+v, bus 7 sendPan %v, bus 1 sendPan %v", fx, st.Buses[6].SendPan, st.Buses[0].SendPan)
+		}
+		if err := e.eng.Apply(sendCmd("set", "sendPan", 1, 7, "0", "ui")); CodeOf(err) != CodeUnsupported {
+			t.Fatalf("send pan to an FX send: %v", err)
 		}
 		if err := e.eng.Apply(sendCmd("toggle", "sendOn", 1, 2, "", "ui")); CodeOf(err) != CodeUnsupported {
 			t.Fatalf("toggle sendOn on xair: %v", err)

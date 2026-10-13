@@ -21,7 +21,8 @@ import (
 // 3 Mon 3 Bass; ch 1 sends -10 dB (bus 1) and -8 dB (bus 2), both on.
 func busFixture() model.State {
 	st, err := safetyState(-6).WithBuses([]model.BusInfo{
-		{Index: 1, Kind: model.BusMix, Linkable: true}, {Index: 2, Kind: model.BusMix, Linkable: true}, {Index: 3, Kind: model.BusMix, Linkable: true},
+		{Index: 1, Kind: model.BusMix, Linkable: true, SendPan: true}, {Index: 2, Kind: model.BusMix, Linkable: true, SendPan: true},
+		{Index: 3, Kind: model.BusMix, Linkable: true, SendPan: true},
 	})
 	if err != nil {
 		panic(err)
