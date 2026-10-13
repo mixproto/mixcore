@@ -22,7 +22,15 @@ var (
 	// ErrNoReply: the console did not answer the schema walk or the initial
 	// read in time.
 	ErrNoReply = errors.New("wing: console did not answer")
+	// ErrProtocolMismatch: the console's schema failed maxSchemaFailures
+	// connects in a row; the link stops dialing until the engine restarts
+	// (review go L1), so a console that is not what mixcore expects is not
+	// hammered and the user sees why.
+	ErrProtocolMismatch = errors.New("wing: the console's schema does not match what mixcore needs; not retrying until the engine is restarted")
 )
+
+// maxSchemaFailures is how many schema failures in a row stop the link.
+const maxSchemaFailures = 3
 
 // schemaCache is the result of a schema walk, kept for the link: the same
 // firmware has the same tree (WG-F32: hashes are stable), so a reconnect
@@ -47,6 +55,10 @@ type link struct {
 	closed bool
 	cache  *schemaCache
 	seq    uint32
+	// schemaFails counts schema failures in a row; mismatch is set once
+	// they reach maxSchemaFailures.
+	schemaFails int
+	mismatch    error
 }
 
 var _ driver.Link = (*link)(nil)
@@ -77,6 +89,11 @@ func (l *link) Connect(ctx context.Context) (_ driver.Session, err error) {
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if err != nil {
+			l.failed(err)
+		}
+	}()
 	ctx, cancel := context.WithTimeout(ctx, l.drv.timing.ConnectTimeout)
 	defer cancel()
 	c, err := dialConn(ctx, dialFunc(l.opts), l.addr, l.drv.timing.WriteTimeout)
@@ -117,6 +134,9 @@ func (l *link) begin() (uint32, *schemaCache, error) {
 	if l.closed {
 		return 0, nil, driver.ErrClosed
 	}
+	if l.mismatch != nil {
+		return 0, nil, l.mismatch
+	}
 	l.seq++
 	return l.seq, l.cache, nil
 }
@@ -132,7 +152,27 @@ func (l *link) adopt(s *session, walked *schemaCache) error {
 		l.cache = walked
 	}
 	l.cur = s
+	l.schemaFails = 0
 	return nil
+}
+
+// failed drops the schema cache after any failed connect (review M2: a
+// cache is only ever what a successful connect read) and counts schema
+// failures.
+func (l *link) failed(err error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if errors.Is(err, ErrProtocolMismatch) {
+		return
+	}
+	l.cache = nil
+	if !errors.Is(err, errSchema) {
+		l.schemaFails = 0
+		return
+	}
+	if l.schemaFails++; l.schemaFails >= maxSchemaFailures {
+		l.mismatch = fmt.Errorf("%w: %w", ErrProtocolMismatch, err)
+	}
 }
 
 // release forgets s as the current session (s is closing itself).

@@ -249,7 +249,7 @@ func TestReconnect_DropsQueuedWritesAndReusesSchema(t *testing.T) {
 		if st, _ := sess2.Snapshot().Strip(model.StripRef{Kind: model.StripInput, Index: 1}); st.FaderDB != -7 {
 			t.Fatalf("reconnect read %v, want the console's -7", st.FaderDB)
 		}
-		if countClass(r.sim, simwing.ClassDefs) != defsBefore {
+		if countClass(r.sim, simwing.ClassDefs) != defsBefore+1 { // one /ch request verifies the cache (review M2)
 			t.Fatal("same firmware: the schema must not be walked again")
 		}
 		if w := r.sim.Writes(); len(w) != 0 {

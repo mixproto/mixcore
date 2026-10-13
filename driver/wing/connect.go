@@ -7,6 +7,7 @@ package wing
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/mixproto/mixcore/internal/wingproto"
@@ -54,6 +55,13 @@ func (s *session) schema(ctx context.Context, cache *schemaCache) (map[string]wi
 		defs, err := s.walk(ctx)
 		return defs, false, err
 	}
+	if same, err := s.verifyCache(ctx, cache); err != nil {
+		return nil, false, err
+	} else if !same {
+		s.log.Info("wing: the channel list differs from the cached schema; reading the schema again")
+		defs, err := s.walk(ctx) // no data request was sent yet: no stray DE to drain
+		return defs, false, err
+	}
 	hash := uint32(documentedFirmwareHash)
 	if d, ok := cache.defs[pathFirmware]; ok {
 		hash = d.Hash
@@ -69,6 +77,39 @@ func (s *session) schema(ctx context.Context, cache *schemaCache) (map[string]wi
 	s.drain(ctx, s.timing.OptionalWait) // a DE after the data reply must not end a walk level (item 3)
 	defs, err := s.walk(ctx)
 	return defs, false, err
+}
+
+// verifyCache asks for the definitions of /ch once (review M2) and
+// compares them with the cache: the same children, hashes and types. It
+// runs before any data request, so a DE after data (item 3) cannot end it.
+func (s *session) verifyCache(ctx context.Context, cache *schemaCache) (bool, error) {
+	ch, ok := cache.defs["/ch"]
+	if !ok {
+		return false, nil
+	}
+	s.c.walking.Store(true)
+	defer s.c.walking.Store(false)
+	var budget walkBudget
+	got, err := s.walkLevel(ctx, []walkNode{{path: "/ch", hash: ch.Hash}}, &budget)
+	if err != nil {
+		return false, err
+	}
+	cached := 0
+	for path := range cache.defs {
+		if strings.HasPrefix(path, "/ch/") && !strings.Contains(path[len("/ch/"):], "/") {
+			cached++
+		}
+	}
+	if len(got[0]) != cached {
+		return false, nil
+	}
+	for _, d := range got[0] {
+		c, ok := cache.defs["/ch/"+d.Name]
+		if !ok || c.Hash != d.Hash || c.Type != d.Type {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // schemaError names the console's firmware in a schema error: firmware
