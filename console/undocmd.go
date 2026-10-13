@@ -113,9 +113,11 @@ func (s *Supervisor) Undo(origin driver.Origin, confirmed bool) (Result, error) 
 
 // CancelHold ends the client's open hold on p and, if it wrote, writes its
 // grab value once (redesign CC-9, AC-RD-U04): exempt from the window and
-// show mode (it is never above the value the console had at holdBegin);
-// for Gain within 6 dB of the hold's last write (else ErrGainBound and the
-// hold stays open). The hold ends like an external change, so a further
+// show mode (it is never above the value the console had at holdBegin).
+// For Gain a cancel that lowers back to the grab value is always allowed
+// (the safe direction is never refused in a feedback emergency); one that
+// would raise Gain more than 6 dB above the hold's last write is
+// ErrGainBound and the hold stays open (lead decision, review nit 7). The hold ends like an external change, so a further
 // set is ErrGestureEnded until a new hold-begin or hold-end. No undo entry.
 func (s *Supervisor) CancelHold(p model.ParamRef, origin driver.Origin) (Result, error) {
 	if !origin.MayWrite() {
@@ -164,7 +166,7 @@ func (s *Supervisor) CancelHold(p model.ParamRef, origin driver.Origin) (Result,
 func (s *Supervisor) restoreLocked(p model.ParamRef, origin driver.Origin, w *window) (bool, error) {
 	v := w.Start
 	if p.Field == model.FieldGain {
-		if math.Abs(v-w.lastWrite) > gainBoundDB {
+		if v-w.lastWrite > gainBoundDB { // lowering back is always allowed: the safe direction (review nit 7)
 			return false, fmt.Errorf("%w: cancel of %s from %.1f to %.1f dB", ErrGainBound, p, w.lastWrite, v)
 		}
 		send, _ := s.safe.noteSent(p, v, time.Now(), true)

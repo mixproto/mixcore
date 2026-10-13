@@ -16,8 +16,9 @@ import (
 
 // Errors of the phone safety rules (contracts/core-api README v0.3).
 var (
-	// ErrNeedsConfirm: a typed raise of more than 6 dB without Confirmed (CR-26).
-	ErrNeedsConfirm = errors.New("console: typed raise over 6 dB needs confirmation")
+	// ErrNeedsConfirm: a typed raise of more than 6 dB without Confirmed
+	// (CR-26), or an undo that asks (core-api v0.5 rule 14).
+	ErrNeedsConfirm = errors.New("console: needs confirmation")
 	// ErrShowMode: show mode locks this write (raising Gain, CR-24).
 	ErrShowMode = errors.New("console: locked in show mode")
 	// ErrGainBound: a Gain write more than 6 dB from the console value (CR-23).
@@ -236,7 +237,7 @@ func (s *Supervisor) openWindowLocked(k holdKey) *window {
 func (s *Supervisor) clampLocked(w Write, cur float64) (float64, GestureState, *Window, error) {
 	p, c := w.Param, dbOf(w.Value)
 	if w.Typed && c-cur > bigRaiseDB && !w.Confirmed {
-		return 0, 0, nil, fmt.Errorf("%w: %s %.1f to %.1f dB", ErrNeedsConfirm, p, cur, c)
+		return 0, 0, nil, fmt.Errorf("%w: typed raise over 6 dB, %s %.1f to %.1f dB", ErrNeedsConfirm, p, cur, c)
 	}
 	v, st := c, StateFree
 	win := s.safe.windows[holdKey{param: p, client: w.Origin.ClientID}]
