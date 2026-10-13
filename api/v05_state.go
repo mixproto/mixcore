@@ -20,9 +20,16 @@ const eventScope = "externalChangeInScope"
 
 // v05StateJSON is embedded in stateJSON (its fields are flattened).
 type v05StateJSON struct {
-	ShowModeLocked bool         `json:"showModeLocked,omitempty"`
-	Favourites     *[]stripJSON `json:"favourites,omitempty"`
-	Undo           []undoJSON   `json:"undo,omitempty"`
+	ShowModeLocked bool              `json:"showModeLocked,omitempty"`
+	Favourites     *[]favouritesJSON `json:"favourites,omitempty"`
+	Undo           []undoJSON        `json:"undo,omitempty"`
+}
+
+// favouritesJSON is one favourites layer: a client's own, or (no clientId)
+// the default of every client without one (review sec L4).
+type favouritesJSON struct {
+	ClientID string      `json:"clientId,omitempty"`
+	Strips   []stripJSON `json:"strips"`
 }
 
 // undoJSON is state.schema.json $defs/undoEntry.
@@ -48,8 +55,11 @@ type sceneMarkJSON struct {
 func v05StateOf(u console.Update, withFavourites bool) v05StateJSON {
 	out := v05StateJSON{ShowModeLocked: u.ShowModeLocked}
 	if withFavourites {
-		fav := favouritesJSON(u.Favourites)
-		out.Favourites = &fav
+		layers := make([]favouritesJSON, 0, len(u.Favourites))
+		for _, l := range u.Favourites {
+			layers = append(layers, favouritesJSON{ClientID: l.ClientID, Strips: stripRefsJSON(l.Strips)})
+		}
+		out.Favourites = &layers
 	}
 	for _, s := range u.Undo {
 		j := undoJSON{ClientID: s.ClientID, Param: paramToJSON(s.Param), Kind: s.Kind.String(), From: valueJSON(s.From),
@@ -66,7 +76,7 @@ func v05StateOf(u console.Update, withFavourites bool) v05StateJSON {
 	return out
 }
 
-func favouritesJSON(list []model.StripRef) []stripJSON {
+func stripRefsJSON(list []model.StripRef) []stripJSON {
 	out := make([]stripJSON, 0, len(list))
 	for _, r := range list {
 		out = append(out, stripJSON{Kind: r.Kind.String(), Index: r.Index})
@@ -102,8 +112,12 @@ func v05Key(u console.Update) string {
 // favouritesKey tells the dispatcher when the favourites changed.
 func favouritesKey(u console.Update) string {
 	var b strings.Builder
-	for _, r := range u.Favourites {
-		b.WriteString(r.String() + "|")
+	for _, l := range u.Favourites {
+		b.WriteString(l.ClientID + ":")
+		for _, r := range l.Strips {
+			b.WriteString(r.String() + "|")
+		}
+		b.WriteString(";")
 	}
 	return b.String()
 }

@@ -7,18 +7,40 @@ package console
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
+	"time"
 
 	"github.com/mixproto/mixcore/driver"
 	"github.com/mixproto/mixcore/model"
 )
 
-// Favourites (redesign CC-7, D-23, core-api v0.5 rule 17): one ordered
-// user layer of strips for this console on this device. It lives with the
-// engine, is restored from the config and is never written to the console.
+// Favourites (redesign CC-7, D-23, core-api v0.5 rule 17): an ordered user
+// layer of strips per client (per device, review sec L4). The config's
+// layer is the default of every client that has not set its own. It is
+// never written to the console.
 
-// MaxFavourites bounds the favourites layer (fader-and-gain.md 15, CC-7).
-const MaxFavourites = 32
+const (
+	// MaxFavourites bounds one favourites layer (fader-and-gain.md 15, CC-7).
+	MaxFavourites = 32
+	// maxFavouriteIndex bounds a favourite strip's index (no family has more
+	// strips of a kind; common.schema.json favourites).
+	maxFavouriteIndex = 128
+	// maxFavouriteClients bounds the clients with their own layer; a new
+	// one beyond it replaces the layer set longest ago.
+	maxFavouriteClients = 64
+)
+
+// FavouritesLayer is one client's favourites; ClientID "" is the default.
+type FavouritesLayer struct {
+	ClientID string
+	Strips   []model.StripRef
+}
+
+type clientFavourites struct {
+	strips []model.StripRef
+	at     time.Time
+}
 
 // ErrFavourites: a favourites list the contract refuses.
 var ErrFavourites = errors.New("console: invalid favourites")
@@ -32,7 +54,7 @@ func ValidFavourite(r model.StripRef) error {
 			return nil
 		}
 	case model.StripInput, model.StripBus, model.StripDCA, model.StripMatrix:
-		if r.Index >= 1 {
+		if r.Index >= 1 && r.Index <= maxFavouriteIndex {
 			return nil
 		}
 	}
@@ -55,8 +77,8 @@ func validFavourites(list []model.StripRef) error {
 	return nil
 }
 
-// SetFavourites replaces the favourites layer. Any role may set it (it
-// changes only this device); it writes nothing.
+// SetFavourites replaces the favourites layer of origin's client. Any role
+// may set it (it changes only that device); it writes nothing.
 func (s *Supervisor) SetFavourites(origin driver.Origin, list []model.StripRef) error {
 	if !origin.MayWrite() {
 		return driver.ErrNotUserOrigin
@@ -66,7 +88,29 @@ func (s *Supervisor) SetFavourites(origin driver.Origin, list []model.StripRef) 
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.favourites = slices.Clone(list)
+	if _, known := s.clientFavs[origin.ClientID]; !known && len(s.clientFavs) >= maxFavouriteClients {
+		oldest := ""
+		for c, f := range s.clientFavs {
+			if oldest == "" || f.at.Before(s.clientFavs[oldest].at) {
+				oldest = c
+			}
+		}
+		delete(s.clientFavs, oldest)
+	}
+	s.clientFavs[origin.ClientID] = clientFavourites{strips: slices.Clone(list), at: time.Now()}
 	s.signal()
 	return nil
+}
+
+// favouritesLocked lists the layers: the default first (when it has
+// strips), then every client's own, by client id. Callers hold mu.
+func (s *Supervisor) favouritesLocked() []FavouritesLayer {
+	var out []FavouritesLayer
+	if len(s.favourites) > 0 {
+		out = append(out, FavouritesLayer{Strips: s.favourites})
+	}
+	for _, c := range slices.Sorted(maps.Keys(s.clientFavs)) {
+		out = append(out, FavouritesLayer{ClientID: c, Strips: s.clientFavs[c].strips})
+	}
+	return out
 }

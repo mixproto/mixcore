@@ -321,3 +321,20 @@ func TestUndo_EntrySignalsOnceForABurst(t *testing.T) {
 		}
 	})
 }
+
+// Review item 8: a scene name from a driver reaches the state clean.
+func TestScene_NameIsCleanedInTheCore(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, drv := startSafe(t, SafetyConfig{}, safetyState(-6))
+		holdMove(t, sup, ch1Fader, gesture, -4)
+		drv.session(0).push <- driver.SceneRecalled{Confidence: driver.ConfidenceLow, LoadedScene: 2, SceneName: "\x1b[2JSong\u202e 2\n"}
+		synctest.Wait()
+		u := sup.Drain()
+		if len(u.Scenes) != 1 || u.Scenes[0].SceneName != "[2JSong 2" {
+			t.Fatalf("scenes %+v", u.Scenes)
+		}
+		if e := newestUndo(t, u, gesture.ClientID); e.Scene == nil || e.Scene.Name != "[2JSong 2" {
+			t.Fatalf("entry %+v", e)
+		}
+	})
+}

@@ -220,7 +220,7 @@ func (h *undoHistory) mark(client string, list []undoEntry, match func(undoEntry
 
 // sceneMarkOf names a recall by what the driver knew of it.
 func sceneMarkOf(e driver.SceneRecalled) SceneMark {
-	return SceneMark{Number: max(e.LoadedScene, 0), Name: e.SceneName}
+	return SceneMark{Number: max(e.LoadedScene, 0), Name: driver.SceneName(e.SceneName)}
 }
 
 // recordLocked adds an entry for a change of p by origin from before to

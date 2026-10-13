@@ -131,8 +131,9 @@ type Update struct {
 	// Undo is every client's newest undo entry with what undoing it would
 	// ask (core-api v0.5 rule 14), by client id.
 	Undo []UndoSummary
-	// Favourites is the favourites layer (core-api v0.5 rule 17).
-	Favourites []model.StripRef
+	// Favourites are the favourites layers (core-api v0.5 rule 17): the
+	// default first, then each client's own.
+	Favourites []FavouritesLayer
 	// ShowModeLocked: show mode is locked on by the owner's PIN (rule 16).
 	ShowModeLocked bool
 	// Scopes are changes in watched buses since the last Drain (rule 15;
@@ -182,11 +183,12 @@ type Supervisor struct {
 	sess       driver.Session
 	holds      holds
 	safe       safety
-	undo       undoHistory         // per client (undo.go)
-	favourites []model.StripRef    // the favourites layer (favourites.go); replaced, never changed in place
-	watches    map[string]*watcher // per client (watch.go)
-	lock       showLock            // show mode locked by a PIN (showlock.go)
-	scopes     []ScopeEvent        // watch events since the last Drain
+	undo       undoHistory                 // per client (undo.go)
+	favourites []model.StripRef            // the default favourites layer, from the config (favourites.go)
+	clientFavs map[string]clientFavourites // per client; replaced, never changed in place
+	watches    map[string]*watcher         // per client (watch.go)
+	lock       showLock                    // show mode locked by a PIN (showlock.go)
+	scopes     []ScopeEvent                // watch events since the last Drain
 	changes    []Change
 	eff        effective
 	scenes     []driver.SceneRecalled
@@ -241,7 +243,7 @@ func New(cfg Config) (*Supervisor, error) {
 	}
 	return &Supervisor{
 		cfg: cfg, notify: make(chan struct{}, 1),
-		holds: newHolds(), safe: newSafety(cfg.Safety, cfg.Role), undo: newUndoHistory(), favourites: slices.Clone(cfg.Favourites),
+		holds: newHolds(), safe: newSafety(cfg.Safety, cfg.Role), undo: newUndoHistory(), favourites: slices.Clone(cfg.Favourites), clientFavs: map[string]clientFavourites{},
 		watches: map[string]*watcher{}, lock: lock,
 	}, nil
 }
@@ -328,7 +330,7 @@ func (s *Supervisor) snapshotLocked() Update {
 	return Update{Seq: s.seq, Status: s.status, Reason: s.reason, Cause: s.cause, StaleSince: s.staleSince, Offline: s.offline,
 		Limited: s.limited != "", LimitedReason: s.limited, Identity: s.ident, Capabilities: s.caps, State: s.state,
 		ShowMode: s.safe.showMode, Unlocked: s.safe.unlocks.list(), Undo: s.undoSummariesLocked(),
-		Favourites: s.favourites, ShowModeLocked: s.showLockedLocked()}
+		Favourites: s.favouritesLocked(), ShowModeLocked: s.showLockedLocked()}
 }
 
 func (s *Supervisor) signal() {
@@ -556,7 +558,8 @@ func (s *Supervisor) handleEvent(ev driver.Event) {
 		// SR-15: a recall at the desk ends every held fader, even one whose own
 		// update has not arrived (or was lost); the driver re-reads meanwhile.
 		s.endHeldOnReplaceLocked()
-		s.undo.cut(sceneMarkOf(e)) // the history is cut at a recall (CC-10)
+		e.SceneName = driver.SceneName(e.SceneName) // user content from the console (review item 8)
+		s.undo.cut(sceneMarkOf(e))                  // the history is cut at a recall (CC-10)
 		if len(s.scenes) < maxPendingEvents {
 			s.scenes = append(s.scenes, e)
 		}

@@ -30,15 +30,15 @@ func TestFavourites_SetValidatesAndNeverWrites(t *testing.T) {
 		_ = sup.Start(context.Background())
 		t.Cleanup(sup.Stop)
 		synctest.Wait()
-		if u := sup.Drain(); !slices.Equal(u.Favourites, cfgList) {
-			t.Fatalf("restored %v", u.Favourites)
+		if u := sup.Drain(); len(u.Favourites) != 1 || u.Favourites[0].ClientID != "" || !slices.Equal(u.Favourites[0].Strips, cfgList) {
+			t.Fatalf("restored %+v", u.Favourites)
 		}
 		want := []model.StripRef{bus2, in(1), model.MainRef}
 		if err := sup.SetFavourites(gesture, want); err != nil {
 			t.Fatal(err)
 		}
-		if u := sup.Drain(); !slices.Equal(u.Favourites, want) {
-			t.Fatalf("favourites %v", u.Favourites)
+		if u := sup.Drain(); len(u.Favourites) != 2 || u.Favourites[1].ClientID != gesture.ClientID || !slices.Equal(u.Favourites[1].Strips, want) {
+			t.Fatalf("favourites %+v", u.Favourites)
 		}
 		long := make([]model.StripRef, 33)
 		for i := range long {
@@ -49,8 +49,38 @@ func TestFavourites_SetValidatesAndNeverWrites(t *testing.T) {
 				t.Fatalf("%v accepted", bad)
 			}
 		}
-		if u := sup.Drain(); !slices.Equal(u.Favourites, want) || len(drv.session(0).writes()) != 0 {
+		if u := sup.Drain(); !slices.Equal(u.Favourites[1].Strips, want) || len(drv.session(0).writes()) != 0 {
 			t.Fatalf("after refusals: %v, %d writes", u.Favourites, len(drv.session(0).writes()))
+		}
+	})
+}
+
+// Review sec L4 (lead decision): favourites are per client; the config's
+// layer is the default of every client without its own; a strip index is
+// at most maxFavouriteIndex.
+func TestFavourites_PerClient(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		in := func(i int) model.StripRef { return model.StripRef{Kind: model.StripInput, Index: i} }
+		drv := &fakeDriver{snapshot: safetyState(-6), caps: gainCaps}
+		sup, err := New(Config{Driver: drv, Rand: func() float64 { return 0.5 }, Options: driver.Options{Meters: &meters.Slot{}},
+			Favourites: []model.StripRef{model.MainRef}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = sup.Start(context.Background())
+		t.Cleanup(sup.Stop)
+		synctest.Wait()
+		_ = sup.SetFavourites(engineerB, []model.StripRef{in(2)})
+		_ = sup.SetFavourites(musician, []model.StripRef{in(4), in(5)})
+		want := []FavouritesLayer{{Strips: []model.StripRef{model.MainRef}},
+			{ClientID: engineerB.ClientID, Strips: []model.StripRef{in(2)}}, {ClientID: musician.ClientID, Strips: []model.StripRef{in(4), in(5)}}}
+		if got := sup.Drain().Favourites; !slices.EqualFunc(got, want, func(a, b FavouritesLayer) bool {
+			return a.ClientID == b.ClientID && slices.Equal(a.Strips, b.Strips)
+		}) {
+			t.Fatalf("layers %+v", got)
+		}
+		if err := sup.SetFavourites(gesture, []model.StripRef{in(maxFavouriteIndex + 1)}); err == nil {
+			t.Fatal("an index above the bound accepted")
 		}
 	})
 }

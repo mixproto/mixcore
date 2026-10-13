@@ -151,7 +151,7 @@ func TestRedesignAPI_ShowModePINAndFavourites(t *testing.T) {
 			t.Fatal(err)
 		}
 		settle(100 * time.Millisecond)
-		if !strings.Contains(joinedState(e), `"favourites":[{"kind":"bus","index":2},{"kind":"input","index":1}]`) {
+		if !strings.Contains(joinedState(e), `"favourites":[{"clientId":"ui","strips":[{"kind":"bus","index":2},{"kind":"input","index":1}]}]`) {
 			t.Fatal("no favourites in the state")
 		}
 		if n := len(e.sim.Writes()); n != 1 { // only the Gain -1
@@ -174,7 +174,7 @@ func restartWithLock(t *testing.T, e *xairEnv, record string) {
 	}
 	settle(time.Second)
 	st := e.rec.last()
-	if !st.ShowMode || !st.ShowModeLocked || st.Favourites == nil || len(*st.Favourites) != 1 {
+	if !st.ShowMode || !st.ShowModeLocked || st.Favourites == nil || len(*st.Favourites) != 1 || len((*st.Favourites)[0].Strips) != 1 {
 		t.Fatalf("after restart: showMode %v locked %v favourites %v", st.ShowMode, st.ShowModeLocked, st.Favourites)
 	}
 	_ = e.eng.Stop()

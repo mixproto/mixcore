@@ -21,7 +21,8 @@ func TestStateJSON_V05FieldsMatchTheSchema(t *testing.T) {
 	lv := func(db float64) model.Value { v, _ := model.Level(db); return v }
 	u := console.Update{Status: console.StatusLive, State: st, ShowMode: true, ShowModeLocked: true,
 		Capabilities: model.Capabilities{InputCount: 1, HasMain: true, DCAs: 1},
-		Favourites:   []model.StripRef{{Kind: model.StripBus, Index: 2}, in1, model.MainRef},
+		Favourites: []console.FavouritesLayer{{Strips: []model.StripRef{model.MainRef}},
+			{ClientID: "ui", Strips: []model.StripRef{{Kind: model.StripBus, Index: 2}, in1, model.MainRef}}},
 		Undo: []console.UndoSummary{
 			{ClientID: "ui", Param: model.ParamRef{Strip: in1, Field: model.FieldFader}, Kind: console.UndoLevel, From: lv(-6), To: lv(-2),
 				Delta: 4, HasDelta: true, Direction: console.DirectionUp, Asks: []string{console.AskBeforeSceneRecall},
@@ -42,7 +43,7 @@ func TestStateJSON_V05FieldsMatchTheSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		`"showModeLocked":true,"favourites":[{"kind":"bus","index":2},{"kind":"input","index":1},{"kind":"main"}],"undo":[{"clientId":"ui",` +
+		`"showModeLocked":true,"favourites":[{"strips":[{"kind":"main"}]},{"clientId":"ui","strips":[{"kind":"bus","index":2},{"kind":"input","index":1},{"kind":"main"}]}],"undo":[{"clientId":"ui",` +
 			`"param":{"strip":{"kind":"input","index":1},"field":"fader"},"kind":"level","from":-6,"to":-2,"delta":4,"direction":"up",` +
 			`"asks":["beforeSceneRecall"],"scene":{"number":4,"name":"Song 4"}},{"clientId":"mon",` +
 			`"param":{"strip":{"kind":"input","index":1},"field":"sendOn","bus":2},"kind":"switch","from":true,"to":false,"direction":"none","asks":["unmute"]}]`,
