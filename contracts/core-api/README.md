@@ -261,8 +261,10 @@ Rules of v0.4:
       clients of this core sent for that parameter (kept per parameter, up to 64, oldest dropped; while one has been
       dropped no raise is taken until a cut or the full read of the next connect, reconnect or resume), and is not our
       own write read back (`OwnWrite`);
-    - taking a value forgets the seat values older than the 2 s echo window (younger ones may still come back as late
-      echoes); a role change or `SetClientSafety` forgets that client's values;
+    - "the window" is the driver's echo window (capabilities; 2 s on x32 and xair): taking a value forgets the seat
+      values older than it (younger ones may still come back as late echoes); an overflow ends with a cut or a full
+      read only once the newest dropped value is older than it; a role change or `SetClientSafety` drops that client's
+      values older than it and keeps the younger ones until they are (the echo of its last raise is never taken);
     - raise caution: an engineer raise at the desk to exactly a value a seat sent recently is not taken, so the seats
       keep the lower ceiling until the engineer moves it again or the next full read (rare, and safe).
     It covers every fader (channel, main, bus, DCA) and send level, each taken from the console at connect; a parameter

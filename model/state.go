@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"time"
 )
 
 // StripKind is the kind of a channel strip.
@@ -429,6 +430,10 @@ type Capabilities struct {
 	// law: valid positions are k/steps (x32 X32-F41, X32-F83: 1023 and 160;
 	// xair XA-F41 the same). 0: unknown, values compare exactly.
 	FaderSteps, SendLevelSteps int
+	// EchoWindow is how long the driver matches its own writes against the
+	// console's pushes (xosc Timing.EchoWindow): a write older than that
+	// can no longer come back as its echo. 0: unknown.
+	EchoWindow time.Duration
 	// TapLabels are the console's own words for the taps TapInput..TapGroup
 	// (index tap - 1), when the console reports send taps (X32-F85,
 	// xair.md 3.3); shown untranslated (CR-16).

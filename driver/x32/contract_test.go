@@ -5,6 +5,7 @@
 package x32
 
 import (
+	"cmp"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -37,4 +38,20 @@ func TestSession_CallsNeverBlock(t *testing.T) {
 			t.Fatalf("a Session call blocked: %v", err)
 		}
 	})
+}
+
+// The console's late-echo window is the driver's own echo window, carried
+// in the capabilities (final security check, LOW): they agree for the
+// default and for a scaled timing.
+func TestCapabilities_EchoWindowIsTheDriversOwn(t *testing.T) {
+	for _, w := range []time.Duration{0, 700 * time.Millisecond} {
+		synctest.Test(t, func(t *testing.T) {
+			r := newRig(t, simx32.Options{})
+			r.drv = New(Config{Timing: Timing{EchoWindow: w}})
+			want := cmp.Or(w, DefaultTiming.EchoWindow)
+			if got := r.connect().Capabilities().EchoWindow; got != want {
+				t.Fatalf("capabilities echo window %v, driver timing %v", got, want)
+			}
+		})
+	}
 }

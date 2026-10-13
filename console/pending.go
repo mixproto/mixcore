@@ -27,7 +27,7 @@ import (
 //   - a full set (maxInFlight) refuses the next value with ErrGainBound;
 //   - a re-send is skipped only when the value is the latest one sent, no
 //     report of the parameter arrived since, and it was sent less than
-//     resendEvery ago (review pass 3 LOW 5, pass 4 MEDIUM 2): a drag held
+//     the echo window ago (review pass 3 LOW 5, pass 4 MEDIUM 2): a drag held
 //     past the cap of a console that does not echo sends the cap once, and
 //     a return to an earlier value, or the same value after a report, is a
 //     real change and is sent.
@@ -35,8 +35,6 @@ import (
 const (
 	// maxInFlight caps the values in flight per headamp.
 	maxInFlight = 8
-	// resendEvery is the drivers' echo window (xosc DefaultTiming.EchoWindow).
-	resendEvery = 2 * time.Second
 )
 
 // inFlight is one value sent and not yet matched by a report.
@@ -65,10 +63,11 @@ func (s *safety) inFlightOf(p model.ParamRef) []float64 {
 }
 
 // noteSent records a value about to be sent. send is false for a value
-// sent less than resendEvery ago; ok is false when the set is full and the
+// sent less than the driver's echo window ago (Capabilities.EchoWindow,
+// seats.go echoWindow); ok is false when the set is full and the
 // value is not in it.
 func (s *safety) noteSent(p model.ParamRef, db float64, now time.Time) (send, ok bool) {
-	if l, has := s.latest[p]; has && l.db == db && now.Sub(l.at) < resendEvery {
+	if l, has := s.latest[p]; has && l.db == db && now.Sub(l.at) < s.echoWindow() {
 		return false, true // the same latest value, no report since, within the echo window
 	}
 	set := s.pending[p]

@@ -73,7 +73,9 @@ type safety struct {
 	defRole  Role                       // every other client
 	// seats are the values monitor clients sent per level parameter
 	// (seats.go): reports of them never raise the engineer's value.
-	seats   map[model.ParamRef]*seatLog
+	seats map[model.ParamRef]*seatLog
+	// window is the driver's echo window (Capabilities.EchoWindow).
+	window  time.Duration
 	pending map[model.ParamRef][]inFlight // Gain values in flight (pending.go)
 	latest  map[model.ParamRef]lastSend   // latest Gain value sent, no report since (pending.go)
 }
@@ -100,7 +102,7 @@ func (s *safety) client(id string) ClientSafety {
 // never route a device's request to it (see the package doc, "Hub").
 func (s *Supervisor) SetClientSafety(clientID string, c ClientSafety) {
 	s.mu.Lock()
-	s.safe.forgetSeat(clientID)
+	s.safe.forgetSeat(clientID, time.Now())
 	s.safe.clients[clientID] = c
 	s.mu.Unlock()
 }
@@ -157,7 +159,7 @@ func (s *safety) adoptState(prev, next model.State, same sameLevel) {
 			continue
 		}
 		if lg := s.seats[p]; lg != nil {
-			lg.overflow = false
+			lg.endOverflow(now, s.echoWindow()) // a full read with no hold open
 		}
 		if !old.Equal(v) {
 			s.credit(p, dbOf(v), false, same, now)

@@ -10,6 +10,7 @@ import (
 	"maps"
 	"math"
 	"slices"
+	"time"
 
 	"github.com/mixproto/mixcore/driver"
 	"github.com/mixproto/mixcore/model"
@@ -221,7 +222,7 @@ func (s *Supervisor) SetClientRole(clientID string, r Role) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.safe.roles[clientID] = r
-	s.safe.forgetSeat(clientID) // its old values no longer mask the engineer
+	s.safe.forgetSeat(clientID, time.Now()) // its values stop masking once older than the echo window
 	defer s.syncHeldLocked()
 	s.recheckHoldsLocked(func(c string) bool { return c == clientID })
 	for k := range s.holds.active {

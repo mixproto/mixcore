@@ -278,7 +278,7 @@ func wantHeadamps(n int) []model.HeadampInfo {
 // wantCapabilities are those of the default simulator (an XR18).
 func wantCapabilities() model.Capabilities {
 	return model.Capabilities{Headamps: wantHeadamps(16), InputCount: 16, HasMain: true, MuteGroups: 4, DCAs: 4, MainMuteGroups: false,
-		InputMeters: true, EchoesOwnWrites: true, MaxPushClients: 8, Buses: wantBuses(), FaderSteps: 1023, SendLevelSteps: 160,
+		InputMeters: true, EchoesOwnWrites: true, MaxPushClients: 8, Buses: wantBuses(), FaderSteps: 1023, SendLevelSteps: 160, EchoWindow: DefaultTiming.EchoWindow,
 		TapLabels: [model.TapCount]string{"IN", "PREEQ", "POSTEQ", "PRE", "POST", "GRP"}}
 }
 

@@ -407,7 +407,8 @@ func (s *Supervisor) adopt(sess driver.Session) {
 	s.sess = sess
 	s.heldSent = nil
 	s.ident = sess.Identity()
-	s.caps = sess.Capabilities() // before adoptState: its grids (sameLevelLocked)
+	s.caps = sess.Capabilities() // before adoptState: its grids (sameLevelLocked) and echo window
+	s.safe.window = s.caps.EchoWindow
 	s.safe.adoptState(s.state, sess.Snapshot(), s.sameLevelLocked)
 	s.safe.dropAllPending() // the fresh read is the console's value (re-review MEDIUM A)
 	s.state = sess.Snapshot()
