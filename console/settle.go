@@ -48,10 +48,11 @@ func (s *Supervisor) gainSettleLocked(c Change) (own, behind bool) {
 }
 
 // heldLastWriteLocked returns the client holding p and the last value its
-// hold wrote; ok is false when no open hold on p has written.
+// hold wrote (before the first write: its start, the newest value in
+// flight); ok is false when no hold on p is open.
 func (s *Supervisor) heldLastWriteLocked(p model.ParamRef) (client string, last float64, ok bool) {
 	for k, w := range s.safe.windows {
-		if _, active := s.holds.active[k]; active && k.param == p && w.wrote {
+		if _, active := s.holds.active[k]; active && k.param == p {
 			return k.client, w.lastWrite, true
 		}
 	}

@@ -23,6 +23,10 @@ var (
 	ErrShowMode = errors.New("console: locked in show mode")
 	// ErrGainBound: a Gain write more than 6 dB from the console value (CR-23).
 	ErrGainBound = errors.New("console: Gain write over the 6 dB bound")
+	// errEmptyGainBound: inside a hold no Gain value is within 6 dB of every
+	// value the console may be at; the write is skipped, never an error
+	// mid-drag (prepareLocked).
+	errEmptyGainBound = errors.New("console: no Gain value within the bound of every value in flight")
 	// ErrTypedOrigin: only a person types; Typed or Confirmed from another
 	// origin (a macro) would skip the bound SR-31 puts on macros.
 	ErrTypedOrigin = errors.New("console: typed entry needs a gesture origin")
@@ -273,7 +277,10 @@ func (s *Supervisor) gainRulesLocked(w Write, cur, v float64, st GestureState, w
 	case w.Typed:
 	case win != nil: // inside a hold: bounded, never an error mid-drag (CC-3)
 		lo, hi := s.holdBoundsLocked(w.Param, win, cur, inFlight)
-		v = math.Min(math.Max(v, lo), math.Max(lo, hi))
+		if lo > hi { // the values in flight span more than 12 dB: nowhere is safe (review re-check)
+			return 0, 0, windowOf(win), errEmptyGainBound
+		}
+		v = math.Min(math.Max(v, lo), hi)
 		if st == StateAtCap && v != win.CapUp && v != win.CapDown {
 			st = StateFree // atCap only at a range end (CC-2)
 		}

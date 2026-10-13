@@ -144,6 +144,10 @@ func (s *Supervisor) prepareLocked(w *Write) (driver.Session, Result, error) {
 	}
 	cur := dbOf(curV)
 	v, st, win, err := s.clampLocked(*w, cur)
+	if errors.Is(err, errEmptyGainBound) { // write nothing; the hold stays open until a read-back settles it
+		start, _ := model.Level(win.Start)
+		return s.sess, Result{Value: start, Window: win}, nil
+	}
 	if err != nil {
 		return nil, Result{}, err
 	}
