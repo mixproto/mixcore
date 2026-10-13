@@ -80,6 +80,11 @@ type Endpoint struct {
 // bind sockets to a network (Android) and tests to use an in-memory network.
 type ListenPacketFunc func(ctx context.Context, network, address string) (net.PacketConn, error)
 
+// DialFunc opens a stream connection (TCP). Apps override it to bind the
+// socket to a network (Android: the same binder as ListenPacket) and tests to
+// use an in-memory pipe. Families that speak TCP (wing) use it for every dial.
+type DialFunc func(ctx context.Context, network, address string) (net.Conn, error)
+
 // WriteRecord is one parameter write a driver put on the wire. Tests join these
 // with the simulator's write log: every console-side write must match one record.
 type WriteRecord struct {
@@ -94,6 +99,7 @@ type Options struct {
 	Logger       *slog.Logger     // nil: discard
 	Meters       *meters.Slot     // where meter frames go; nil: meters are dropped
 	ListenPacket ListenPacketFunc // nil: the operating system's UDP sockets
+	Dial         DialFunc         // nil: the operating system's TCP sockets
 	WriteAudit   func(WriteRecord)
 }
 
