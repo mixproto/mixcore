@@ -48,7 +48,7 @@ type inMsg struct {
 	val  wireValue
 	def  wingproto.Def
 	bad  bool // msgDef: the definition did not parse (counted, never used)
-	size int  // msgDef: body bytes, for the walk's byte limit
+	size int  // msgDef: decoded size (wire size when malformed), for the walk's limit
 	at   time.Time
 }
 
@@ -234,7 +234,7 @@ func (a *assembler) message(tok wingproto.Token, at time.Time) (inMsg, bool) {
 		if err != nil {
 			return inMsg{kind: msgDef, bad: true, size: len(tok.Bytes), at: at}, true
 		}
-		return inMsg{kind: msgDef, def: d, size: len(tok.Bytes), at: at}, true
+		return inMsg{kind: msgDef, def: d, size: decodedSize(d), at: at}, true
 	case wingproto.KindEnd:
 		a.hasHash = false
 		return inMsg{kind: msgEnd, at: at}, true

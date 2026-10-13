@@ -42,7 +42,7 @@ var numbered = map[string]int{
 const (
 	maxDefsPerNode = 4096
 	maxDefsPerWalk = 60000
-	maxWalkBytes   = 16 << 20
+	maxWalkBytes   = 8 << 20 // decoded size (decodedSize), security re-check 3
 	maxNameLen     = 64
 )
 
@@ -286,4 +286,21 @@ func checkDocumented(defs map[string]wingproto.Def) error {
 		}
 	}
 	return nil
+}
+
+// Decoded-size charges (security re-check 3): what a parsed definition
+// holds in memory, not its wire size (an enum item of three wire bytes is
+// a 40-byte struct plus its strings).
+const (
+	decodedDefBytes  = 160 // a Def with its slice and string headers
+	decodedItemBytes = 40  // one EnumItem: two string headers and a float
+)
+
+// decodedSize is the memory one parsed definition holds.
+func decodedSize(d wingproto.Def) int {
+	n := decodedDefBytes + len(d.Name) + len(d.LongName) + len(d.Items)*decodedItemBytes
+	for _, it := range d.Items {
+		n += len(it.Name) + len(it.Long)
+	}
+	return n
 }

@@ -51,8 +51,8 @@ const (
 
 // MaxEnumItems caps the items of one enum definition. The largest real
 // enums have a few dozen items (wing.md 3.4: 17 source groups, 24 process
-// orders); more is rejected, never allocated (review H2).
-const MaxEnumItems = 1024
+// orders); more is rejected, never allocated (review H2, security re-check 3).
+const MaxEnumItems = 256
 
 // ErrBadDef means a definition body does not follow WG-F33.
 var ErrBadDef = errors.New("wingproto: malformed node definition")
