@@ -120,6 +120,16 @@ func surfaceValue(n *node, v any) (value, error) {
 	return value{}, fmt.Errorf("wing sim: value %T for %s", v, n.path)
 }
 
+// SendRaw sends bytes as they are (no mux, no escaping) to every
+// connection: a fault, e.g. bytes the protocol does not define (WG-F30).
+func (s *Sim) SendRaw(b []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for cl := range s.conns {
+		cl.send(append([]byte(nil), b...))
+	}
+}
+
 // sceneChannels is how many channel faders a fixture scene sets (at least
 // the 8 parameters of the burst rule, wing.md section 7).
 const sceneChannels = 12

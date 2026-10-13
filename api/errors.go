@@ -33,6 +33,9 @@ const (
 	CodeNeedsConfirm   = "ERR_NEEDS_CONFIRM"    // v0.3: typed raise over 6 dB without confirmed (CR-26)
 	CodeShowMode       = "ERR_SHOW_MODE"        // v0.3: locked in show mode (CR-24)
 	CodeGainBound      = "ERR_GAIN_BOUND"       // v0.3: Gain write over the 6 dB bound (CR-23)
+	// CodeProtocolMismatch is a state reasonCode (wing): the console answers
+	// in a protocol the core does not understand; the core keeps retrying.
+	CodeProtocolMismatch = "ERR_PROTOCOL_MISMATCH"
 )
 
 // Error carries a stable code for the bindings and the cause for logs.

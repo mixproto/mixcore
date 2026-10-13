@@ -5,6 +5,8 @@
 package api
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -70,3 +72,21 @@ func TestDiff_InternalFieldNeverListed(t *testing.T) {
 
 // mutedTrue reads effectiveMute.muted; null (unknown) is not true.
 func mutedTrue(e *effectiveMuteJSON) bool { return e != nil && e.Muted != nil && *e.Muted }
+
+// TestState_ReasonCodeProtocolMismatch (go-reviewer L1): a mismatch is a
+// stable code in every state message, not only diagnostic text.
+func TestState_ReasonCodeProtocolMismatch(t *testing.T) {
+	u := wingLikeUpdate(t)
+	u.Status, u.Reason = console.StatusConnecting, "diagnostic"
+	u.Cause = fmt.Errorf("wing: connect: %w", driver.ErrProtocolMismatch)
+	for _, full := range []bool{true, false} {
+		b, err := encodeUpdate(u, 3, full, false)
+		if err != nil || !strings.Contains(string(b), `"reasonCode":"ERR_PROTOCOL_MISMATCH"`) {
+			t.Fatalf("full %v: %s %v", full, b, err)
+		}
+	}
+	u.Cause = errors.New("connection refused")
+	if b, _ := encodeUpdate(u, 4, true, false); strings.Contains(string(b), "reasonCode") {
+		t.Fatalf("another cause has no code: %s", b)
+	}
+}

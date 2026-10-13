@@ -44,6 +44,7 @@ type ownerState struct {
 	lastProbe  time.Time
 	lastMeter  time.Time
 	meterSince time.Time // when meters were last switched on
+	healthy    bool      // the link was told this session ran for streamGrace
 	scene      sceneState
 	rr         rereadState
 	outbox     []driver.Event

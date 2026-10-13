@@ -119,3 +119,16 @@ func TestConsoleSilent_LocksAndRecoversWithoutReconnect(t *testing.T) {
 		}
 	})
 }
+
+// The connect error behind a stale or connecting status is kept as
+// Update.Cause, so the API can map known sentinels to stable codes.
+func TestUpdate_CauseOfConnectFailure(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		drv := &fakeDriver{down: true}
+		sup := start(t, drv)
+		synctest.Wait()
+		if c := sup.Snapshot().Cause; !errors.Is(c, errRefused) {
+			t.Fatalf("cause %v", c)
+		}
+	})
+}

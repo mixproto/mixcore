@@ -322,4 +322,9 @@ var (
 	ErrNotUserOrigin  = errors.New("write without a user gesture")
 	ErrUnsupported    = errors.New("capability not supported by this console")
 	ErrClosed         = errors.New("session closed")
+	// ErrProtocolMismatch: the console answers, but in a protocol this
+	// driver does not understand (wing: a schema that lacks or contradicts
+	// the modelled nodes, undefined bytes). Drivers retry it with a backoff
+	// and never give up; the API reports it as a stable code.
+	ErrProtocolMismatch = errors.New("console protocol not understood")
 )

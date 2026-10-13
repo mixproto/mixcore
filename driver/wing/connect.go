@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"time"
 
 	"github.com/mixproto/mixcore/internal/wingproto"
 	"github.com/mixproto/mixcore/model"
@@ -39,6 +40,7 @@ func (s *session) connect(ctx context.Context) error {
 	if err := s.finishConnect(); err != nil {
 		return err
 	}
+	s.connectedAt = time.Now()
 	s.log.Info("wing: console identified", "model", s.ident.Model, "firmware", s.ident.Firmware, "inputs", tab.inputs)
 	s.log.Debug("wing: console name", "name", s.ident.Name) // user content: Debug only
 	return nil

@@ -40,6 +40,10 @@ func (s *session) onTick(now time.Time) error {
 	}
 	s.expireSent(now)
 	s.expireReads(now)
+	if !s.own.healthy && now.Sub(s.connectedAt) >= streamGrace {
+		s.own.healthy = true
+		s.link.healthy()
+	}
 	if err := s.sceneTick(now); err != nil {
 		return err
 	}

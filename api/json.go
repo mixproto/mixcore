@@ -416,6 +416,8 @@ type stateJSON struct {
 	Seq     uint64 `json:"seq"`
 	Status  string `json:"status"`
 	Reason  string `json:"reason,omitempty"`
+	// ReasonCode is a stable code for Reason when the core knows one (wing).
+	ReasonCode string `json:"reasonCode,omitempty"`
 	// v0.1 connection fields, in every message.
 	StaleSinceMs  int64            `json:"staleSinceMs,omitempty"`
 	Offline       bool             `json:"offline,omitempty"`
@@ -451,6 +453,9 @@ func encodeUpdate(u console.Update, seq uint64, full, demo bool) ([]byte, error)
 	}
 	if !u.StaleSince.IsZero() {
 		out.StaleSinceMs = u.StaleSince.UnixMilli()
+	}
+	if errors.Is(u.Cause, driver.ErrProtocolMismatch) {
+		out.ReasonCode = CodeProtocolMismatch
 	}
 	if !full {
 		out.Type = "diff"

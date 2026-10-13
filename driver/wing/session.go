@@ -40,8 +40,10 @@ type session struct {
 	tab     *table // set during connect, immutable afterwards
 	absent  []bool // per parameter, set during connect, read-only afterwards
 	meterID uint32
-	log     *slog.Logger
-	audit   func(driver.WriteRecord)
+	// connectedAt: when connect finished (owner goroutine, then read-only).
+	connectedAt time.Time
+	log         *slog.Logger
+	audit       func(driver.WriteRecord)
 
 	ident    driver.Identity
 	snapshot model.State
@@ -189,6 +191,9 @@ func (s *session) Run(ctx context.Context, events chan<- driver.Event) error {
 		case <-s.done:
 			return nil
 		case err = <-s.c.errs:
+			if errors.Is(err, errStream) && time.Since(s.connectedAt) < streamGrace {
+				s.link.noteMismatch(err) // undefined bytes right after connect: not our protocol (go-reviewer L1)
+			}
 			return fmt.Errorf("wing: %w: %w", driver.ErrConnectionLost, err)
 		case m := <-s.c.inbound:
 			s.onMessage(m)

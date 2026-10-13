@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/mixproto/mixcore/driver"
 	"github.com/mixproto/mixcore/internal/safe"
@@ -21,15 +22,24 @@ var (
 	// ErrNoReply: the console did not answer the schema walk or the initial
 	// read in time.
 	ErrNoReply = errors.New("wing: console did not answer")
-	// ErrProtocolMismatch: the console's schema failed maxSchemaFailures
-	// connects in a row; the link stops dialing until the engine restarts
-	// (review go L1), so a console that is not what mixcore expects is not
-	// hammered and the user sees why.
-	ErrProtocolMismatch = errors.New("wing: the console's schema does not match what mixcore needs; not retrying until the engine is restarted")
 )
 
-// maxSchemaFailures is how many schema failures in a row stop the link.
-const maxSchemaFailures = 3
+// ErrProtocolMismatch wraps driver.ErrProtocolMismatch for WING: a schema
+// that lacks or contradicts the modelled nodes, or a session that died of
+// undefined bytes soon after connect. The link holds dialing off for
+// mismatchFirstHold, doubling up to mismatchMaxHold, and retries forever
+// (security re-check 2, go-reviewer L1). A definition flood (errWalkLimit)
+// is not a mismatch.
+var ErrProtocolMismatch = fmt.Errorf("wing: %w", driver.ErrProtocolMismatch)
+
+// Mismatch backoff (design values).
+const (
+	mismatchFirstHold = time.Second
+	mismatchMaxHold   = 30 * time.Second
+	// streamGrace: a session that dies of undefined bytes within this long
+	// after connect counts as a mismatch; one that ran longer does not.
+	streamGrace = 5 * time.Second
+)
 
 // link keeps the meter socket for a whole engine session (its port is in
 // every meter request, wing.md 2.4). It keeps no schema: every Connect
@@ -46,10 +56,11 @@ type link struct {
 	mu     sync.Mutex
 	cur    *session
 	closed bool
-	// schemaFails counts schema failures in a row; mismatch is set once
-	// they reach maxSchemaFailures.
-	schemaFails int
-	mismatch    error
+	// mismatches counts protocol mismatches since the last healthy
+	// session; dialing is held off until holdUntil (lastMismatch says why).
+	mismatches   int
+	holdUntil    time.Time
+	lastMismatch error
 }
 
 var _ driver.Link = (*link)(nil)
@@ -81,7 +92,7 @@ func (l *link) Connect(ctx context.Context) (_ driver.Session, err error) {
 	}
 	defer func() {
 		if err != nil {
-			l.failed(err)
+			err = l.failed(err)
 		}
 	}()
 	ctx, cancel := context.WithTimeout(ctx, l.drv.timing.ConnectTimeout)
@@ -122,8 +133,8 @@ func (l *link) begin() error {
 	if l.closed {
 		return driver.ErrClosed
 	}
-	if l.mismatch != nil {
-		return l.mismatch
+	if wait := time.Until(l.holdUntil); wait > 0 {
+		return fmt.Errorf("%w (next attempt in %s): %w", ErrProtocolMismatch, wait.Round(time.Millisecond), l.lastMismatch)
 	}
 	return nil
 }
@@ -136,24 +147,37 @@ func (l *link) adopt(s *session) error {
 		return driver.ErrClosed
 	}
 	l.cur = s
-	l.schemaFails = 0
 	return nil
 }
 
-// failed counts schema failures.
-func (l *link) failed(err error) {
+// failed classifies a failed connect: a schema error (not a definition
+// flood) is a protocol mismatch, reported as one and held off. It returns
+// the error to report.
+func (l *link) failed(err error) error {
+	if errors.Is(err, errWalkLimit) || !errors.Is(err, errSchema) {
+		return err
+	}
+	l.noteMismatch(err)
+	return fmt.Errorf("%w: %w", ErrProtocolMismatch, err)
+}
+
+// noteMismatch holds dialing off for 1 s, 2 s, 4 s ... up to 30 s.
+func (l *link) noteMismatch(err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if errors.Is(err, ErrProtocolMismatch) {
-		return
+	hold := mismatchMaxHold
+	if l.mismatches < 5 {
+		hold = min(mismatchFirstHold<<l.mismatches, mismatchMaxHold)
 	}
-	if !errors.Is(err, errSchema) {
-		l.schemaFails = 0
-		return
-	}
-	if l.schemaFails++; l.schemaFails >= maxSchemaFailures {
-		l.mismatch = fmt.Errorf("%w: %w", ErrProtocolMismatch, err)
-	}
+	l.mismatches++
+	l.holdUntil, l.lastMismatch = time.Now().Add(hold), err
+}
+
+// healthy resets the mismatch count: a session ran for streamGrace.
+func (l *link) healthy() {
+	l.mu.Lock()
+	l.mismatches = 0
+	l.mu.Unlock()
 }
 
 // release forgets s as the current session (s is closing itself).
