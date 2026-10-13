@@ -119,7 +119,7 @@ func demoJourney(t *testing.T, fam string) {
 	synctest.Wait()
 	st := d.rec.last()
 	if st.Status != "live" || !st.Demo || st.Strips[0].Name != "Kick" || st.Strips[12].EffectiveMute == nil ||
-		!st.Strips[12].EffectiveMute.Muted {
+		!mutedTrue(st.Strips[12].EffectiveMute) {
 		t.Fatalf("live snapshot %+v", st)
 	}
 	assertDemoHeadamps(t, st, fam)

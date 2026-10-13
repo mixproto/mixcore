@@ -118,3 +118,43 @@ func TestSceneRecall_EndsEveryHold(t *testing.T) {
 		}
 	})
 }
+
+// Review H1: the console's own mute report (wing $mute) and a change of
+// the mute rules (wing /cfg/dcamgrp) both update effective mutes, with
+// unknown reported as unknown, never as live.
+func TestEffectiveMute_ConsoleReportAndRules(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		snap := stateWithGroups().WithMuteRules(model.MuteRules{MuteGroupMembershipUnknown: true})
+		drv := &fakeDriver{snapshot: snap}
+		sup := start(t, drv)
+		synctest.Wait()
+		sup.Drain()
+		desk := driver.Origin{Kind: driver.OriginConsole}
+		drv.session(0).push <- console(desk, mg2, model.Bool(true))
+		synctest.Wait()
+		if u := sup.Drain(); len(u.Effective) != 3 || u.Effective[0].Mute.Known || u.Effective[0].Mute.Basis != model.BasisPartial {
+			t.Fatalf("an engaged group of unknown membership: %+v", u.Effective)
+		}
+		on, _ := model.Index(model.ConsoleMuteOn)
+		drv.session(0).push <- console(desk, model.ParamRef{Strip: ch1, Field: model.FieldConsoleMute}, on)
+		synctest.Wait()
+		u := sup.Drain()
+		if len(u.Effective) != 1 || !u.Effective[0].Mute.Known || !u.Effective[0].Mute.Muted || u.Effective[0].Mute.Basis != model.BasisConsole {
+			t.Fatalf("the console's report: %+v", u.Effective)
+		}
+		drv.session(0).push <- driver.MuteRulesChanged{Rules: model.MuteRules{}}
+		synctest.Wait()
+		u = sup.Drain()
+		for _, e := range u.Effective {
+			if !e.Mute.Known {
+				t.Fatalf("rules changed, membership known: %+v", u.Effective)
+			}
+		}
+		if len(u.Effective) == 0 {
+			t.Fatal("rules changed: no effective change listed")
+		}
+		if r := sup.Snapshot().State.MuteRules(); r.MuteGroupMembershipUnknown {
+			t.Fatal("the state must carry the new rules")
+		}
+	})
+}

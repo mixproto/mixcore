@@ -207,7 +207,7 @@ func TestSimLoopback_X32MainCarriesMuteGroups(t *testing.T) {
 		if st.Type == "snapshot" && len(st.Strips) == 33 {
 			main := st.Strips[32]
 			if main.Kind != "main" || main.MuteGroups == nil || len(*main.MuteGroups) != 1 || (*main.MuteGroups)[0] != 3 ||
-				main.EffectiveMute == nil || !main.EffectiveMute.Muted {
+				!mutedTrue(main.EffectiveMute) {
 				t.Fatalf("main = %+v", main)
 			}
 			return

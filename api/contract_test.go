@@ -92,15 +92,15 @@ func TestStateJSON_Golden(t *testing.T) {
 	ex := stateExamples(t)
 	wantSnap := `{"version":0,"type":"snapshot","seq":1,"status":"live","console":{"name":"FOH","model":"X32"},` +
 		`"strips":[{"kind":"input","index":1,"name":"Kick","faderDB":-3.5,"mute":false,"muteGroups":[2],"dcas":[1],` +
-		`"effectiveMute":{"muted":true,"own":false,"muteGroups":[2],"dcas":[]}},` +
-		`{"kind":"main","name":"","faderDB":"-inf","mute":false,"muteGroups":[],"effectiveMute":{"muted":false,"own":false,"muteGroups":[],"dcas":[]}}],` +
+		`"effectiveMute":{"muted":true,"basis":"derived","own":false,"muteGroups":[2],"dcas":[]}},` +
+		`{"kind":"main","name":"","faderDB":"-inf","mute":false,"muteGroups":[],"effectiveMute":{"muted":false,"basis":"derived","own":false,"muteGroups":[],"dcas":[]}}],` +
 		`"muteGroups":[{"index":1,"mute":false},{"index":2,"mute":true}],"dcas":[{"index":1,"mute":false}],` +
 		`"events":[{"type":"externalChangeOnHeld","param":{"strip":{"kind":"main"},"field":"fader"},"clientId":"ios-1","value":-6,"origin":{"kind":"console"}},` +
 		`{"type":"holdCancelled","param":{"strip":{"kind":"main"},"field":"fader"},"clientId":"ios-2","reason":"stale"}]}`
 	wantDiff := `{"version":0,"type":"diff","seq":2,"status":"live","changes":[{"param":{"strip":{"kind":"main"},"field":"fader"},` +
 		`"value":-6,"origin":{"kind":"gesture","clientId":"ui","seq":3}},` +
 		`{"param":{"strip":{"kind":"muteGroup","index":2},"field":"mute"},"value":true,"origin":{"kind":"console"}},` +
-		`{"param":{"strip":{"kind":"input","index":1},"field":"effectiveMute"},"value":{"muted":true,"own":false,"muteGroups":[2],"dcas":[]},"origin":{"kind":"console"}}],` +
+		`{"param":{"strip":{"kind":"input","index":1},"field":"effectiveMute"},"value":{"muted":true,"basis":"derived","own":false,"muteGroups":[2],"dcas":[]},"origin":{"kind":"console"}}],` +
 		`"events":[{"type":"externalChangeOnHeld","param":{"strip":{"kind":"main"},"field":"fader"},"clientId":"ios-1","value":-6,"origin":{"kind":"console"}},` +
 		`{"type":"holdCancelled","param":{"strip":{"kind":"main"},"field":"fader"},"clientId":"ios-2","reason":"stale"}]}`
 	if string(ex[0]) != wantSnap {

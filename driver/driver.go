@@ -261,6 +261,13 @@ type ClientLimitHit struct {
 // ClientLimitCleared means updates arrive again after a ClientLimitHit.
 type ClientLimitCleared struct{}
 
+// MuteRulesChanged means the console changed a setting the effective-mute
+// rule depends on (wing /cfg/dcamgrp: whether a DCA mute mutes its
+// members). The state takes the new rules; no parameter changed.
+type MuteRulesChanged struct {
+	Rules model.MuteRules
+}
+
 // Scene recall confidences and signals (SceneRecalled).
 const (
 	ConfidenceHigh   = "high"   // a burst and the family's recall marker
@@ -291,6 +298,7 @@ func (SceneRecalled) isEvent()      {}
 func (StateReplaced) isEvent()      {}
 func (ClientLimitHit) isEvent()     {}
 func (ClientLimitCleared) isEvent() {}
+func (MuteRulesChanged) isEvent()   {}
 
 // Sentinel errors. Compare with errors.Is.
 var (

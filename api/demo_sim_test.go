@@ -134,7 +134,7 @@ func (s *demoSession) connected(t0 time.Time) {
 	pastor, _ := json.Marshal(st.Strips[12])
 	s.logf("input 13: %s", pastor)
 	s.logf("mute groups %v, DCAs %v", st.MuteGroups, st.DCAs)
-	if !st.Demo || st.Strips[12].EffectiveMute == nil || !st.Strips[12].EffectiveMute.Muted {
+	if !st.Demo || st.Strips[12].EffectiveMute == nil || !mutedTrue(st.Strips[12].EffectiveMute) {
 		s.t.Fatalf("snapshot %+v", st)
 	}
 }

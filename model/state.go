@@ -97,7 +97,14 @@ const (
 	FieldSendOn
 	FieldSendPan
 	FieldSendTap
+	// FieldConsoleMute is the console's own report of an input or main
+	// strip's effective mute (ConsoleMute* in mute.go). Internal: it feeds
+	// EffectiveMute and is never a field clients name (ParseField refuses it).
+	FieldConsoleMute
 )
+
+// consoleMuteName is the String of the internal FieldConsoleMute.
+const consoleMuteName = "consoleMute"
 
 var fieldNames = map[Field]string{
 	FieldFader: "fader", FieldMute: "mute", FieldName: "name", FieldMuteGroups: "muteGroups", FieldDCAs: "dcas",
@@ -106,6 +113,9 @@ var fieldNames = map[Field]string{
 }
 
 func (f Field) String() string {
+	if f == FieldConsoleMute {
+		return consoleMuteName
+	}
 	if s, ok := fieldNames[f]; ok {
 		return s
 	}
@@ -135,7 +145,7 @@ func (f Field) ValueKind() ValueKind {
 		return KindTap
 	case FieldColour:
 		return KindColour
-	case FieldHeadamp:
+	case FieldHeadamp, FieldConsoleMute:
 		return KindIndex
 	case FieldName:
 		return KindText
@@ -175,6 +185,8 @@ type Strip struct {
 	Headamp    int    // input strips: the headamp feeding it, 0 = none
 	Colour     Colour // with Shape.Colours
 	Linked     bool   // the odd bus of a linkable pair, with Shape.BusLinks
+	// ConsoleMute is the console's own effective-mute report (ConsoleMute*).
+	ConsoleMute int
 }
 
 // Value returns the value of field f.
@@ -205,6 +217,9 @@ func (s Strip) Value(f Field) (Value, bool) {
 		return v, err == nil
 	case FieldLinked:
 		return Bool(s.Linked), s.Ref.Kind == StripBus
+	case FieldConsoleMute:
+		v, err := Index(s.ConsoleMute)
+		return v, err == nil
 	default:
 		return Value{}, false
 	}
@@ -236,6 +251,12 @@ func (s Strip) with(f Field, v Value) (Strip, error) {
 		s.Colour, _ = v.Colour()
 	case FieldLinked:
 		s.Linked, _ = v.Bool()
+	case FieldConsoleMute:
+		n, _ := v.Index()
+		if n > consoleMuteMax {
+			return s, fmt.Errorf("%s %s %d: %w", s.Ref, f, n, ErrInvalidValue)
+		}
+		s.ConsoleMute = n
 	case FieldName:
 		s.Name, _ = v.Text()
 	default:
@@ -266,6 +287,7 @@ type State struct {
 	matrices   []Strip   // by matrix number - 1
 	sends      [][]Send  // [input - 1][position in buses]; rows are replaced, never changed in place
 	shape      Shape
+	rules      MuteRules
 }
 
 // NewState builds a state from input strips numbered 1..n in order and an
@@ -416,10 +438,14 @@ type Capabilities struct {
 	DCAs         int
 	// MainMuteGroups: the main strip has a mute-group membership (x32 yes,
 	// xair no). Without it the main's MuteGroups field is not modelled.
-	MainMuteGroups  bool
-	InputMeters     bool
-	EchoesOwnWrites bool
-	MaxPushClients  int
+	MainMuteGroups bool
+	// MuteGroupMembershipUnknown: the console does not report which mute
+	// groups a strip belongs to (wing, item 11); strips carry none and the
+	// state's MuteRules say so.
+	MuteGroupMembershipUnknown bool
+	InputMeters                bool
+	EchoesOwnWrites            bool
+	MaxPushClients             int
 	// Buses that answered, sorted by index (core-api v0.4); the state
 	// carries the same list (State.BusInfos) and which send fields exist
 	// (State.Shape).

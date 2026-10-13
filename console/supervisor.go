@@ -500,6 +500,10 @@ func (s *Supervisor) handleEvent(ev driver.Event) {
 			s.scenes = append(s.scenes, e)
 		}
 		s.signal()
+	case driver.MuteRulesChanged:
+		s.state = s.state.WithMuteRules(e.Rules)
+		s.eff.update(s.state, driver.Origin{Kind: driver.OriginConsole}, !s.full)
+		s.signal()
 	case driver.ClientLimitCleared:
 		s.cfg.Logger.Info("console: updates arrive again")
 		s.limited = ""
