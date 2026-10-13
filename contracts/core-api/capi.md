@@ -1,9 +1,9 @@
-# mixcore core API v0.3: C ABI (`capi/`)
+# mixcore core API v0.5: C ABI (`capi/`)
 
 The c-shared build of the core API: `mixcore.dll` on Windows (P/Invoke from C#), `libmixcore.dylib` / `libmixcore.so`
 for interop tests on macOS and Linux. `go build -buildmode=c-shared` writes the header next to the library
 (`mixcore.h` / `libmixcore.h`); read names from that header, never from memory. Same calls and safety rules as
-`README.md`; this file only adds the C-level rules. v0.2 (family `xair`) changes no C signature, status code or memory rule; v0.3 adds `MixGesture`, `MixStartDemo`, `MixStopDemo` and status codes 15 to 17.
+`README.md`; this file only adds the C-level rules. v0.2 (family `xair`) changes no C signature, status code or memory rule; v0.3 adds `MixGesture`, `MixStartDemo`, `MixStopDemo` and status codes 15 to 17. v0.4 and v0.5 change no C signature or status code: the v0.5 commands (`undo`, `cancelHold`, `watch`, `setFavourites`, `lockShowMode`, `unlockShowMode`) go through `MixApply` / `MixGesture`, and the meter frame grows within `MIX_METER_FRAME_MAX_BYTES` (x32 50 levels, xair 28).
 
 ## Memory and strings
 - Strings in are UTF-8, NUL-terminated `char*`. They are copied on entry; the caller may free them as soon as the call returns.

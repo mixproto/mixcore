@@ -70,11 +70,12 @@ behave the same and a UI bug cannot bypass them:
 
   The wire maximum (`maxDB`, f = 1.0) is read but never written until hardware confirms it (xair.md item 22, x32.md
   item 17; XS10 avoids it): each entry's `writeMaxDB` is the top a write may reach (+59.5 mic, +19.5 line); a set above
-  it is `ERR_INVALID_VALUE`, and a Gain gesture's cap stops there. Rule (lead decision, review pass 4): if hardware
-  (x32.md item 17, xair.md item 22) shows that a family does not echo Gain writes, that family's Gain becomes read-only
-  (`writable: false`): the in-flight bound would otherwise rest on re-reads alone. Until then, on a console that does
-  not echo Gain, a hold that has 8 values in flight stops at `atCap` in both directions, lowerings included, until the
-  next re-read ends them (intended: the core cannot know where the console is; lift and drag again after the re-read).
+  it is `ERR_INVALID_VALUE`, and a Gain hold's window ends there (`atCap`, v0.5). Rule (lead decision, review pass 4): if
+  hardware (x32.md item 17, xair.md item 22) shows that a family does not echo Gain writes, that family's Gain becomes
+  read-only (`writable: false`): the in-flight bound would otherwise rest on re-reads alone. v0.4: on a console that does
+  not echo Gain, a hold that had 8 values in flight stopped at `atCap` until the next re-read. **v0.5 (CC-3)**: the
+  driver reads an unechoed Gain write back within 250 ms (the settle re-read, rule 8) and the in-flight count never
+  stops a hold, so whether the read-only rule still applies is the lead's call after the hardware session.
 
   The index is a model number, never UI text: the UI names a headamp by `bank` and `number` ("Local 1", "AES50 A 05",
   "Aux"). On x32 an input's `headamp` field says which headamp feeds it (`null`: none, the channel has no Gain); xair
@@ -147,7 +148,7 @@ valid (CC-1 to CC-3); a v0.4 app keeps working, it just never meets a wall or a 
 | Undo | command `undo` (and `confirmed`); state `undo`: the newest entry per client with what an undo of it would ask (rule 14) | CC-6, CC-9, SR-13, SR-29 |
 | Cancel a held move | command `cancelHold`: one write of the grab value, the hold ends, no history entry (rule 14) | CC-9, AC-RD-U04 |
 | Favourites | config `favourites`, command `setFavourites`, state `favourites`: one ordered user layer per console (strip refs, at most 32); never written to the console (rule 17) | CC-7, D-23 |
-| Scene recall | `sceneRecalledAtConsole` gains `sceneNumber` (the loaded scene when the console reports one) and `sceneName` (when the core knows it); the undo history is cut at it | CC-10, SR-34 |
+| Scene recall | `sceneRecalledAtConsole` gains `sceneNumber` (the loaded scene when the console reports one: xair) and `sceneName` (when the core knows it: no family yet, the name read waits for a lead decision); the undo history is cut at it | CC-10, SR-34 |
 | Watch | command `watch` names the bus on screen; event `externalChangeInScope` when anyone else changes it (rule 15) | CC-11, SR-34 |
 | Show mode PIN | commands `lockShowMode` and `unlockShowMode` with a 4-digit `pin`; config `safety.showModeLock`; state `showModeLocked`; the `Gesture` result of `lockShowMode` carries the hashed `pinRecord` to store (rule 16) | CC-12, CR-31 |
 | Bus meters | the meter frame carries the bus meters between the inputs and Main L/R (Main stays last); snapshot `buses[].meterIndex` (`meter-frame.md`) | CC-13, CR-32 |
