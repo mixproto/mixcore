@@ -67,6 +67,11 @@ type Options struct {
 	// pushes /-snap/index to subscribers. False (default): only the changed
 	// parameters are pushed.
 	PushSnapIndex bool
+	// NoGainPush: [TO-VERIFY] XA-F116 (item 22): a client's
+	// /headamp/NN/gain write is applied but pushed to nobody, so the client
+	// never sees its echo. False (default) pushes it like any change; a
+	// change at the surface is pushed either way.
+	NoGainPush bool
 	// InputChannels and Buses: [TO-VERIFY] XA-F72, test item 12. The vendor
 	// tables give 16 and 6 for every model (default); XS6/XS11 model an XR12
 	// as 12 and 2, an XR16 as 16 and 4. Strips above the count do not answer.
@@ -160,7 +165,15 @@ func New(opts Options) *Sim {
 		EvictOldestWhenFull: opts.EvictOldestWhenFull, EchoToSender: !opts.NoEchoToSender,
 		ReplyToSet: opts.ReplyToSet, SlotForAnySender: opts.SlotForAnySender,
 		MeterTTL: opts.MeterTTL, MeterInterval: opts.MeterInterval,
-		Logger: opts.Logger, Params: params, Family: (*family)(s),
+		Logger: opts.Logger, Params: params, Family: (*family)(s), SilentWrite: silentGain(opts.NoGainPush),
 	})
 	return s
+}
+
+// silentGain is the SilentWrite of the NoGainPush variant (nil when off).
+func silentGain(on bool) func(string) bool {
+	if !on {
+		return nil
+	}
+	return oscsim.IsHeadampGain
 }

@@ -9,6 +9,7 @@ import (
 	"maps"
 	"net/netip"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/mixproto/mixcore/internal/osc"
@@ -97,11 +98,22 @@ func (c *Core) dispatch(now time.Time, from netip.AddrPort, m *osc.Message) []Ou
 // writeEcho is what an applied client write sends: pushes to subscribers and,
 // with ReplyToSet, a reply to a sender that got no push.
 func (c *Core) writeEcho(now time.Time, addr string, v *Value, from netip.AddrPort) []Outgoing {
+	if c.cfg.SilentWrite != nil && c.cfg.SilentWrite(addr) {
+		return nil
+	}
 	out := c.PushLocked(now, addr, v, from, c.cfg.EchoToSender)
 	if !c.cfg.ReplyToSet || slices.ContainsFunc(out, func(o Outgoing) bool { return o.To == from }) {
 		return out
 	}
 	return append(out, c.Reply(from, addr, v.Arg())...)
+}
+
+// IsHeadampGain reports a headamp gain address, /headamp/<n>/gain, which
+// both families use (X32-F70, XA-F110).
+func IsHeadampGain(addr string) bool {
+	rest, ok := strings.CutPrefix(addr, "/headamp/")
+	n, field, _ := strings.Cut(rest, "/")
+	return ok && n != "" && field == "gain"
 }
 
 // RecordLocked appends an entry to the write log. Callers hold the lock.

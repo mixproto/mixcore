@@ -66,11 +66,15 @@ type Config struct {
 	ReplyToSet bool
 	// SlotForAnySender: every sending port takes a client-table slot.
 	SlotForAnySender bool
-	MeterTTL         time.Duration
-	MeterInterval    time.Duration
-	Logger           *slog.Logger
-	Params           map[string]*Value
-	Family           Family
+	// SilentWrite: a client write to an address it reports true for is
+	// applied (and read back) but pushed to nobody and answered to nobody
+	// (the "no Gain echo" variant, X32-F79, XA-F116). nil: none.
+	SilentWrite   func(addr string) bool
+	MeterTTL      time.Duration
+	MeterInterval time.Duration
+	Logger        *slog.Logger
+	Params        map[string]*Value
+	Family        Family
 }
 
 // Outgoing is one packet to send once the lock is released.
