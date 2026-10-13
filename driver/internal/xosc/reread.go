@@ -17,14 +17,22 @@ import (
 // (X32-F07) and spread over a few seconds.
 const rereadBatch = ReadWindow
 
+// rereadSlice is how many v0.4 parameters (sends, buses, colours, links,
+// matrices, DCA masters) one pass re-reads after all the v0.3 ones
+// (faders, mutes, Gain, groups: lead decision OQ 67, review Go S3). The
+// slice rotates, so every v0.4 parameter comes round in ceil(n/256)
+// passes; x32.md "Background re-read" states the bounds.
+const rereadSlice = 256
+
 // rereadPass is the owner-goroutine state of a background re-read.
 type rereadPass struct {
 	active bool
 	// wanted: a requested pass waits for RereadGap after endedAt.
 	wanted  bool
 	endedAt time.Time
-	skip    map[int]bool // parameters left out of the current pass (held)
-	next    int          // next parameter index to read
+	order   []int // parameter indexes of the current pass: every v0.3 one, then a slice of the rest
+	sliceAt int   // where the next slice of v0.4 parameters starts (index - v03)
+	next    int   // next position in order to read
 	// asked holds the parameters read in the current step. The value is true
 	// once the read is superseded (see markTouched).
 	asked map[int]bool
@@ -50,11 +58,53 @@ func (s *session) RereadExcept(skip []model.ParamRef) error {
 			set[s.params.index(p)] = true
 		}
 	}
+	s.setSkip(set)
+	signal(s.rereadReady)
+	return nil
+}
+
+var _ driver.HeldSetter = (*session)(nil)
+
+// SetHeld implements driver.HeldSetter: the parameters a person holds now;
+// the next re-read batch leaves them out. It never writes.
+func (s *session) SetHeld(held []model.ParamRef) {
+	set := map[int]bool{}
+	for _, p := range held {
+		if _, ok := s.params.byRef(p); ok {
+			set[s.params.index(p)] = true
+		}
+	}
+	s.setSkip(set)
+}
+
+func (s *session) setSkip(set map[int]bool) {
 	s.mu.Lock()
 	s.rrSkip = set
 	s.mu.Unlock()
-	signal(s.rereadReady)
-	return nil
+}
+
+func (s *session) skipNow() map[int]bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rrSkip
+}
+
+// passOrder lists the indexes of a pass: every v0.3 parameter, then the
+// next rereadSlice v0.4 ones, rotating.
+func (s *session) passOrder() []int {
+	order := s.rr.order[:0]
+	v03, slow := s.params.v03, len(s.params.all)-s.params.v03
+	for i := range v03 {
+		order = append(order, i)
+	}
+	n := min(rereadSlice, slow)
+	for k := range n {
+		order = append(order, v03+(s.rr.sliceAt+k)%slow)
+	}
+	if slow > 0 {
+		s.rr.sliceAt = (s.rr.sliceAt + n) % slow
+	}
+	return order
 }
 
 // requestReread starts a requested pass, or defers it while a pass runs
@@ -81,9 +131,7 @@ func (s *session) startReread(now time.Time) {
 		return
 	}
 	s.rr.active, s.rr.next = true, 0
-	s.mu.Lock()
-	s.rr.skip, s.rrSkip = s.rrSkip, nil
-	s.mu.Unlock()
+	s.rr.order = s.passOrder()
 	s.passStarted()
 	s.live.lastStep = now // this is the pass's first step: the next one waits PingEvery, or its replies would be dropped
 	s.rereadStep(now)
@@ -103,16 +151,17 @@ func (s *session) rereadStep(now time.Time) {
 	if !s.rr.active {
 		return
 	}
-	for sent := 0; sent < rereadBatch && s.rr.next < len(s.params.all); s.rr.next++ {
-		idx := s.rr.next
-		if s.writtenRecently(idx, now) || s.isAbsent(s.params.all[idx]) || s.rr.skip[idx] {
+	skip := s.skipNow() // per batch: a hold begun mid-pass is left out at once (review Go S3)
+	for sent := 0; sent < rereadBatch && s.rr.next < len(s.rr.order); s.rr.next++ {
+		idx := s.rr.order[s.rr.next]
+		if s.writtenRecently(idx, now) || s.isAbsent(s.params.all[idx]) || skip[idx] {
 			continue // a gesture is moving it (its echo keeps us in sync), or the console lacks it
 		}
 		s.sendRead(s.params.all[idx].addr)
 		s.rr.asked[idx] = false
 		sent++
 	}
-	if s.rr.next >= len(s.params.all) {
+	if s.rr.next >= len(s.rr.order) {
 		s.rr.active, s.lim.evaluate, s.rr.endedAt = false, true, now
 	}
 }

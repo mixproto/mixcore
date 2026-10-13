@@ -237,6 +237,10 @@ type paramTable struct {
 	byAddr map[string]int
 	byPar  map[model.ParamRef]int
 	layout Layout
+	// v03 is the number of v0.3 parameters (faders, mutes, names, groups,
+	// Gain); every one after them is a v0.4 parameter (buses.go). The
+	// background re-read reads the first every pass, the rest in slices.
+	v03 int
 }
 
 func newParamTable(l Layout) paramTable {
@@ -270,6 +274,7 @@ func newParamTable(l Layout) paramTable {
 			addr: fmt.Sprintf("/dca/%d/on", d), typ: osc.TypeInt, conv: convOnSwitch, feature: featureDCAs})
 	}
 	t.addHeadamps(l)
+	t.v03 = len(t.all)
 	t.addV04(l)
 	return t
 }
@@ -339,6 +344,13 @@ func (d *Driver) Addresses() []string {
 		out[i] = p.addr
 	}
 	return out
+}
+
+// RereadPassLen is how many parameters one background re-read pass reads
+// at most: every v0.3 parameter and one slice of the v0.4 ones (absent
+// ones are skipped). With 16 reads per ping it bounds a pass's length.
+func (d *Driver) RereadPassLen() int {
+	return d.params.v03 + min(rereadSlice, len(d.params.all)-d.params.v03)
 }
 
 // Address returns the console address of a model parameter.

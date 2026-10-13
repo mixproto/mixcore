@@ -74,8 +74,8 @@ func TestIdleEngine_RereadsInTheBackgroundButNeverWrites(t *testing.T) {
 		synctest.Wait()
 		// The supervisor asks every 15 s; a pass starts 15 s after the
 		// previous one ended, so ch 1 is read every 15 s + one pass, never
-		// back to back. Since core-api v0.4 (sends) an x32 pass is the whole
-		// table at 16 reads per second, about two minutes.
+		// back to back. Since core-api v0.4 a pass is every v0.3 parameter
+		// and one slice of the sends (RereadPassLen) at 16 reads per second.
 		var at []time.Time
 		for _, entry := range e.sim.Log() {
 			if entry.Class == simx32.ClassRead && entry.Address == "/ch/01/mix/fader" {
@@ -83,7 +83,7 @@ func TestIdleEngine_RereadsInTheBackgroundButNeverWrites(t *testing.T) {
 			}
 		}
 		const readsPerPass = 16 // per second, driver/internal/xosc ReadWindow (X32-F07)
-		pass := time.Duration(len(x32.New(x32.Config{}).Addresses())/readsPerPass) * time.Second
+		pass := time.Duration(x32.New(x32.Config{}).RereadPassLen()/readsPerPass) * time.Second
 		minEvery, maxEvery := console.DefaultRereadEvery+pass-10*time.Second, console.DefaultRereadEvery+pass+10*time.Second
 		if len(at) < int(time.Hour/maxEvery) {
 			t.Fatalf("ch1 fader read %d times in an hour, want at least %d", len(at), int(time.Hour/maxEvery))

@@ -221,6 +221,7 @@ func (s *Supervisor) SetClientRole(clientID string, r Role) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.safe.roles[clientID] = r
+	defer s.syncHeldLocked()
 	s.recheckHoldsLocked(func(c string) bool { return c == clientID })
 	for k := range s.holds.active {
 		if _, ok := s.safe.windows[k]; ok && k.client == clientID {

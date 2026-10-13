@@ -110,3 +110,35 @@ func TestReread_NotWhileStaleAndOffWhenNegative(t *testing.T) {
 		}
 	})
 }
+
+// Review Go S3: the session hears of every change of the held parameters
+// at once (driver.HeldSetter), so a re-read pass already running leaves a
+// fresh hold out from its next batch; an external change that ends a hold
+// clears it too.
+func TestReread_HoldChangesReachTheSessionAtOnce(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		drv := &fakeDriver{snapshot: stateWith(-6), selective: true}
+		sup, err := New(Config{Driver: drv, Rand: func() float64 { return 0.5 }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sup.Start(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		defer sup.Stop()
+		synctest.Wait()
+		if err := sup.Hold(ch1Fader, gesture, true); err != nil {
+			t.Fatal(err)
+		}
+		calls := drv.session(0).heldCalls()
+		if len(calls) == 0 || len(calls[len(calls)-1]) != 1 || calls[len(calls)-1][0] != ch1Fader {
+			t.Fatalf("SetHeld calls after holdBegin: %v", calls)
+		}
+		drv.session(0).push <- driver.ParamChanged{Param: ch1Fader, Value: lvl(t, -20), Origin: driver.Origin{Kind: driver.OriginConsole}}
+		synctest.Wait()
+		calls = drv.session(0).heldCalls()
+		if last := calls[len(calls)-1]; len(last) != 0 {
+			t.Fatalf("after the desk ended the hold the session still skips %v", last)
+		}
+	})
+}

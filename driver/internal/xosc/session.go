@@ -71,7 +71,7 @@ type session struct {
 
 	mu      sync.Mutex
 	order   []int                // pending parameter indexes, first-seen order
-	rrSkip  map[int]bool         // parameters to leave out of the next re-read pass (held)
+	rrSkip  map[int]bool         // held parameters the re-read leaves out, read per batch; replaced, never changed in place
 	pending map[int]pendingWrite // latest value per parameter (coalesced)
 
 	done        chan struct{} // closed by Close

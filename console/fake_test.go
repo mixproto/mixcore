@@ -94,6 +94,7 @@ type fakeSession struct {
 	skips   [][]model.ParamRef // RereadExcept calls (selective sessions)
 	failing error              // Apply returns it (a send that failed)
 	onApply func()             // called at the start of Apply (tests of lock order)
+	held    [][]model.ParamRef // SetHeld calls (selective sessions)
 }
 
 // failApplies makes Apply return err (nil: succeed again).
@@ -105,6 +106,18 @@ func (s *fakeSession) failApplies(err error) {
 
 // selectiveSession is a fakeSession that can leave held parameters out of a re-read.
 type selectiveSession struct{ *fakeSession }
+
+func (s selectiveSession) SetHeld(held []model.ParamRef) {
+	s.mu.Lock()
+	s.held = append(s.held, held)
+	s.mu.Unlock()
+}
+
+func (s *fakeSession) heldCalls() [][]model.ParamRef {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([][]model.ParamRef(nil), s.held...)
+}
 
 func (s selectiveSession) RereadExcept(skip []model.ParamRef) error {
 	s.mu.Lock()

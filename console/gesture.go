@@ -209,6 +209,7 @@ func (s *Supervisor) HoldWindowWith(p model.ParamRef, origin driver.Origin, held
 	k := holdKey{param: p, client: origin.ClientID}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer s.syncHeldLocked()
 	if held {
 		if err := s.checkRoleLocked(p, origin); err != nil {
 			return Result{}, err

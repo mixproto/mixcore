@@ -192,6 +192,14 @@ type SelectiveRereader interface {
 	RereadExcept(skip []model.ParamRef) error
 }
 
+// HeldSetter is implemented by sessions whose background re-read leaves
+// held parameters out from the next batch on, not only from the next
+// pass: the supervisor calls SetHeld whenever the set of held parameters
+// changes (review Go S3). It never blocks and never writes.
+type HeldSetter interface {
+	SetHeld(held []model.ParamRef)
+}
+
 // Event is emitted by Session.Run.
 type Event interface{ isEvent() }
 

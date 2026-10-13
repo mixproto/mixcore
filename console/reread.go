@@ -5,6 +5,8 @@
 package console
 
 import (
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/mixproto/mixcore/driver"
@@ -27,6 +29,29 @@ func (s *Supervisor) rereadTicker(sess driver.Session) (driver.Rereader, <-chan 
 	}
 	t := time.NewTicker(s.cfg.RereadEvery)
 	return rr, t.C, t.Stop
+}
+
+// syncHeldLocked tells a session that implements driver.HeldSetter the
+// parameters held now, when they changed, so a re-read pass already
+// running leaves a fresh hold out from its next batch (review Go S3).
+// SetHeld never blocks and never calls back. Callers hold mu.
+func (s *Supervisor) syncHeldLocked() {
+	hs, ok := s.sess.(driver.HeldSetter)
+	if !ok {
+		return
+	}
+	held := make([]model.ParamRef, 0, len(s.holds.active))
+	for k := range s.holds.active {
+		if !slices.Contains(held, k.param) {
+			held = append(held, k.param)
+		}
+	}
+	slices.SortFunc(held, func(a, b model.ParamRef) int { return strings.Compare(a.String(), b.String()) })
+	if s.heldSent != nil && slices.Equal(held, *s.heldSent) {
+		return
+	}
+	s.heldSent = &held
+	hs.SetHeld(held)
 }
 
 // reread asks the session for one read-only pass while live. Held
