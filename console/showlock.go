@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/mixproto/mixcore/driver"
 )
@@ -34,8 +33,6 @@ const (
 	pinMaxIterations = 1000000
 	pinSaltBytes     = 16
 	pinKeyBytes      = 32
-	pinMaxFailures   = 5                // wrong PINs before the lockout
-	pinLockout       = 30 * time.Second // design value (lead may tune)
 )
 
 // ErrPINRecord: a show-mode PIN record the core cannot read.
@@ -67,7 +64,7 @@ func newPINRecord(pin string) (pinRecord, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return pinRecord{}, fmt.Errorf("console: PIN salt: %w", err)
 	}
-	key, err := pbkdf2.Key(sha256.New, pin, salt, pinIterations, pinKeyBytes)
+	key, err := pinHash(pin, salt, pinIterations)
 	if err != nil {
 		return pinRecord{}, fmt.Errorf("console: PIN hash: %w", err)
 	}
@@ -98,19 +95,24 @@ func parsePINRecord(s string) (pinRecord, error) {
 }
 
 func (r pinRecord) matches(pin string) bool {
-	key, err := pbkdf2.Key(sha256.New, pin, r.salt, r.iter, pinKeyBytes)
+	key, err := pinHash(pin, r.salt, r.iter)
 	return err == nil && subtle.ConstantTimeCompare(key, r.key) == 1
+}
+
+// pinHash derives the key of a PIN (a variable so tests can count hashes).
+var pinHash = func(pin string, salt []byte, iter int) ([]byte, error) {
+	return pbkdf2.Key(sha256.New, pin, salt, iter, pinKeyBytes)
 }
 
 // showLock is the PIN lock state. Guarded by Supervisor.mu.
 type showLock struct {
-	record   *pinRecord // nil: not locked
-	failures int
-	until    time.Time // wrong PINs locked out until then
+	record *pinRecord // nil: not locked
+	guard  pinGuard   // online guessing limits (pinguard.go)
 }
 
 // LockShowMode turns show mode on and locks it with pin (owner only) and
-// returns the record to store. It writes nothing.
+// returns the record to store. It ends every Gain unlock and its undo grace
+// (review sec M2). It writes nothing.
 func (s *Supervisor) LockShowMode(origin driver.Origin, pin string) (string, error) {
 	if !origin.MayWrite() {
 		return "", driver.ErrNotUserOrigin
@@ -135,49 +137,40 @@ func (s *Supervisor) LockShowMode(origin driver.Origin, pin string) (string, err
 	}
 	s.lock = showLock{record: &rec}
 	s.safe.showMode = true
+	s.safe.unlocks.endAll(UnlockShowModeLocked)
+	clear(s.safe.unlocks.relocked) // no undo grace survives the lock (sec M2)
 	s.signal()
 	return rec.String(), nil
 }
 
 // UnlockShowMode removes the PIN lock with the right PIN (owner or
-// engineer). Show mode stays on. A wrong PIN is ErrRole; after
-// pinMaxFailures wrong PINs every attempt is ErrRole for pinLockout.
+// engineer). Show mode stays on. A wrong PIN is ErrRole; the attempt is
+// reserved before the hash and counted per client and in total
+// (pinguard.go).
 func (s *Supervisor) UnlockShowMode(origin driver.Origin, pin string) error {
 	if !origin.MayWrite() {
 		return driver.ErrNotUserOrigin
 	}
 	s.mu.Lock()
-	rec, err := s.pinAttemptLocked(origin)
+	rec, c, err := s.reservePINLocked(origin)
 	s.mu.Unlock()
 	if err != nil {
 		return err
 	}
-	ok := ValidPIN(pin) && rec.matches(pin) // the hash runs outside mu
+	ok := ValidPIN(pin) && rec.matches(pin) // the hash runs outside mu, one at a time
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.lock.record != rec { // relocked or unlocked meanwhile: the attempt counts for nothing
+		s.lock.guard.hashing = false
+		return fmt.Errorf("%w: the show mode lock changed", ErrRole)
+	}
+	s.settlePINLocked(origin, c, !ok)
 	if !ok {
-		if s.lock.failures++; s.lock.failures >= pinMaxFailures {
-			s.lock.failures, s.lock.until = 0, time.Now().Add(pinLockout)
-		}
 		return fmt.Errorf("%w: wrong PIN", ErrRole)
 	}
 	s.lock = showLock{}
 	s.signal()
 	return nil
-}
-
-// pinAttemptLocked checks that a PIN may be tried now and returns the record.
-func (s *Supervisor) pinAttemptLocked(origin driver.Origin) (pinRecord, error) {
-	if err := s.checkConsoleRoleLocked(origin); err != nil {
-		return pinRecord{}, err
-	}
-	if s.lock.record == nil {
-		return pinRecord{}, fmt.Errorf("%w: show mode is not locked", driver.ErrUnsupported)
-	}
-	if time.Now().Before(s.lock.until) {
-		return pinRecord{}, fmt.Errorf("%w: too many wrong PINs, wait", ErrRole)
-	}
-	return *s.lock.record, nil
 }
 
 // showLockedLocked reports the PIN lock. Callers hold mu.

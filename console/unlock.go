@@ -29,6 +29,9 @@ const (
 	UnlockStale       = "stale"
 	UnlockStopped     = "stopped"
 	UnlockShowModeOff = "showModeOff"
+	// UnlockShowModeLocked: the owner locked show mode with a PIN (CC-12,
+	// review sec M2).
+	UnlockShowModeLocked = "showModeLocked"
 )
 
 // UnlockEvent reports a Gain unlock that ended (SR-27).
