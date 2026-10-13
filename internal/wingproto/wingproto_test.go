@@ -247,3 +247,16 @@ func TestParse_UndefinedBytesRejected(t *testing.T) {
 		}
 	}
 }
+
+// TestParseDef_EnumItemCap (review H2).
+func TestParseDef_EnumItemCap(t *testing.T) {
+	items := make([]EnumItem, MaxEnumItems+1)
+	body, _ := AppendDefBody(nil, Def{Name: "e", Type: TypeStringEnum, Items: items})
+	if _, err := ParseDef(body); !errors.Is(err, ErrBadDef) {
+		t.Fatalf("%d items: %v", len(items), err)
+	}
+	body, _ = AppendDefBody(nil, Def{Name: "e", Type: TypeStringEnum, Items: items[:MaxEnumItems]})
+	if _, err := ParseDef(body); err != nil {
+		t.Fatalf("%d items: %v", MaxEnumItems, err)
+	}
+}

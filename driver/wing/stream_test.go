@@ -122,3 +122,15 @@ func TestAssembler_UndefinedTokenDropsStream(t *testing.T) {
 		t.Fatalf("%v %+v", err, msgs)
 	}
 }
+
+// TestAssembler_DefinitionsOutsideAWalkAreSkipped (review H2).
+func TestAssembler_DefinitionsOutsideAWalkAreSkipped(t *testing.T) {
+	body, _ := wingproto.AppendDefBody(nil, wingproto.Def{Hash: 1, Name: "x", Type: wingproto.TypeInt})
+	stream := append(wingproto.AppendDefToken(nil, body), hexBytes(t, "D7 38AE75C2 D5 C1200000")...)
+	asm := assembler{skipDefs: func() bool { return true }}
+	var got []inMsg
+	_, _ = asm.feed(stream, time.Time{}, func(m inMsg) bool { got = append(got, m); return true })
+	if len(got) != 1 || got[0].kind != msgValue {
+		t.Fatalf("messages %+v", got)
+	}
+}

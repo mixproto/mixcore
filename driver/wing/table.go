@@ -76,6 +76,22 @@ const (
 	convIdentity                    // string, identity (wing.md 3.5, internal)
 )
 
+// leafType is the node type each conversion expects (WG-F33): a fader is
+// a fader level, a mute an int (review H2). A leaf of another type is not
+// the parameter mixcore models: absent, or a schema error when required.
+var leafType = map[conv]wingproto.NodeType{
+	convFader: wingproto.TypeFader, convMute: wingproto.TypeInt, convName: wingproto.TypeString,
+	convTags: wingproto.TypeString, convGain: wingproto.TypeLinFloat, convPhantom: wingproto.TypeInt,
+	convSrcGroup: wingproto.TypeStringEnum, convSrcIndex: wingproto.TypeInt, convDCAMgrp: wingproto.TypeInt,
+	convTCPLock: wingproto.TypeInt, convIdentity: wingproto.TypeString, convConsoleMute: wingproto.TypeInt,
+}
+
+// leaf returns the definition at path when it has the type c expects.
+func leaf(defs map[string]wingproto.Def, path string, c conv) (wingproto.Def, bool) {
+	d, ok := defs[path]
+	return d, ok && d.Type == leafType[c]
+}
+
 // param is one console parameter the session reads (and maybe writes).
 type param struct {
 	ref       model.ParamRef // zero for internal parameters
@@ -134,7 +150,7 @@ func buildTable(defs map[string]wingproto.Def) (*table, error) {
 		path string
 		c    conv
 	}{{pathDCAMgrp, convDCAMgrp}, {pathTCPLock, convTCPLock}, {pathFirmware, convIdentity}, {pathModel, convIdentity}, {pathName, convIdentity}} {
-		if d, ok := defs[p.path]; ok {
+		if d, ok := leaf(defs, p.path, p.c); ok {
 			i := t.add(param{path: p.path, hash: d.Hash, conv: p.c, readOnly: true})
 			if p.c == convIdentity {
 				t.identity[p.path] = i
@@ -171,13 +187,13 @@ func pref(kind model.StripKind, index int, f model.Field) model.ParamRef {
 
 // addStripCore adds fader, mute and name of one strip root; all required.
 func (t *table) addStripCore(defs map[string]wingproto.Def, root string, s model.StripRef) error {
-	fdr, okF := defs[root+"/"+leafFader]
-	mute, okM := defs[root+"/"+leafMute]
-	name, okN := defs[root+"/"+leafName]
+	fdr, okF := leaf(defs, root+"/"+leafFader, convFader)
+	mute, okM := leaf(defs, root+"/"+leafMute, convMute)
+	name, okN := leaf(defs, root+"/"+leafName, convName)
 	if !okF || !okM || !okN {
-		return fmt.Errorf("%w: %s fdr, mute or name", errSchema, root)
+		return fmt.Errorf("%w: %s fdr, mute or name missing or of another type", errSchema, root)
 	}
-	shown, okS := defs[root+"/"+leafShownName]
+	shown, okS := leaf(defs, root+"/"+leafShownName, convName)
 	if !okS {
 		shown = name // without $name, read name itself
 	}
@@ -219,7 +235,7 @@ func (t *table) addInputs(defs map[string]wingproto.Def) error {
 
 // optional adds p when its path is in the schema; -1 when it is not.
 func (t *table) optional(defs map[string]wingproto.Def, p param) int {
-	d, ok := defs[p.path]
+	d, ok := leaf(defs, p.path, p.conv)
 	if !ok {
 		return -1
 	}
@@ -244,7 +260,7 @@ func (t *table) addGroups(defs map[string]wingproto.Def, root string, limit int,
 	n := 0
 	for ; n < limit; n++ {
 		path := root + "/" + strconv.Itoa(n+1) + "/" + leafMute
-		d, ok := defs[path]
+		d, ok := leaf(defs, path, convMute)
 		if !ok {
 			break
 		}
@@ -265,7 +281,7 @@ func (t *table) addHeadamps(defs map[string]wingproto.Def) {
 	}{{bankLCL, model.BankLocal, 0, maxLocalIns}, {bankA, model.BankAES50A, aesAOffset, maxAES50Ins}, {bankB, model.BankAES50B, aesBOffset, maxAES50Ins}} {
 		for n := 1; n <= b.count; n++ {
 			root := "/io/in/" + b.name + "/" + strconv.Itoa(n) + "/"
-			g, ok := defs[root+leafGain]
+			g, ok := leaf(defs, root+leafGain, convGain)
 			if !ok {
 				break
 			}

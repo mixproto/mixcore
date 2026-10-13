@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mixproto/mixcore/driver"
 	"github.com/mixproto/mixcore/internal/wingproto"
@@ -34,6 +35,45 @@ var numbered = map[string]int{
 	"/io/in/LCL": maxLocalIns, "/io/in/A": maxAES50Ins, "/io/in/B": maxAES50Ins,
 }
 
+// Walk limits (review H2): far above a real tree (about 3000 definitions
+// for everything mixcore walks), low enough that a console that floods
+// definitions cannot exhaust memory.
+const (
+	maxDefsPerNode = 4096
+	maxDefsPerWalk = 60000
+	maxWalkBytes   = 16 << 20
+	maxNameLen     = 64
+)
+
+// errWalkLimit: the console sent more definitions than any WING has.
+var errWalkLimit = fmt.Errorf("%w: the console's definitions exceed mixcore's limits", errSchema)
+
+// walkBudget counts what one walk has received.
+type walkBudget struct{ defs, bytes int }
+
+func (b *walkBudget) take(size int) error {
+	b.defs++
+	b.bytes += size
+	if b.defs > maxDefsPerWalk || b.bytes > maxWalkBytes {
+		return fmt.Errorf("%w: %d definitions, %d bytes", errWalkLimit, b.defs, b.bytes)
+	}
+	return nil
+}
+
+// validName: one path segment of printable text (WG-F30: node names are
+// 1..16 bytes; a little room above that, never a slash).
+func validName(n string) bool {
+	if n == "" || len(n) > maxNameLen || !utf8.ValidString(n) {
+		return false
+	}
+	for _, r := range n {
+		if r == '/' || r < ' ' {
+			return false
+		}
+	}
+	return true
+}
+
 // walkNode is one node whose children a level asks for.
 type walkNode struct {
 	path string
@@ -43,10 +83,13 @@ type walkNode struct {
 
 // walk reads the definitions of every modelled node, keyed by path.
 func (s *session) walk(ctx context.Context) (map[string]wingproto.Def, error) {
+	s.c.walking.Store(true) // definitions are parsed only during a walk (review H2)
+	defer s.c.walking.Store(false)
 	defs := map[string]wingproto.Def{}
 	level := []walkNode{{root: true}}
+	var budget walkBudget
 	for depth := 0; ; depth++ {
-		got, err := s.walkLevel(ctx, level)
+		got, err := s.walkLevel(ctx, level, &budget)
 		if err != nil {
 			return nil, err
 		}
@@ -109,7 +152,7 @@ func expand(pattern string, defs map[string]wingproto.Def) []string {
 // WalkQuiet of silence once there are at least as many DEs as nodes that
 // answered. The caller makes sure no data request is unanswered before a
 // level starts (a DE after a data reply is unverified, item 3).
-func (s *session) walkLevel(ctx context.Context, nodes []walkNode) ([][]wingproto.Def, error) {
+func (s *session) walkLevel(ctx context.Context, nodes []walkNode, budget *walkBudget) ([][]wingproto.Def, error) {
 	var req []byte
 	byParent := map[uint32]int{}
 	for i, n := range nodes {
@@ -135,12 +178,15 @@ func (s *session) walkLevel(ctx context.Context, nodes []walkNode) ([][]wingprot
 			return out, nil
 		case !ok:
 		case m.kind == msgDef:
-			i, known := byParent[m.def.Parent]
-			if !known && len(nodes) == 1 {
-				i, known = 0, true
+			if err := budget.take(m.size); err != nil {
+				return nil, err
 			}
-			if !known {
+			i, ok := s.attribute(nodes, byParent, m)
+			if !ok {
 				continue
+			}
+			if len(out[i]) >= maxDefsPerNode {
+				return nil, fmt.Errorf("%w: more than %d children of %s", errWalkLimit, maxDefsPerNode, nodes[i].path)
 			}
 			if len(out[i]) == 0 {
 				answered++
@@ -151,6 +197,21 @@ func (s *session) walkLevel(ctx context.Context, nodes []walkNode) ([][]wingprot
 		}
 	}
 	return out, nil
+}
+
+// attribute returns the requested node a definition belongs to: its
+// parent's hash (WG-F33); only the root level, with its single request,
+// takes any parent. Malformed definitions and names that are not one path
+// segment are dropped.
+func (s *session) attribute(nodes []walkNode, byParent map[uint32]int, m inMsg) (int, bool) {
+	if m.bad || !validName(m.def.Name) {
+		return 0, false
+	}
+	if len(nodes) == 1 && nodes[0].root {
+		return 0, true
+	}
+	i, ok := byParent[m.def.Parent]
+	return i, ok
 }
 
 // next waits up to wait for one message. ok is false on timeout.

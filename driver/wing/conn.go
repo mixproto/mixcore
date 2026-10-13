@@ -48,6 +48,7 @@ type inMsg struct {
 	val  wireValue
 	def  wingproto.Def
 	bad  bool // msgDef: the definition did not parse (counted, never used)
+	size int  // msgDef: body bytes, for the walk's byte limit
 	at   time.Time
 }
 
@@ -61,6 +62,9 @@ type conn struct {
 	base    time.Time
 	lastRx  atomic.Int64 // nanoseconds after base of the last byte received
 	badDefs atomic.Int64 // definitions that did not parse (logged by the session)
+	// walking is set by the session while a schema walk runs; outside it
+	// definition tokens are skipped without parsing (review H2).
+	walking atomic.Bool
 	wg      sync.WaitGroup
 	once    sync.Once
 	writeTO time.Duration
@@ -145,7 +149,7 @@ func (c *conn) readLoop() error {
 	var (
 		mux  wingproto.Demux
 		data []byte
-		asm  assembler
+		asm  = assembler{skipDefs: func() bool { return !c.walking.Load() }}
 	)
 	for {
 		n, err := c.tcp.Read(buf)
@@ -178,8 +182,7 @@ func (c *conn) readLoop() error {
 // deliver hands one message to the owner; false once the connection closed.
 func (c *conn) deliver(m inMsg) bool {
 	if m.bad {
-		c.badDefs.Add(1)
-		return true
+		c.badDefs.Add(1) // still delivered: its bytes count against the walk's limit
 	}
 	select {
 	case c.inbound <- m:
@@ -194,6 +197,8 @@ func (c *conn) deliver(m inMsg) bool {
 type assembler struct {
 	hash    uint32
 	hasHash bool
+	// skipDefs, when set and true, drops definition tokens unparsed.
+	skipDefs func() bool
 }
 
 // feed parses every complete token of data and returns the unparsed rest
@@ -222,11 +227,14 @@ func (a *assembler) message(tok wingproto.Token, at time.Time) (inMsg, bool) {
 		return inMsg{}, false
 	case wingproto.KindDef:
 		a.hasHash = false
+		if a.skipDefs != nil && a.skipDefs() {
+			return inMsg{}, false
+		}
 		d, err := wingproto.ParseDef(tok.Bytes)
 		if err != nil {
-			return inMsg{kind: msgDef, bad: true, at: at}, true // counted by deliver
+			return inMsg{kind: msgDef, bad: true, size: len(tok.Bytes), at: at}, true
 		}
-		return inMsg{kind: msgDef, def: d, at: at}, true
+		return inMsg{kind: msgDef, def: d, size: len(tok.Bytes), at: at}, true
 	case wingproto.KindEnd:
 		a.hasHash = false
 		return inMsg{kind: msgEnd, at: at}, true

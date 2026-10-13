@@ -49,6 +49,11 @@ const (
 	flagReadOnly  = 1 << 9
 )
 
+// MaxEnumItems caps the items of one enum definition. The largest real
+// enums have a few dozen items (wing.md 3.4: 17 source groups, 24 process
+// orders); more is rejected, never allocated (review H2).
+const MaxEnumItems = 1024
+
 // ErrBadDef means a definition body does not follow WG-F33.
 var ErrBadDef = errors.New("wingproto: malformed node definition")
 
@@ -160,7 +165,7 @@ const minItemBytes = 2
 // checked against the bytes left before anything is allocated.
 func (r *defReader) items(t NodeType) []EnumItem {
 	n := int(r.u16())
-	if r.bad || n*minItemBytes > len(r.b)-r.off {
+	if r.bad || n > MaxEnumItems || n*minItemBytes > len(r.b)-r.off {
 		r.bad = true
 		return nil
 	}
