@@ -236,7 +236,7 @@ From an input `/ch/NN`, the aux return `/rtn/aux` or an FX return `/rtn/N`, to s
 | Field | Address | Type, range | Source |
 |---|---|---|---|
 | level | `<from>/mix/MM/level` | `f` 0..1, level law XA-F40, **161 steps** (k/160) | XS5 `buildStripDefs.js` (`/mix/` + 2-digit bus + `/level`, `fSteps: 161`) `[PERMISSIVE-CODE MIT]`; XS10 `bus/to/level.js` `[PERMISSIVE-CODE Apache-2.0]` |
-| pan | `<from>/mix/MM/pan` | `f` 0..1 = -100..+100 | XS10 `bus/to/pan.js` `[PERMISSIVE-CODE Apache-2.0]`; XS12 `[COMMUNITY]` |
+| pan | `<from>/mix/MM/pan` | `f` 0..1 = -100..+100. **Scope disputed (re-checked 2026-10-13):** XS5 offers send pan only for the pairs `1-2`, `3-4`, `5-6`, written to the odd slot 01, 03, 05; XS10 offers it to a bus only while that bus is stereo-linked (addressed at the bus's own slot, odd or even) and **never to FX sends 07..10**; XS12 shows only `/ch/01/mix/01/pan`. Send pan on 07..10 and on even slots is `[TO-VERIFY]` (test item 10) | XS5 `buildStripDefs.js:370-393` (pan bus choices 1-2, 3-4, 5-6) `[PERMISSIVE-CODE MIT]`; XS10 `bus/to/pan.js:40-43`, `:93-94` (linked bus only, no effect target) `[PERMISSIVE-CODE Apache-2.0]`; XS12 `[COMMUNITY]` |
 | tap | `<from>/mix/MM/tap` | `i` 0..5 = IN, PREEQ, POSTEQ, PRE, POST, GRP (X32: `type` on odd sends only, other labels) | XS12 `[COMMUNITY]`; XS10 `bus/to/tap.js` (same 6 values) `[PERMISSIVE-CODE Apache-2.0]` |
 | subgroup on | `<from>/mix/MM/grpon` | `i` 0/1; the send's on/off when tap = GRP | XS12 ("sends group Off/On") `[COMMUNITY]`; XS10 `bus/to/on.js` (`grpon` used only with tap "Same level") `[PERMISSIVE-CODE Apache-2.0]` |
 | send on/off | **none**: no `<from>/mix/MM/on` in any source (X32 has `/ch/NN/mix/MM/on`) | | XS12 `[COMMUNITY]`, XS10, XS5 (absent in all three); `[TO-VERIFY]` (test item 10) |
@@ -244,7 +244,9 @@ From an input `/ch/NN`, the aux return `/rtn/aux` or an FX return `/rtn/N`, to s
 Model consequence: on X Air `Send.on` is an absent capability (never faked); `Send.tap` maps IN/PREEQ/POSTEQ/PRE to
 `pre` and POST/GRP to `post` for the model's two-valued tap, with the console word kept for display. Whether tap and
 pan exist per send or only per odd send of a linked pair (as on X32) is `[TO-VERIFY]` (test item 10). Sends from FX
-returns to FX sends 07..10 are `[TO-VERIFY]`.
+returns to FX sends 07..10 are `[TO-VERIFY]`. Proposed default until item 10: no send pan to FX sends 07..10 (two of
+the three sources never address it), and send pan to buses 1..6 kept per send as implemented, flagged as possibly
+without effect while the pair is unlinked (XS10).
 
 ### 3.4 Processing (later phases; not in driver v1)
 | Field | Address | Encoding | Source |
@@ -540,7 +542,8 @@ behaviour above and has a test that pins it, so a hardware result changes one de
   "yes"); each has name, colour, fader and mute (section 3.2). Every bus and FX send is probed once per link (its fader
   read), so a model with fewer buses (XA-F72, test item 12) connects without them. Sends from inputs 1..16 to slots
   01..10 (section 3.3): `level` with the XA-F40 law in 161 steps (k/160, XA-F41; echoes matched within 0.5/160), `pan`
-  (-100 + 200 f, 101 steps, section 4) and `tap` (0..5, read-only, the console words `IN`, `PREEQ`, `POSTEQ`, `PRE`,
+  (-100 + 200 f, 101 steps, section 4; **on every slot 01..10, which the 2026-10-13 re-check does not support for the
+  FX-send slots 07..10**, see section 3.3) and `tap` (0..5, read-only, the console words `IN`, `PREEQ`, `POSTEQ`, `PRE`,
   `POST`, `GRP`), each per send: the sources address every send, and whether tap and pan are really per pair is test
   item 10 (if it is, the X32 pair rule of `x32.md` X32-F84/F85 applies). `Send.on` is absent (section 3.3), so a set or
   toggle of `sendOn` is `ERR_UNSUPPORTED`. `grpon`, sends from `/rtn/aux` and `/rtn/N`, and FX-return sends are not
@@ -587,8 +590,10 @@ hardware we legally use. "mixprobe" marks items a `--family xair` mode can autom
 9. **Group membership addresses (section 3.2)**, mixprobe. Read `/lr/grp/mute`, `/lr/grp/dca`, `/rtn/aux/grp/mute`,
    `/rtn/1/grp/dca`, `/fxsend/1/grp/mute`. Pass: which answer.
 10. **Sends (section 3.3)**, mixprobe. Read `/ch/01/mix/01/on` (expect no reply), `/ch/01/mix/02/tap`,
-    `/ch/01/mix/02/pan` with bus 1-2 linked and unlinked, `/rtn/1/mix/07/level`. Set tap to GRP and toggle `grpon`
-    from X AIR Edit; log. Pass: address set and link behaviour.
+    `/ch/01/mix/02/pan` with bus 1-2 linked and unlinked, `/ch/01/mix/07/pan`, `/ch/01/mix/07/tap`,
+    `/rtn/1/mix/07/level`. With a tone on ch 1 sent to bus 1 and buses 1-2 unlinked, write `/ch/01/mix/01/pan` to 0.0
+    and 1.0 and log the bus 1 and 2 meters (`/meters/1` values 26, 27). Set tap to GRP and toggle `grpon` from X AIR
+    Edit; log. Pass: address set, whether send pan to FX sends exists, and whether unlinked send pan has an effect.
 11. **Model and firmware strings (XA-F70, XA-F78)**, mixprobe. Record `/xinfo` and `/info` on every model available
     (especially V2 and "W" units). Pass: exact strings.
 12. **DSP counts on small models (XA-F71, XA-F72)**, mixprobe. On an XR12 and an XR16 read `/ch/16/mix/fader`,
