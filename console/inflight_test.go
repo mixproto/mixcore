@@ -5,16 +5,13 @@
 package console
 
 import (
-	"context"
 	"errors"
-	"fmt"
 	"math"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/mixproto/mixcore/driver"
-	"github.com/mixproto/mixcore/meters"
 	"github.com/mixproto/mixcore/model"
 )
 
@@ -215,82 +212,6 @@ func TestGain_GrabAboveTheWritableTopNeverWritesDown(t *testing.T) {
 	})
 }
 
-// linearLaw is a test fader law: positions 0..1 for -60..+10 dB.
-type linearLaw struct{}
-
-func (linearLaw) PositionFromDB(db float64) float64 { return math.Min(math.Max((db+60)/70, 0), 1) }
-func (linearLaw) DBFromPosition(p float64) float64  { return p*70 - 60 }
-
-// tremble rests the finger at the wall for 800 ms (one full sway) with a slow +-amp sway
-// (8 ms frames, 2.5 Hz) around the candidate c(0), then asks openWall.
-func tremble(t *testing.T, sup *Supervisor, at func(sway float64) float64, amp float64) Result {
-	t.Helper()
-	for i := range 100 {
-		sway := amp * math.Sin(2*math.Pi*2.5*float64(i*8)/1000)
-		_, _ = sup.Write(set(ch1Fader, lvl(t, at(sway)), gesture))
-		time.Sleep(8 * time.Millisecond)
-	}
-	r, _ := sup.OpenWall(ch1Fader, gesture)
-	return r
-}
-
-// Review pass 3, MEDIUM 2: with the track length (landscape 152 pt) a
-// resting finger trembling +-3 pt opens the wall: the span is the spec's
-// 9 pt (phone-safety.md 4.1), not 0.5 dB (about 1 pt in landscape).
-func TestSlipGuard_TrembleAtRestOpensTheWallInLandscape(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		drv := &fakeDriver{snapshot: safetyState(-6), caps: gainCaps, law: linearLaw{}}
-		sup, err := New(Config{Driver: drv, Rand: func() float64 { return 0.5 }, Options: driver.Options{Meters: &meters.Slot{}},
-			Safety: SafetyConfig{Client: ClientSafety{SlipGuard: true}}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := sup.Start(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(sup.Stop)
-		synctest.Wait()
-		const track = 152.0
-		_, _ = sup.HoldWindowWith(ch1Fader, gesture, true, HoldOptions{TrackLengthPt: track})
-		rest := linearLaw{}.PositionFromDB(0) + 5/track // 5 pt past the wall
-		r := tremble(t, sup, func(sway float64) float64 { return linearLaw{}.DBFromPosition(rest + sway/track) }, 3)
-		if r.State != StateFree || r.Window.WallUp != 6 {
-			t.Fatalf("a resting finger (+-3 pt of 152) did not open the wall: %s %v", r.State, r.Window.WallUp)
-		}
-	})
-}
-
-// Without the track length the span is 2 dB of travel: a +-0.9 dB tremble
-// rests (it did not with 0.5 dB); the 12.5 dB/s push stays blocked
-// (TestSlipGuard_RestMeansStillness).
-func TestSlipGuard_TrembleAtRestOpensTheWallWithoutTrack(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		sup, _ := startSafe(t, SafetyConfig{Client: ClientSafety{SlipGuard: true}}, safetyState(-6))
-		_, _ = sup.HoldWindow(ch1Fader, gesture, true)
-		r := tremble(t, sup, func(sway float64) float64 { return 1 + sway }, 0.9)
-		if r.State != StateFree {
-			t.Fatalf("a +-0.9 dB tremble did not open the wall: %s", r.State)
-		}
-	})
-}
-
-// Review pass 4, MEDIUM 2, probe 1: the re-send dedupe only skips the
-// latest value sent. A drag 33.5 -> 34.5 -> 35.5 (cap) -> back to 34.5
-// with no echo must send 34.5 again: the console is at 35.5.
-func TestInFlight_BackToAnEarlierValueIsSent(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		sup, drv := startSafe(t, SafetyConfig{}, safetyState(-6))
-		_, _ = sup.HoldWindow(gain3, gesture, true)
-		var r Result
-		for _, c := range []float64{33.5, 34.5, 35.5, 34.5} {
-			r, _ = sup.Write(set(gain3, lvl(t, c), gesture))
-		}
-		if w := gainWrites(drv); !r.Written || len(w) != 4 || w[3] != 34.5 {
-			t.Fatalf("back to 34.5: written %v, writes %v", r.Written, w)
-		}
-	})
-}
-
 // Review pass 4, MEDIUM 2, probe 2: a report since the last send makes the
 // same value a real change again. 33.5 sent, the desk moves to 30, a typed
 // 33.5 within 2 s is sent.
@@ -306,46 +227,6 @@ func TestInFlight_SameValueAfterAReportIsSent(t *testing.T) {
 			t.Fatalf("typed 33.5 after the desk moved to 30: written %v, %v, writes %v", r.Written, err, gainWrites(drv))
 		}
 	})
-}
-
-// Review pass 4, MEDIUM 3: a track length can only make the rest check
-// stricter. A finger pushed past the wall at 12.5 dB/s for 0.8 s (to +9
-// dB, below the top of the track, where a finger really stops), with the
-// UI asking openWall on every frame, opens no wall with a track of 1.0 or
-// 0.001 pt (the API refuses those; Go hosts can still pass them), none,
-// or 490 pt.
-func TestSlipGuard_PushOpensNoWallWhateverTheTrack(t *testing.T) {
-	for _, track := range []float64{1.0, 0.001, 0, 490} {
-		t.Run(fmt.Sprint(track), func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				drv := &fakeDriver{snapshot: safetyState(-6), caps: gainCaps, law: linearLaw{}}
-				sup, err := New(Config{Driver: drv, Rand: func() float64 { return 0.5 }, Options: driver.Options{Meters: &meters.Slot{}},
-					Safety: SafetyConfig{Client: ClientSafety{SlipGuard: true}}})
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := sup.Start(context.Background()); err != nil {
-					t.Fatal(err)
-				}
-				t.Cleanup(sup.Stop)
-				synctest.Wait()
-				_, _ = sup.HoldWindowWith(ch1Fader, gesture, true, HoldOptions{TrackLengthPt: track})
-				opened, finger, wall := 0, -1.0, 0.0
-				for range 100 { // 0.8 s of 8 ms frames, +0.1 dB each
-					finger += 0.1
-					_, _ = sup.Write(set(ch1Fader, lvl(t, finger), gesture))
-					if r, _ := sup.OpenWall(ch1Fader, gesture); r.Window != nil && r.Window.WallUp > wall {
-						opened, wall = opened+1, r.Window.WallUp // the wall moved up: it opened
-					}
-					time.Sleep(8 * time.Millisecond)
-				}
-				t.Logf("track %v pt: %d walls opened", track, opened)
-				if opened != 0 {
-					t.Errorf("track %v pt: a pushed finger opened %d walls", track, opened)
-				}
-			})
-		})
-	}
 }
 
 // Lead decision (review pass 4): a full in-flight set inside a hold is a

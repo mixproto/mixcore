@@ -5,9 +5,7 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
-	"math"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -47,39 +45,25 @@ const (
 	gain3 = `{"strip":{"kind":"headamp","index":3},"field":"gain"}`
 )
 
-// CR-22 through Gesture: the window, the wall, openWall, and the JSON.
-func TestSafety_GestureResultsAtTheWall(t *testing.T) {
+// CR-22 through Gesture: the window and the JSON. v0.5 (CC-1): no wall,
+// opensByRest always false; openWall is ERR_UNSUPPORTED.
+func TestSafety_GestureResultsJSON(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := newXAirEnv(t, simxair.Options{})
 		startWith(t, e, `{"slipGuard":true}`)
-		// -6 dB is stored on the console's nearest step, -5.99 dB (XA-F41): the
-		// wall is 6 dB above whatever start the console reports.
-		var hold gestureResultJSON
-		got, err := e.eng.Gesture(cmdJSON("holdBegin", vox1, ""))
-		if err != nil || json.Unmarshal([]byte(got), &hold) != nil || hold.Window == nil || hold.Window.WallUpDB == nil {
-			t.Fatalf("holdBegin: %s %v", got, err)
-		}
-		start := hold.Window.StartDB.(float64)
-		if math.Abs(*hold.Window.WallUpDB-(start+6)) > 1e-9 || math.Abs(start+6) > 0.01 || !hold.Window.OpensByRest || hold.Written {
-			t.Fatalf("window %s", got)
-		}
-		wall := fmt.Sprintf(`"state":"atWall","value":%v,"written":true`, *hold.Window.WallUpDB)
 		for _, step := range []struct{ cmd, want string }{
-			{cmdJSON("set", vox1, `,"value":3`), wall},
-			{cmdJSON("openWall", vox1, ""), `"state":"atWall"`}, // no rest yet: refused (wall.dwell)
-			{"rest", ""},
-			{cmdJSON("openWall", vox1, ""), `"state":"free"`},
+			{cmdJSON("holdBegin", vox1, ""), `"opensByRest":false}}`},
+			{cmdJSON("set", vox1, `,"value":3`), `{"version":0,"state":"free","value":3,"written":true,"window":{"startDB":`},
 			{cmdJSON("holdBegin", gain3, ""), `"window":{"startDB":32.5,"capUpDB":35.5,"capDownDB":26.5,"opensByRest":false}`},
 			{cmdJSON("set", gain3, `,"value":60`), `"state":"atCap","value":35.5,"written":true`},
 		} {
-			if step.cmd == "rest" {
-				time.Sleep(300 * time.Millisecond)
-				continue
-			}
 			got, err := e.eng.Gesture(step.cmd)
-			if err != nil || !strings.Contains(got, step.want) {
+			if err != nil || !strings.Contains(got, step.want) || strings.Contains(got, "wallUpDB") {
 				t.Fatalf("%s\n got %s %v\nwant %s", step.cmd, got, err, step.want)
 			}
+		}
+		if _, err := e.eng.Gesture(cmdJSON("openWall", vox1, "")); CodeOf(err) != CodeUnsupported {
+			t.Fatalf("openWall: %v", err)
 		}
 		synctest.Wait()
 		if v, _ := e.sim.Value("/headamp/03/gain"); v.Float != 95.0/144 {
@@ -251,7 +235,7 @@ func TestHeadampFields_JSONTypes(t *testing.T) {
 // <= 10000.
 func TestHoldBegin_TrackLength(t *testing.T) {
 	hb := `{"version":0,"type":"holdBegin","param":{"strip":{"kind":"input","index":1},"field":"fader"},"trackLengthPt":152,"origin":{"kind":"gesture"}}`
-	if c, err := parseCommand(hb); err != nil || c.trackPt != 152 {
+	if c, err := parseCommand(hb); err != nil || c.kind != cmdHoldBegin { // accepted and ignored since v0.5
 		t.Fatalf("holdBegin 152 pt: %+v %v", c, err)
 	}
 	for _, bad := range []string{

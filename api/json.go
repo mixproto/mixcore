@@ -60,7 +60,7 @@ type configJSON struct {
 
 // safetyJSON is config.schema.json safety (v0.3).
 type safetyJSON struct {
-	SlipGuard      bool            `json:"slipGuard"`
+	SlipGuard      bool            `json:"slipGuard"` // deprecated in v0.5: accepted and ignored
 	ShowMode       bool            `json:"showMode"`
 	MonitorCeiling json.RawMessage `json:"monitorCeiling,omitempty"`
 }
@@ -91,7 +91,7 @@ type commandJSON struct {
 	Typed     *bool           `json:"typed"`     // v0.3, set only
 	Confirmed *bool           `json:"confirmed"` // v0.3, set only
 	Undo      *bool           `json:"undo"`      // v0.3, set only
-	// TrackLengthPt: v0.3, holdBegin only, optional (review pass 3, MEDIUM 2).
+	// TrackLengthPt: v0.3, holdBegin only, optional; ignored since v0.5.
 	TrackLengthPt *float64 `json:"trackLengthPt"`
 }
 
@@ -101,9 +101,8 @@ type command struct {
 	param                  model.ParamRef
 	value                  model.Value
 	origin                 driver.Origin
-	typed, confirmed, undo bool    // set only (v0.3)
-	on                     bool    // setSlipGuard, setShowMode
-	trackPt                float64 // holdBegin: track length in pt, 0 = not given
+	typed, confirmed, undo bool // set only (v0.3)
+	on                     bool // setSlipGuard, setShowMode
 }
 
 func decodeStrict(data string, v any) error {
@@ -196,7 +195,7 @@ func parseCommand(data string) (command, error) {
 		if c.Type != cmdHoldBegin || !(*c.TrackLengthPt >= minTrackPt && *c.TrackLengthPt <= maxTrackPt) {
 			return command{}, codeErr(CodeInvalidCommand, fmt.Errorf("trackLengthPt goes with holdBegin, %v <= pt <= %v", minTrackPt, maxTrackPt))
 		}
-		cmd.trackPt = *c.TrackLengthPt
+		// v0.5: validated and ignored (the slip guard that used it is retired, CC-1)
 	}
 	switch c.Type {
 	case cmdSlipGuard, cmdShowMode:

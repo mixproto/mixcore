@@ -237,7 +237,7 @@ func (s *demoSession) stop(m demoMixerJSON) {
 }
 
 // safetyPath shows the demo session in the console layer's safety path:
-// slip-guard wall on a fader, Gain cap on a headamp, through Gesture.
+// a fader push never stopped (v0.5), Gain cap on a headamp, through Gesture.
 func (s *demoSession) safetyPath() {
 	for _, c := range []struct{ typ, param, extra string }{
 		{"holdBegin", demoVox1Fader, ""}, {"set", demoVox1Fader, `,"value":10`}, {"holdEnd", demoVox1Fader, ""},
@@ -248,8 +248,9 @@ func (s *demoSession) safetyPath() {
 			s.t.Fatalf("%s: %v", c.typ, err)
 		}
 		s.logf("Gesture %s %s%s -> %s", c.typ, c.param, c.extra, got)
-		if c.typ == "set" && !strings.Contains(got, `"state":"atWall"`) && !strings.Contains(got, `"state":"atCap"`) {
-			s.t.Fatalf("the demo session must stop at the wall or the cap: %s", got)
+		want := map[string]string{demoVox1Fader: `"state":"free"`, demoVox1Gain: `"state":"atCap"`}[c.param]
+		if c.typ == "set" && !strings.Contains(got, want) {
+			s.t.Fatalf("the demo session %s: %s, want %s", c.param, got, want)
 		}
 	}
 	echo := s.wait("Gain echo", func(m stateJSON) bool { return changeOf(m, "headamp", 10, "gain") != nil })

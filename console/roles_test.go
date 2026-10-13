@@ -138,7 +138,6 @@ func TestRole_ViewerWritesNothing(t *testing.T) {
 		if err := sup.Hold(ch1Fader, gesture, false); err != nil {
 			t.Fatalf("ending a hold is always allowed: %v", err)
 		}
-		sup.SetSlipGuard("ui", true)
 		if err := sup.SetShowModeBy(gesture, true); !errors.Is(err, ErrRole) {
 			t.Fatalf("show mode: %v", err)
 		}

@@ -24,9 +24,10 @@ import (
 )
 
 // TestSimSessionSafety_Log shows the phone safety rules of core-api v0.3
-// against sim/xair on real loopback UDP with the default timing: a slip
-// stopped at the wall and continued after a rest, two walls opened in one
-// hold without a jump, a pull down never stopped, the Gain cap and
+// to v0.5 against sim/xair on real loopback UDP with the default timing:
+// a deliberate push never stopped although the v0.3 phone setting
+// slipGuard is on (v0.5, CC-1), a slow push to the top, a pull down never
+// stopped, the Gain cap and
 // per-write bound (also against the value in flight), show mode refusals
 // with an unlock and the undo grace of its entries, the typed-raise
 // confirm and its gesture-only origin, the per-headamp Gain law on X Air
@@ -46,7 +47,7 @@ func TestSimSessionSafety_Log(t *testing.T) {
 	defer f.Close()
 	s := newSafetySession(t, io.MultiWriter(f, testWriter{t}))
 	s.slip(t)
-	s.twoWalls(t)
+	s.fullPush(t)
 	s.pullDown(t)
 	s.gain(t)
 	s.showMode(t)
@@ -94,7 +95,7 @@ func newSafetySession(t *testing.T, out io.Writer) *safetySession {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.logf("sim/xair on 127.0.0.1:%d, real UDP, default timing; Start %s; config safety.slipGuard on (phone)", port, desc)
+	s.logf("sim/xair on 127.0.0.1:%d, real UDP, default timing; Start %s; config safety.slipGuard on (a v0.3 phone file; ignored since v0.5)", port, desc)
 	deadline := time.Now().Add(5 * time.Second)
 	for !s.has(`"status":"live"`) {
 		if time.Now().After(deadline) {
@@ -141,66 +142,34 @@ func (s *safetySession) mixerGain() float64 {
 	return -12 + 72*float64(v.Float)
 }
 
-// slip: P2 portrait on Vox1 (up 400 pt in 150 ms, 8 ms samples, track 490 pt),
-// a 300 ms rest at the wall, openWall, then 2 cm more.
+// slip: P2 portrait on Vox1 (up 400 pt in 150 ms, 8 ms samples, track
+// 490 pt): v0.5 (CC-1, AC-RD-F01) the value follows the finger to the top.
 func (s *safetySession) slip(t *testing.T) {
-	s.logf("== slip guard (SR-26, CR-22): P2 on Vox1, finger up 400 pt in 150 ms")
+	s.logf("== a deliberate push (CC-1, AC-RD-F01): P2 on Vox1, finger up 400 pt in 150 ms")
 	vox1 := `{"strip":{"kind":"input","index":1},"field":"fader"}`
 	r := s.gesture(t, gcmd("holdBegin", vox1, ""))
-	s.logf("holdBegin -> start %.2f dB, wall %.2f dB, opensByRest %t", r.Window.StartDB, *r.Window.WallUpDB, r.Window.OpensByRest)
-	p0, arrivals, lastState := s.eng.FaderPosition(-6), 0, ""
+	s.logf("holdBegin -> start %.2f dB, opensByRest %t (deprecated, always false)", r.Window.StartDB, r.Window.OpensByRest)
+	s.logf("openWall -> %s (retired, CC-1)", CodeOf(s.eng.Apply(gcmd("openWall", vox1, ""))))
+	p0, stops := s.eng.FaderPosition(-6), 0
 	for i := 1; i*8 <= 150; i++ {
 		c := s.eng.FaderDB(math.Min(p0+400*float64(i*8)/150/490, 1))
 		r = s.gesture(t, gcmd("set", vox1, `,"value":`+levelText(c)))
-		if r.State == "atWall" && lastState != "atWall" {
-			arrivals++
-			s.logf("t=%3d ms candidate %+.2f dB -> applied %+.2f dB, state atWall (rigid haptic, 'Pause to go further')", i*8, c, r.Value)
+		if r.State != "free" {
+			stops++
 		}
-		lastState = r.State
 		time.Sleep(8 * time.Millisecond)
 	}
-	time.Sleep(100 * time.Millisecond)
-	s.logf("finger at the top: candidate +10.00 dB; mixer Vox1 %+.2f dB; %d wall arrival(s)", s.mixerFader(1), arrivals)
-	time.Sleep(300 * time.Millisecond)
 	s.gesture(t, gcmd("holdEnd", vox1, ""))
 	time.Sleep(100 * time.Millisecond)
-	s.logf("released at the wall: mixer Vox1 %+.2f dB (never +10.0)", s.mixerFader(1))
-	s.slowDrag(t, vox1)
-}
-
-// slowDrag is AC-PS-07: grab again, drag up slowly past the wall, rest
-// 300 ms, openWall, keep going: the value continues from the wall.
-func (s *safetySession) slowDrag(t *testing.T, vox1 string) {
-	s.logf("== AC-PS-07: grab Vox1 again, drag up slowly (1 pt per 8 ms), rest at the wall, continue")
-	r := s.gesture(t, gcmd("holdBegin", vox1, ""))
-	start := r.Value.(float64)
-	p0 := s.eng.FaderPosition(start)
-	s.logf("holdBegin -> start %+.2f dB, wall %+.2f dB", start, *r.Window.WallUpDB)
-	finger := 0.0
-	move := func(pt float64) {
-		for ; finger < pt; finger++ {
-			c := s.eng.FaderDB(math.Min(p0+(finger+1)/490, 1))
-			r = s.gesture(t, gcmd("set", vox1, `,"value":`+levelText(c)))
-			time.Sleep(8 * time.Millisecond)
-		}
-		s.logf("finger %3.0f pt up: candidate %+.2f dB -> applied %+.2f dB, state %s", finger, s.eng.FaderDB(math.Min(p0+finger/490, 1)), r.Value, r.State)
+	s.logf("finger at the top: last applied %+.2f dB, %d stops; mixer Vox1 %+.2f dB", r.Value, stops, s.mixerFader(1))
+	if stops != 0 || s.mixerFader(1) < 9.99 {
+		t.Errorf("P2 stopped %d times or ended at %+.2f dB", stops, s.mixerFader(1))
 	}
-	move(85) // past the wall (about 73 pt at 0.082 dB/pt)
-	r = s.gesture(t, gcmd("openWall", vox1, ""))
-	s.logf("openWall at once, before the rest (review MEDIUM 4) -> state %s (the core checks the 300 ms itself)", r.State)
-	time.Sleep(300 * time.Millisecond)
-	r = s.gesture(t, gcmd("openWall", vox1, ""))
-	s.logf("rested 300 ms at the wall -> openWall: state %s, next wall %+.2f dB (light tick)", r.State, *r.Window.WallUpDB)
-	move(86)
-	move(95)
-	s.gesture(t, gcmd("holdEnd", vox1, ""))
-	time.Sleep(100 * time.Millisecond)
-	s.logf("released: mixer Vox1 %+.2f dB; continued from the wall with no step larger than the finger", s.mixerFader(1))
 }
 
 // pullDown: P1D on Vox2 (down 60 pt in 40 ms): never stopped.
 func (s *safetySession) pullDown(t *testing.T) {
-	s.logf("== pull down (SR-26: downward is never stopped): P1D on Vox2 from -20 dB")
+	s.logf("== pull down (downward is never stopped): P1D on Vox2 from -20 dB")
 	vox2 := `{"strip":{"kind":"input","index":2},"field":"fader"}`
 	s.gesture(t, gcmd("holdBegin", vox2, ""))
 	p0 := s.eng.FaderPosition(-20)
@@ -218,12 +187,9 @@ func (s *safetySession) pullDown(t *testing.T) {
 func (s *safetySession) gain(t *testing.T) {
 	s.logf("== Gain caps and bound (SR-24, SR-31, CR-23) on headamp 3 at +32.5 dB")
 	r := s.gesture(t, gcmd("holdBegin", gain3, ""))
-	s.logf("holdBegin -> caps %+.1f / %+.1f dB, opensByRest %t", *r.Window.CapUpDB, *r.Window.CapDownDB, r.Window.OpensByRest)
+	s.logf("holdBegin -> caps %+.1f / %+.1f dB", *r.Window.CapUpDB, *r.Window.CapDownDB)
 	r = s.gesture(t, gcmd("set", gain3, `,"value":60`))
 	s.logf("drag candidate +60.0 dB -> applied %v dB, state %s ('Lift and drag again')", r.Value, r.State)
-	if _, err := s.eng.Gesture(gcmd("openWall", gain3, "")); err != nil {
-		s.logf("openWall on Gain -> %s (a Gain cap never opens)", CodeOf(err))
-	}
 	s.gesture(t, gcmd("holdEnd", gain3, ""))
 	time.Sleep(100 * time.Millisecond)
 	s.logf("mixer Gain %+.1f dB", s.mixerGain())
@@ -312,8 +278,8 @@ func (s *safetySession) audit(t *testing.T) {
 			maxV1 = math.Max(maxV1, s.eng.FaderDB(float64(w.Arg.Float)))
 		}
 	}
-	s.logf("== mixer received %d writes; highest Vox1 write %+.2f dB; packets to /-snap/: %d", len(s.sim.Writes()), maxV1, snap)
-	if maxV1 >= 10 {
-		t.Errorf("Vox1 reached +10 dB")
+	s.logf("== mixer received %d writes; highest Vox1 write %+.2f dB (the deliberate push); packets to /-snap/: %d", len(s.sim.Writes()), maxV1, snap)
+	if snap != 0 {
+		t.Errorf("%d packets to /-snap/", snap)
 	}
 }

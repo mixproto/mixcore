@@ -31,31 +31,29 @@ const (
 	ptPerPos = 490.0 // portrait track length in pt (fixtures/gesture-paths.json)
 )
 
-// twoWalls: review HIGH 2. Keys from -30 dB, dragged up 1 pt per 8 ms,
-// resting 300 ms at each wall and opening it: every wall continues from
-// where it stopped, never a jump.
-func (s *safetySession) twoWalls(t *testing.T) {
-	s.logf("== two walls in one hold (review HIGH 2): Keys from -30 dB, 1 pt per 8 ms, rest 300 ms at each wall")
+// fullPush: redesign CC-1 (AC-RD-F01). Keys from -30 dB, dragged up 1 pt
+// per 8 ms to the top of the 490 pt track: never stopped, never a jump.
+func (s *safetySession) fullPush(t *testing.T) {
+	s.logf("== a deliberate push is never stopped (CC-1, AC-RD-F01): Keys from -30 dB, 1 pt per 8 ms to the top")
 	s.gesture(t, gcmd("holdBegin", keys, ""))
-	p0, prev, maxStep, opened := s.eng.FaderPosition(-30), -30.0, 0.0, 0
-	for finger := 1.0; finger <= 300 && opened < 3; finger++ {
+	p0, prev, maxStep, stops := s.eng.FaderPosition(-30), -30.0, 0.0, 0
+	for finger := 1.0; p0+(finger-1)/ptPerPos < 1; finger++ {
 		c := s.eng.FaderDB(math.Min(p0+finger/ptPerPos, 1))
 		r := s.gesture(t, gcmd("set", keys, `,"value":`+levelText(c)))
 		v, _ := r.Value.(float64)
 		maxStep, prev = math.Max(maxStep, v-prev), v
-		if r.State == "atWall" {
-			time.Sleep(300 * time.Millisecond)
-			o := s.gesture(t, gcmd("openWall", keys, ""))
-			opened++
-			s.logf("finger %3.0f pt: stopped at the wall %+.2f dB; rested 300 ms -> openWall %s, next wall %+.2f dB",
-				finger, v, o.State, *o.Window.WallUpDB)
+		if r.State != "free" {
+			stops++
 		}
 		time.Sleep(8 * time.Millisecond)
 	}
 	s.gesture(t, gcmd("holdEnd", keys, ""))
 	time.Sleep(100 * time.Millisecond)
-	s.logf("released after %d walls: mixer Keys %+.2f dB; largest step between two applied values %.2f dB (one finger point is at most %.2f dB here)",
-		opened, s.mixerFader(3), maxStep, 80/ptPerPos)
+	s.logf("released: mixer Keys %+.2f dB, %d stops before the top; largest step between two applied values %.2f dB (one finger point is at most %.2f dB here)",
+		s.mixerFader(3), stops, maxStep, 80/ptPerPos)
+	if stops != 0 || s.mixerFader(3) < 9.99 {
+		t.Errorf("the push stopped %d times or ended below +10 dB (%+.2f)", stops, s.mixerFader(3))
+	}
 }
 
 // originsAndConfig: review MEDIUM 5 and LOW 6.

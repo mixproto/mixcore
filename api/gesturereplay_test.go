@@ -7,7 +7,6 @@ package api
 import (
 	"encoding/json"
 	"math"
-	"strconv"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -29,8 +28,6 @@ const (
 	barLandscape    = 343.0
 	lockAxisPt      = 10.0 // gesture.lockAxis
 	encoderPitchPt  = 48.0 // gain.encoderPitch: 1 dB per 48 pt
-	restSpeedPtS    = 30.0 // wall.restSpeed
-	wallDwell       = 300 * time.Millisecond
 	gainMinDB       = -12.0
 	gainSpanDB      = 72.0
 	speedupPtS      = 250.0 // AC-PS-06 double (c)
@@ -51,7 +48,7 @@ const (
 // run is one replay of one path on one control through our mapping.
 type run struct {
 	writes  []float64 // console values written, in order (simulator log)
-	walls   int       // arrivals at a wall or cap (rigid haptic)
+	stops   int       // arrivals at a stop: a Gain range end or a ceiling (rigid haptic)
 	firstAt int       // ms of the first write, -1 for none
 }
 
@@ -79,15 +76,14 @@ func (r run) last() float64 {
 }
 
 type uiDouble struct {
-	t        *testing.T
-	e        *xairEnv
-	kind     controlKind
-	length   float64 // track or bar length
-	start    float64 // dB at the grab
-	axis     int     // 0 undecided, 1 the control's axis, 2 the other (a scroll)
-	state    string
-	restFrom int // ms since the finger rests at the wall, -1 when not
-	run      run
+	t      *testing.T
+	e      *xairEnv
+	kind   controlKind
+	length float64 // track or bar length
+	start  float64 // dB at the grab
+	axis   int     // 0 undecided, 1 the control's axis, 2 the other (a scroll)
+	state  string
+	run    run
 }
 
 func (u *uiDouble) param() string {
@@ -106,8 +102,8 @@ func (u *uiDouble) gesture(cmd string, at int) gestureResultJSON {
 	if err := json.Unmarshal([]byte(out), &r); err != nil {
 		u.t.Fatal(err)
 	}
-	if (r.State == "atWall" || r.State == "atCap") && u.state != r.State {
-		u.run.walls++
+	if r.State != "free" && r.State != "" && u.state != r.State {
+		u.run.stops++
 	}
 	u.state = r.State
 	if r.Written && u.run.firstAt < 0 {
@@ -144,11 +140,7 @@ func (u *uiDouble) play(v pathVariant, large bool) {
 	if large {
 		return // SR-21: a large contact never grabs
 	}
-	track := "" // the UI sends its track length, so the core checks the rest in pt (MEDIUM 2)
-	if u.kind == ctlFader {
-		track = `,"trackLengthPt":` + strconv.FormatFloat(u.length, 'f', -1, 64)
-	}
-	u.gesture(cmdJSON("holdBegin", u.param(), track), 0)
+	u.gesture(cmdJSON("holdBegin", u.param(), ""), 0)
 	last, prev := math.NaN(), v.Points[0]
 	for _, p := range v.Points[1:] {
 		time.Sleep(time.Duration(p.T-prev.T) * time.Millisecond)
@@ -158,28 +150,11 @@ func (u *uiDouble) play(v pathVariant, large bool) {
 				u.gesture(cmdJSON("set", u.param(), `,"value":`+levelText(c)), p.T)
 				last = c
 			}
-			u.rest(prev, p)
 		}
 		prev = p
 	}
 	if u.axis != 2 {
 		u.gesture(cmdJSON("holdEnd", u.param(), ""), prev.T)
-	}
-}
-
-// rest asks the core to open a wall after wall.dwell below wall.restSpeed.
-func (u *uiDouble) rest(prev, p pathPoint) {
-	speed := math.Hypot(p.X-prev.X, p.Y-prev.Y) / (float64(p.T-prev.T) / 1000)
-	if u.state != "atWall" || speed >= restSpeedPtS {
-		u.restFrom = -1
-		return
-	}
-	if u.restFrom < 0 {
-		u.restFrom = p.T
-	}
-	if time.Duration(p.T-u.restFrom)*time.Millisecond >= wallDwell {
-		u.gesture(cmdJSON("openWall", u.param(), ""), p.T)
-		u.restFrom = -1
 	}
 }
 
@@ -189,13 +164,14 @@ func levelText(db float64) string {
 }
 
 // replay runs one path on a fresh engine and simulator (Vox1 -6 dB, headamp
-// 3 +32.5 dB, slip guard on: phone defaults) and collects the console writes.
+// 3 +32.5 dB; the v0.3 phone setting slipGuard on, ignored since v0.5) and
+// collects the console writes.
 func replay(t *testing.T, kind controlKind, length float64, v pathVariant, large bool) run {
 	var out run
 	synctest.Test(t, func(t *testing.T) {
 		e := newXAirEnv(t, simxair.Options{})
 		startWith(t, e, `{"slipGuard":true}`)
-		u := &uiDouble{t: t, e: e, kind: kind, length: length, restFrom: -1, run: run{firstAt: -1}}
+		u := &uiDouble{t: t, e: e, kind: kind, length: length, run: run{firstAt: -1}}
 		if kind == ctlGain {
 			u.start = 32.5
 		} else {

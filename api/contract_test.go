@@ -162,8 +162,11 @@ func fuzzParseCommand(t *testing.T, in string) {
 		}
 		return
 	}
-	if c.trackPt != 0 && (c.kind != cmdHoldBegin || !(c.trackPt >= minTrackPt && c.trackPt <= maxTrackPt)) {
-		t.Fatalf("trackLengthPt %v accepted on %s", c.trackPt, c.kind)
+	var raw struct {
+		TrackLengthPt *float64 `json:"trackLengthPt"`
+	}
+	if json.Unmarshal([]byte(in), &raw) == nil && raw.TrackLengthPt != nil && (c.kind != cmdHoldBegin || !(*raw.TrackLengthPt >= minTrackPt && *raw.TrackLengthPt <= maxTrackPt)) {
+		t.Fatalf("trackLengthPt %v accepted on %s", *raw.TrackLengthPt, c.kind)
 	}
 	if (c.typed || c.confirmed) && c.origin.Kind != driver.OriginGesture {
 		t.Fatalf("typed/confirmed accepted from origin %s", c.origin.Kind)

@@ -33,10 +33,10 @@ type MonitorCeiling struct {
 	HeadroomDB float64 // 0..10
 }
 
-// ClientSafety are the safety settings of one client (one device).
+// ClientSafety are the safety settings of one client (one device). The
+// slip guard (SR-26) is retired since core-api v0.5 (redesign CC-1).
 type ClientSafety struct {
-	SlipGuard bool            // SR-26, per device class
-	Monitor   *MonitorCeiling // nil: not a monitor seat
+	Monitor *MonitorCeiling // nil: not a monitor seat
 }
 
 // SafetyConfig are the defaults for every client and the session settings.
@@ -94,7 +94,7 @@ func (s *safety) client(id string) ClientSafety {
 }
 
 // SetClientSafety sets the safety settings of one client (a MixLink device
-// from its pairing token; the in-process UI uses the config and SetSlipGuard).
+// from its pairing token; the in-process UI uses the config).
 //
 // Unchecked and owner-only (review Sec L5): it checks no role, and a
 // client given its own settings could drop its monitor ceiling. Only the
@@ -103,16 +103,6 @@ func (s *safety) client(id string) ClientSafety {
 func (s *Supervisor) SetClientSafety(clientID string, c ClientSafety) {
 	s.mu.Lock()
 	s.safe.forgetSeat(clientID, time.Now())
-	s.safe.clients[clientID] = c
-	s.mu.Unlock()
-}
-
-// SetSlipGuard turns the slip guard on or off for one client (SR-26). It
-// writes nothing and never changes an active window.
-func (s *Supervisor) SetSlipGuard(clientID string, on bool) {
-	s.mu.Lock()
-	c := s.safe.client(clientID)
-	c.SlipGuard = on
 	s.safe.clients[clientID] = c
 	s.mu.Unlock()
 }
@@ -221,11 +211,7 @@ func (s *Supervisor) openWindowLocked(k holdKey) *window {
 			w.CapUp = math.Max(math.Min(w.CapUp, h.WriteMaxDB), start)
 			w.CapDown = math.Max(w.CapDown, h.MinDB)
 		}
-	case model.FieldFader, model.FieldSendLevel: // a send moves on the fader law (X32-F83, XA-F40)
-		w.law = s.cfg.Driver.FaderLaw()
-		if s.safe.client(k.client).SlipGuard {
-			w.HasWall, w.WallUp, w.OpensByRest = true, slipWall(start), true
-		}
+	case model.FieldFader, model.FieldSendLevel:
 		w.Ceiling, w.HasCeiling = s.safe.ceiling(k.param, k.client, start)
 		w.Ceiling = math.Max(w.Ceiling, start) // never lower a value to meet the ceiling (review MEDIUM 3)
 	}

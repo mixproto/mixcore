@@ -500,8 +500,9 @@ func assertDemoHeadamps(t *testing.T, st stateJSON, fam string) {
 	}
 }
 
-// A demo session goes through the same safety path as a console: the slip
-// guard stops a fader at its wall, a Gain drag stops at its cap.
+// A demo session goes through the same safety path as a console: a fader
+// push is never stopped (v0.5, the slip guard is retired), a Gain drag
+// stops at its cap.
 func assertDemoSafetyPath(t *testing.T, d *demoEnv) {
 	t.Helper()
 	gesture := func(typ, param, extra string) gestureResultJSON {
@@ -514,11 +515,11 @@ func assertDemoSafetyPath(t *testing.T, d *demoEnv) {
 		return r
 	}
 	hold := gesture("holdBegin", demoVox1Fader, "")
-	if hold.Window == nil || hold.Window.WallUpDB == nil {
-		t.Fatalf("fader window %+v: slipGuard must apply to the demo", hold.Window)
+	if hold.Window == nil {
+		t.Fatalf("fader window %+v", hold.Window)
 	}
-	if r := gesture("set", demoVox1Fader, `,"value":10`); r.State != "atWall" || r.Value.(float64) != *hold.Window.WallUpDB {
-		t.Fatalf("fader +10 dB in a slip-guard hold: %+v, want atWall at %v", r, *hold.Window.WallUpDB)
+	if r := gesture("set", demoVox1Fader, `,"value":10`); r.State != "free" || r.Value.(float64) != 10 {
+		t.Fatalf("fader +10 dB in a hold: %+v, want free at +10 (no wall since v0.5)", r)
 	}
 	gesture("holdEnd", demoVox1Fader, "")
 	if g := gesture("holdBegin", demoVox1Gain, ""); g.Window == nil || g.Window.CapUpDB == nil || *g.Window.CapUpDB != demoVox1DB+3 {

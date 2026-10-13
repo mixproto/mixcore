@@ -13,7 +13,7 @@
 // While live it asks the session for a slow, read-only background re-read
 // (DefaultRereadEvery); held parameters are left out of it.
 //
-// Roles (roles.go) are checked below every UI: each write, hold, openWall,
+// Roles (roles.go) are checked below every UI: each write, hold,
 // unlock, relock and SetShowModeBy is refused with ErrRole when the role of
 // its origin's client does not allow it.
 //
@@ -138,7 +138,7 @@ type Config struct {
 	Meters   driver.MeterRequest // re-applied after every connect
 	Logger   *slog.Logger
 	Rand     func() float64 // jitter source in [0, 1); nil: math/rand/v2
-	// Safety are the phone safety defaults (slip guard, monitor ceiling, show
+	// Safety are the phone safety defaults (monitor ceiling, show
 	// mode); see safety.go.
 	Safety SafetyConfig
 	// RereadEvery is the background re-read interval while live (sessions
