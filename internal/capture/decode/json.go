@@ -81,6 +81,7 @@ type objectScanner struct {
 	inStr   bool
 	esc     bool
 	dropped int // objects abandoned as too large or too deep
+	scanned int // bytes examined; equals the bytes fed (linear), see the tests
 }
 
 // maxPendingJSON caps the bytes held for one unfinished object. The scan is
@@ -91,6 +92,7 @@ const maxPendingJSON = 1 << 20
 
 func (sc *objectScanner) feed(b []byte, fn func([]byte)) {
 	for _, c := range b {
+		sc.scanned++
 		if sc.depth == 0 {
 			if c == '{' {
 				sc.obj, sc.depth = append(sc.obj[:0], c), 1
