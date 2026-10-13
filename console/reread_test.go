@@ -6,6 +6,7 @@ package console
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -158,18 +159,18 @@ func TestReread_SkipListHandedOverUnderTheLock(t *testing.T) {
 		}
 		defer sup.Stop()
 		synctest.Wait()
-		locked, calls := true, 0
-		drv.session(0).onSkip = func() {
-			calls++
+		var calls, unlocked atomic.Int32
+		drv.session(0).setOnSkip(func() {
+			calls.Add(1)
 			if sup.mu.TryLock() {
 				sup.mu.Unlock()
-				locked = false
+				unlocked.Add(1)
 			}
-		}
+		})
 		time.Sleep(1500 * time.Millisecond)
 		synctest.Wait()
-		if calls == 0 || !locked {
-			t.Fatalf("RereadExcept called %d times, under the lock: %v", calls, locked)
+		if calls.Load() == 0 || unlocked.Load() != 0 {
+			t.Fatalf("RereadExcept called %d times, %d of them without the lock", calls.Load(), unlocked.Load())
 		}
 	})
 }

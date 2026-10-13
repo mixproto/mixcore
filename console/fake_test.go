@@ -120,9 +120,19 @@ func (s *fakeSession) heldCalls() [][]model.ParamRef {
 	return append([][]model.ParamRef(nil), s.held...)
 }
 
+// setOnSkip installs the RereadExcept hook (the supervisor calls it from its own goroutine).
+func (s *fakeSession) setOnSkip(f func()) {
+	s.mu.Lock()
+	s.onSkip = f
+	s.mu.Unlock()
+}
+
 func (s selectiveSession) RereadExcept(skip []model.ParamRef) error {
-	if s.onSkip != nil {
-		s.onSkip()
+	s.mu.Lock()
+	hook := s.onSkip
+	s.mu.Unlock()
+	if hook != nil {
+		hook()
 	}
 	s.mu.Lock()
 	s.skips = append(s.skips, skip)
