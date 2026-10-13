@@ -19,8 +19,8 @@ import (
 // sends is a read or a meter request; it never writes a parameter.
 func (s *session) onTick(now time.Time) error {
 	rx := s.c.lastRxAt()
-	if silent := now.Sub(rx); silent > s.timing.StaleAfter {
-		return fmt.Errorf("wing: no byte for %s: %w", silent.Round(time.Millisecond), driver.ErrConnectionLost)
+	if err := s.liveness(now, rx); err != nil {
+		return err
 	}
 	quiet := now.Sub(rx) >= s.timing.QuietProbeAfter && now.Sub(s.own.lastProbe) >= s.timing.QuietProbeAfter
 	if quiet || now.Sub(s.own.lastProbe) >= s.timing.PingEvery {
@@ -43,6 +43,42 @@ func (s *session) onTick(now time.Time) error {
 		return err
 	}
 	return s.rereadDue(now)
+}
+
+// liveness applies the silence rules (review go M1): ConsoleSilent at
+// StaleAfter, ConsoleResponding when messages return, teardown at
+// DeadAfter or when the meter stream is silent too.
+func (s *session) liveness(now, rx time.Time) error {
+	silentFor := now.Sub(rx)
+	if silentFor > s.timing.DeadAfter || (silentFor > s.timing.StaleAfter && s.metersSilent(now)) {
+		return fmt.Errorf("wing: no message for %s: %w", silentFor.Round(time.Millisecond), driver.ErrConnectionLost)
+	}
+	switch {
+	case silentFor > s.timing.StaleAfter && !s.silent.Load():
+		s.silent.Store(true)
+		s.dropPending() // never sent later (rule 3)
+		s.log.Info("wing: console silent; input locked", "for", silentFor.Round(time.Millisecond))
+		s.emit(driver.ConsoleSilent{Since: rx})
+	case silentFor <= s.timing.StaleAfter && s.silent.Load():
+		s.silent.Store(false)
+		s.log.Info("wing: console answering again")
+		s.emit(driver.ConsoleResponding{})
+		return s.startReread(now) // read back what changed while we heard nothing
+	}
+	return nil
+}
+
+// metersSilent: meters are on and no packet of ours came for StaleAfter
+// (counted from when they were switched on, if none came yet).
+func (s *session) metersSilent(now time.Time) bool {
+	if !s.metersOn.Load() || s.own.meterSince.IsZero() {
+		return false
+	}
+	last := s.own.meterSince
+	if at := s.link.meters.lastAt.Load(); at > last.UnixNano() {
+		last = time.Unix(0, at)
+	}
+	return now.Sub(last) > s.timing.StaleAfter
 }
 
 // probeHash is /$syscfg/$firmware: a cheap leaf (wing.md 2.4).
@@ -77,6 +113,7 @@ func (s *session) sendSettleReads(now time.Time) error {
 // requestMeters starts the meter stream while meters are on (WG-F50).
 func (s *session) requestMeters(now time.Time) error {
 	if !s.metersOn.Load() {
+		s.own.meterSince = time.Time{}
 		return nil // the console stops after 5 s without a renewal (WG-F51)
 	}
 	req, err := s.link.meters.meterRequest(nil, s.meterID)
@@ -86,6 +123,9 @@ func (s *session) requestMeters(now time.Time) error {
 	}
 	if err := s.c.writeMeters(req); err != nil {
 		return lost(err)
+	}
+	if s.own.meterSince.IsZero() {
+		s.own.meterSince = now
 	}
 	s.own.lastMeter = now
 	return nil

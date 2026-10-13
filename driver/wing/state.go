@@ -42,6 +42,7 @@ type ownerState struct {
 	aesPresent map[int]bool
 	lastProbe  time.Time
 	lastMeter  time.Time
+	meterSince time.Time // when meters were last switched on
 	scene      sceneState
 	rr         rereadState
 	outbox     []driver.Event

@@ -60,7 +60,7 @@ type conn struct {
 	errs    chan error
 	done    chan struct{}
 	base    time.Time
-	lastRx  atomic.Int64 // nanoseconds after base of the last byte received
+	lastRx  atomic.Int64 // nanoseconds after base of the last complete message
 	badDefs atomic.Int64 // definitions that did not parse (logged by the session)
 	// walking is set by the session while a schema walk runs; outside it
 	// definition tokens are skipped without parsing (review H2).
@@ -112,8 +112,8 @@ func (c *conn) close() {
 	})
 }
 
-// lastRxAt is when the last byte arrived (any byte proves the downlink,
-// wing.md 2.4); the connect time before the first byte.
+// lastRxAt is when the last complete message arrived; the connect time
+// before the first one.
 func (c *conn) lastRxAt() time.Time { return c.base.Add(time.Duration(c.lastRx.Load())) }
 
 // write sends raw bytes with a deadline, so a stalled console fails the
@@ -154,7 +154,6 @@ func (c *conn) readLoop() error {
 	for {
 		n, err := c.tcp.Read(buf)
 		if n > 0 {
-			c.lastRx.Store(int64(time.Since(c.base)))
 			data = mux.Append(data, buf[:n], wingproto.ChannelData)
 			rest, perr := asm.feed(data, time.Now(), c.deliver)
 			if perr != nil {
@@ -181,6 +180,7 @@ func (c *conn) readLoop() error {
 
 // deliver hands one message to the owner; false once the connection closed.
 func (c *conn) deliver(m inMsg) bool {
+	c.lastRx.Store(int64(time.Since(c.base))) // a complete message is a sign of life (review go L6)
 	if m.bad {
 		c.badDefs.Add(1) // still delivered: its bytes count against the walk's limit
 	}

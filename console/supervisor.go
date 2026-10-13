@@ -422,6 +422,23 @@ func (s *Supervisor) adopt(sess driver.Session) {
 	s.mu.Unlock()
 }
 
+// silentLocked locks input like a lost connection (rule 3: holds end,
+// writes are refused, nothing in flight) while the session stays (review
+// go M1). Callers hold mu.
+func (s *Supervisor) silentLocked() {
+	if s.status != StatusLive {
+		return
+	}
+	s.holds.cancelAll(StatusStale.String())
+	s.safe.unlocks.endAll(UnlockStale)
+	s.safe.dropAllPending()
+	s.cfg.Logger.Info("console: silent; input locked", "endpoint", s.cfg.Endpoint.Host)
+	s.setStatusLocked(StatusStale, reasonSilent)
+}
+
+// reasonSilent is the stale reason while the console is silent.
+const reasonSilent = "console not answering"
+
 // markStale keeps the last values, locks input and forgets the session.
 func (s *Supervisor) markStale(ctx context.Context, cause error) {
 	if s.cfg.Options.Meters != nil {
@@ -500,6 +517,13 @@ func (s *Supervisor) handleEvent(ev driver.Event) {
 			s.scenes = append(s.scenes, e)
 		}
 		s.signal()
+	case driver.ConsoleSilent:
+		s.silentLocked()
+	case driver.ConsoleResponding:
+		if s.status == StatusStale && s.sess != nil {
+			s.cfg.Logger.Info("console: answering again", "endpoint", s.cfg.Endpoint.Host)
+			s.setStatusLocked(StatusLive, "")
+		}
 	case driver.MuteRulesChanged:
 		s.state = s.state.WithMuteRules(e.Rules)
 		s.eff.update(s.state, driver.Origin{Kind: driver.OriginConsole}, !s.full)

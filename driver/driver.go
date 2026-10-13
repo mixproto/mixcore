@@ -261,6 +261,19 @@ type ClientLimitHit struct {
 // ClientLimitCleared means updates arrive again after a ClientLimitHit.
 type ClientLimitCleared struct{}
 
+// ConsoleSilent means nothing has arrived from the console for the
+// family's stale time while the connection is still up (a lossy link may
+// recover): the supervisor marks the state stale, cancels every hold and
+// refuses writes, exactly as for a lost connection, but the session goes
+// on. ConsoleResponding ends it; nothing is replayed (queued writes were
+// dropped) and the session re-reads in the background.
+type ConsoleSilent struct {
+	Since time.Time
+}
+
+// ConsoleResponding means messages arrive again after a ConsoleSilent.
+type ConsoleResponding struct{}
+
 // MuteRulesChanged means the console changed a setting the effective-mute
 // rule depends on (wing /cfg/dcamgrp: whether a DCA mute mutes its
 // members). The state takes the new rules; no parameter changed.
@@ -299,6 +312,8 @@ func (StateReplaced) isEvent()      {}
 func (ClientLimitHit) isEvent()     {}
 func (ClientLimitCleared) isEvent() {}
 func (MuteRulesChanged) isEvent()   {}
+func (ConsoleSilent) isEvent()      {}
+func (ConsoleResponding) isEvent()  {}
 
 // Sentinel errors. Compare with errors.Is.
 var (

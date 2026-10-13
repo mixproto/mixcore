@@ -58,6 +58,7 @@ type session struct {
 	rereadReady chan struct{}
 	metersOn    atomic.Bool
 	locked      atomic.Bool
+	silent      atomic.Bool // ConsoleSilent reported: writes refused
 	stopped     atomic.Bool
 	running     atomic.Bool
 	closeOnce   sync.Once
@@ -93,6 +94,9 @@ func (s *session) Apply(cmd driver.Command) error {
 	}
 	if s.locked.Load() {
 		return fmt.Errorf("wing %s: %w: %w", cmd.Param, errLocked, driver.ErrUnsupported)
+	}
+	if s.silent.Load() {
+		return fmt.Errorf("wing %s: console silent: %w", cmd.Param, driver.ErrStale)
 	}
 	val, err := toWire(&s.tab.all[idx], cmd.Value)
 	if err != nil {

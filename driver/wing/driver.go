@@ -31,10 +31,15 @@
 // (remote lock, another client) ends the held gesture. EchoesOwnWrites is true.
 // Nothing is ever written in response to something received.
 //
-// Liveness (WG-F25, wing.md 2.4): any received byte counts; the session
-// reads /$syscfg/$firmware every PingEvery and after QuietProbeAfter of
-// silence, and the console is lost after StaleAfter without a byte. The
-// console's own 10 s idle timeout never comes close.
+// Liveness (WG-F25, wing.md 2.4; review go M1, L6): any complete message
+// counts (bytes of an unfinished token do not); the session reads
+// /$syscfg/$firmware every PingEvery and after QuietProbeAfter of silence.
+// After StaleAfter without a message it reports ConsoleSilent (input
+// locked, queued writes dropped) and keeps the connection, because TCP on
+// a lossy link recovers; answers end it with ConsoleResponding and a
+// re-read. The connection is closed after DeadAfter, or as soon as the
+// meter stream (when on) is silent too. The console's own 10 s idle
+// timeout never comes close.
 //
 // Client limit (WG-F22): 16 TCP connections, 24 from firmware 3.1; further
 // connections are refused, so there is no silent "not served" state and no
@@ -89,7 +94,8 @@ const DefaultPort = 2222
 type Timing struct {
 	PingEvery       time.Duration // liveness probe interval (wing.md 2.4)
 	QuietProbeAfter time.Duration // probe early after this much silence (wing.md 2.4)
-	StaleAfter      time.Duration // no byte for this long: the console is lost (wing.md 2.4)
+	StaleAfter      time.Duration // no message for this long: input locked, ConsoleSilent (wing.md 2.4)
+	DeadAfter       time.Duration // no message for this long (or StaleAfter with meters silent too): connection closed
 	Tick            time.Duration // how often timers are checked
 	ConnectTimeout  time.Duration // schema walk (first connect) and initial read
 	WalkQuiet       time.Duration // a definition level without DE ends after this silence (WG-F31, item 3)
@@ -106,6 +112,7 @@ var DefaultTiming = Timing{
 	PingEvery:       time.Second,
 	QuietProbeAfter: 400 * time.Millisecond,
 	StaleAfter:      1500 * time.Millisecond,
+	DeadAfter:       5 * time.Second,
 	Tick:            25 * time.Millisecond,
 	ConnectTimeout:  10 * time.Second,
 	WalkQuiet:       time.Second,
@@ -127,7 +134,7 @@ func (t Timing) withDefaults() Timing {
 	d := DefaultTiming
 	return Timing{
 		PingEvery: or(t.PingEvery, d.PingEvery), QuietProbeAfter: or(t.QuietProbeAfter, d.QuietProbeAfter),
-		StaleAfter: or(t.StaleAfter, d.StaleAfter), Tick: or(t.Tick, d.Tick), ConnectTimeout: or(t.ConnectTimeout, d.ConnectTimeout),
+		StaleAfter: or(t.StaleAfter, d.StaleAfter), DeadAfter: or(t.DeadAfter, d.DeadAfter), Tick: or(t.Tick, d.Tick), ConnectTimeout: or(t.ConnectTimeout, d.ConnectTimeout),
 		WalkQuiet: or(t.WalkQuiet, d.WalkQuiet), OptionalWait: or(t.OptionalWait, d.OptionalWait),
 		EchoWindow: or(t.EchoWindow, d.EchoWindow), SettleAfter: or(t.SettleAfter, d.SettleAfter),
 		RereadGap: or(t.RereadGap, d.RereadGap), MeterRenewEvery: or(t.MeterRenewEvery, d.MeterRenewEvery),

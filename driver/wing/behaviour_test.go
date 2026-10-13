@@ -199,23 +199,6 @@ func TestIdleSession_NoWritesForAnHour(t *testing.T) {
 	})
 }
 
-// TestStale_ConsoleStalls: no byte for StaleAfter loses the console.
-func TestStale_ConsoleStalls(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		r := newRig(t, simwing.Options{})
-		rn := r.run(r.connect())
-		time.Sleep(time.Second)
-		r.sim.Pause()
-		start := time.Now()
-		err := <-rn.done
-		rn.done <- err
-		if !errors.Is(err, driver.ErrConnectionLost) || time.Since(start) > 2*time.Second {
-			t.Fatalf("stall: %v after %v", err, time.Since(start))
-		}
-		r.sim.Resume()
-	})
-}
-
 // TestReconnect_DropsQueuedWritesAndReusesSchema: rule 3. After a drop the
 // link's next session reads the state (changed during the outage) without
 // walking the schema again, and nothing is replayed.

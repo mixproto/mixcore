@@ -65,6 +65,7 @@ type meterSink struct {
 	enabled atomic.Bool
 	id      atomic.Uint32 // report id of the current request; 0 = none
 	inputs  atomic.Int32  // inputs of the session; levels above are -inf
+	lastAt  atomic.Int64  // unix nanoseconds of the last packet of the current report id
 	frame   meters.Frame
 
 	errOnce sync.Once
@@ -165,7 +166,7 @@ func (m *meterSink) readLoop() error {
 // handle decodes one meter datagram of our current report id (WG-F52,
 // WG-F53) and publishes it. Wrong ids and lengths are dropped.
 func (m *meterSink) handle(pkt []byte, at time.Time) {
-	if m.slot == nil || !m.enabled.Load() || len(pkt) != meterPacketLen {
+	if !m.enabled.Load() || len(pkt) != meterPacketLen {
 		return
 	}
 	id, ok := wingproto.MeterPacketID(pkt)
@@ -177,7 +178,11 @@ func (m *meterSink) handle(pkt []byte, at time.Time) {
 	if !m.enabled.Load() {
 		return
 	}
+	m.lastAt.Store(at.UnixNano())
 	decodeMeterPacket(pkt, &m.frame, int(m.inputs.Load()))
+	if m.slot == nil {
+		return // no slot: the packet still proves the console is there
+	}
 	m.frame.Seq++
 	m.frame.At = at
 	m.slot.Publish(&m.frame)

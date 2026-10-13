@@ -12,6 +12,7 @@ import (
 
 	"github.com/mixproto/mixcore/driver"
 	"github.com/mixproto/mixcore/internal/backoff"
+	"github.com/mixproto/mixcore/model"
 )
 
 // SR-17: while the console does not send us updates, values may be stale:
@@ -70,6 +71,51 @@ func TestLimit_ClearedByReconnect(t *testing.T) {
 		synctest.Wait()
 		if u := sup.Drain(); u.Status != StatusLive || u.Limited {
 			t.Fatalf("after reconnect: %+v", u)
+		}
+	})
+}
+
+// Review go M1: a session whose console went silent locks input (stale,
+// holds cancelled, writes refused) while it keeps the connection; when the
+// console answers again, input unlocks without a reconnect.
+func TestConsoleSilent_LocksAndRecoversWithoutReconnect(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		drv := &fakeDriver{snapshot: stateWithGroups()}
+		sup := start(t, drv)
+		synctest.Wait()
+		fader := model.ParamRef{Strip: ch1, Field: model.FieldFader}
+		if err := sup.Hold(fader, gesture, true); err != nil {
+			t.Fatal(err)
+		}
+		sup.Drain()
+		drv.session(0).push <- driver.ConsoleSilent{Since: time.Now()}
+		synctest.Wait()
+		u := sup.Drain()
+		if u.Status != StatusStale || len(u.Events) != 1 || u.Events[0].Kind != HoldCancelled {
+			t.Fatalf("silent: status %s, events %+v", u.Status, u.Events)
+		}
+		if err := sup.Apply(driver.Command{Param: fader, Value: lvl(t, -3), Origin: gesture}); !errors.Is(err, driver.ErrStale) {
+			t.Fatalf("write while silent: %v", err)
+		}
+		drv.session(0).push <- driver.ConsoleResponding{}
+		synctest.Wait()
+		if u := sup.Drain(); u.Status != StatusLive {
+			t.Fatalf("responding: status %s", u.Status)
+		}
+		if err := sup.Apply(driver.Command{Param: fader, Value: lvl(t, -3), Origin: gesture}); !errors.Is(err, ErrGestureEnded) {
+			t.Fatalf("the cancelled hold must be grabbed again: %v", err)
+		}
+		if err := sup.Hold(fader, gesture, true); err != nil {
+			t.Fatal(err)
+		}
+		if err := sup.Apply(driver.Command{Param: fader, Value: lvl(t, -3), Origin: gesture}); err != nil {
+			t.Fatalf("write after recovery: %v", err)
+		}
+		drv.mu.Lock()
+		n := len(drv.connectAt)
+		drv.mu.Unlock()
+		if n != 1 {
+			t.Fatalf("%d connects: silence must not reconnect by itself", n)
 		}
 	})
 }
