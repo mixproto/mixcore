@@ -270,8 +270,9 @@ func (s *Supervisor) gainRulesLocked(w Write, cur, v float64, st GestureState, w
 	}
 	switch {
 	case w.Typed:
-	case win != nil: // inside a hold: 6 dB from the hold's previous write (CC-3); no error mid-drag
-		v = math.Min(math.Max(v, win.lastWrite-gainBoundDB), win.lastWrite+gainBoundDB)
+	case win != nil: // inside a hold: bounded, never an error mid-drag (CC-3)
+		lo, hi := s.holdBoundsLocked(w.Param, win, cur, inFlight)
+		v = math.Min(math.Max(v, lo), math.Max(lo, hi))
 		if st == StateAtCap && v != win.CapUp && v != win.CapDown {
 			st = StateFree // atCap only at a range end (CC-2)
 		}
@@ -282,6 +283,22 @@ func (s *Supervisor) gainRulesLocked(w Write, cur, v float64, st GestureState, w
 	}
 	s.safe.unlocks.noteEntry(h, entryBase(cur, inFlight, win), tol) // any accepted Gain write during an unlock is an entry (undo grace)
 	return v, st, windowOf(win), nil
+}
+
+// holdBoundsLocked is where a Gain write inside a hold may go: the first
+// write within 6 dB of the console value and every value in flight (as
+// outside a hold, fader-and-gain.md 15: "the first from the console
+// value"), every later one within 6 dB of the hold's previous write and of
+// the latest value any client sent (review blockers 1, should-fix 4).
+func (s *Supervisor) holdBoundsLocked(p model.ParamRef, win *window, cur float64, inFlight []float64) (lo, hi float64) {
+	if !win.wrote {
+		return gainBounds(cur, inFlight)
+	}
+	lo, hi = win.lastWrite-gainBoundDB, win.lastWrite+gainBoundDB
+	if l, ok := s.safe.latest[p]; ok {
+		lo, hi = math.Max(lo, l.db-gainBoundDB), math.Min(hi, l.db+gainBoundDB)
+	}
+	return lo, hi
 }
 
 // halfStepDB is half a step of headamp h's own law: two Gain values closer

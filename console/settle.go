@@ -8,48 +8,64 @@ import (
 	"math"
 	"slices"
 
+	"github.com/mixproto/mixcore/driver"
 	"github.com/mixproto/mixcore/model"
 )
 
-// Settle matching (redesign CC-3, core-api v0.5 rule 4). On a console that
-// does not echo Gain, the driver's settle re-read reports the value the
-// console holds while a person may still be dragging. Such a report that
-// matches one of the drag's own writes (the hold's last write, or any of
-// our values in flight, within half a step of the headamp's law) is our
-// own write settling: it never ends the hold as an external change. One
-// that matches an earlier write than the hold's last is not published at
-// all, so the shown value never moves back mid-drag; the next write of the
-// drag, or the settle re-read after release, brings the console's value.
+// Settle matching (redesign CC-3, core-api v0.5 rule 4, review blockers 1
+// and 2). On a console that does not echo Gain, the driver's settle re-read
+// reports the value the console holds while a person may still be dragging.
+// Only two kinds of report can be the drag's own write: the holding
+// client's own echo (its origin), and an authoritative read-back reply
+// (driver.ParamChanged.Authoritative). Such a report that matches the
+// hold's last write or one of our values in flight (within half a step of
+// the headamp's law) never ends the hold. A holder echo of an earlier write
+// is not published (the shown value never moves back mid-drag); an
+// authoritative reply always is: it is the console's value. Everything else
+// (the desk, a scene recall, another client's echo) is an external change,
+// even when its value matches one of ours.
 
-// gainSettleLocked classifies a Gain report c against the open holds that
-// wrote to its parameter: own is a report of one of our writes, behind one
-// of an earlier write than the hold's last. Callers hold mu.
+// gainSettleLocked classifies a Gain report c against the open hold that
+// wrote to its parameter: own is a report of one of our writes, behind a
+// holder echo of an earlier write than the hold's last. Callers hold mu.
 func (s *Supervisor) gainSettleLocked(c Change) (own, behind bool) {
 	if c.Param.Field != model.FieldGain {
 		return false, false
 	}
-	latest, held := s.heldLastWriteLocked(c.Param)
-	if !held {
+	holder, latest, held := s.heldLastWriteLocked(c.Param)
+	if !held || (!c.Authoritative && !isOwnEcho(c.Origin, holder)) {
 		return false, false
 	}
 	db, tol := dbOf(c.Value), s.halfStepDB(c.Param.Strip.Index)
 	same := func(x float64) bool { return math.Abs(x-db) <= tol }
-	if same(latest) {
+	switch {
+	case same(latest):
 		return true, false
-	}
-	if slices.ContainsFunc(s.safe.inFlightOf(c.Param), same) {
-		return true, true
+	case slices.ContainsFunc(s.safe.inFlightOf(c.Param), same):
+		return true, !c.Authoritative
 	}
 	return false, false
 }
 
-// heldLastWriteLocked returns the last value an open hold on p wrote; ok is
-// false when no open hold on p has written.
-func (s *Supervisor) heldLastWriteLocked(p model.ParamRef) (last float64, ok bool) {
+// heldLastWriteLocked returns the client holding p and the last value its
+// hold wrote; ok is false when no open hold on p has written.
+func (s *Supervisor) heldLastWriteLocked(p model.ParamRef) (client string, last float64, ok bool) {
 	for k, w := range s.safe.windows {
 		if _, active := s.holds.active[k]; active && k.param == p && w.wrote {
-			return w.lastWrite, true
+			return k.client, w.lastWrite, true
 		}
 	}
-	return 0, false
+	return "", 0, false
+}
+
+// endOtherGainHoldsLocked ends every other client's hold on headamp Gain p
+// when origin grabs it (review blocker 1, SR-15): two fingers on one
+// preamp from two devices would bound each against the other's writes.
+func (s *Supervisor) endOtherGainHoldsLocked(p model.ParamRef, origin driver.Origin) {
+	if !isHeadampGain(p) {
+		return
+	}
+	cur, _ := s.state.Value(p)
+	s.holds.external(Change{Param: p, Value: cur, Origin: origin})
+	s.closeEndedWindowsLocked()
 }

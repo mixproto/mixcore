@@ -232,6 +232,7 @@ func (s *Supervisor) HoldWindow(p model.ParamRef, origin driver.Origin, held boo
 	if !ok {
 		return Result{}, fmt.Errorf("console: hold %s: %w", p, model.ErrUnknownParam)
 	}
+	s.endOtherGainHoldsLocked(p, origin) // one finger per preamp (review blocker 1)
 	s.holds.active[k] = struct{}{}
 	if isHeadampGain(p) {
 		s.safe.unlocks.touch(p.Strip.Index)

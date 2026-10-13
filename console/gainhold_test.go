@@ -83,9 +83,11 @@ func TestGain_HoldBoundIsThePreviousWrite(t *testing.T) {
 	})
 }
 
-// AC-RD-G03 settle part: reports of the drag's own writes (the latest, or
-// an earlier one in flight) never end the hold; an earlier one never moves
-// the state back; a value matching none of them ends it (SR-15).
+// AC-RD-G03 settle part (review should-fix 3): reports of the drag's own
+// writes (the latest, or an earlier one in flight) never end the hold; the
+// holder's own echo of an earlier write is not published (the shown value
+// never moves back), an authoritative read-back always is (it is the
+// console's value); a value matching none of them ends it (SR-15).
 func TestGain_SettleReportsOfOwnWritesKeepTheHold(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		sup, drv := startSafe(t, SafetyConfig{}, safetyState(-6))
@@ -94,12 +96,16 @@ func TestGain_SettleReportsOfOwnWritesKeepTheHold(t *testing.T) {
 			_, _ = sup.Write(set(gain3, lvl(t, db), gesture))
 		}
 		_ = sup.Drain()
-		pushGain(t, drv, 34.5, desk, true) // an earlier write read back
+		pushGain(t, drv, 33.5, gesture, false) // the holder's late echo of an earlier write
 		if u := sup.Drain(); len(u.Events) != 0 || len(u.Changes) != 0 {
-			t.Fatalf("earlier own write: events %+v changes %+v, want none", u.Events, u.Changes)
+			t.Fatalf("an earlier own echo: events %+v changes %+v, want none", u.Events, u.Changes)
 		}
-		if v, _ := sup.Snapshot().State.Value(gain3); dbOf(v) != 32.5 {
-			t.Fatalf("state moved to %v", dbOf(v))
+		pushGain(t, drv, 34.5, desk, true) // an earlier write read back: the console's value
+		if u := sup.Drain(); len(u.Events) != 0 || len(u.Changes) != 1 {
+			t.Fatalf("earlier own write read back: events %+v changes %+v, want it published", u.Events, u.Changes)
+		}
+		if v, _ := sup.Snapshot().State.Value(gain3); dbOf(v) != 34.5 {
+			t.Fatalf("state %v, want the console's 34.5", dbOf(v))
 		}
 		_, _ = sup.Write(set(gain3, lvl(t, 36.5), gesture))
 		pushGain(t, drv, 36.5, desk, true) // the latest write read back
