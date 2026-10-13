@@ -535,6 +535,20 @@ behaviour above and has a test that pins it, so a hardware result changes one de
   address, so snapshot 64 (XA-F63) is never touched.
 - **Discovery.** `/xinfo` to 10024 (XA-F12). The core API classifies replies: port 10024 is xair unless the model is
   an X32 model; port 10023 is x32 unless the model starts with XR, X18 or MR; on other ports the model decides.
+- **Buses and sends (core-api v0.4, branch feat/core-sends-buses, 2026-10-13).** Buses 1..6 are `/bus/1..6` (kind
+  `mix`) and FX sends 1..4 are model buses 7..10 (`/fxsend/1..4`, kind `fx`), the section 3.1 proposal (lead default
+  "yes"); each has name, colour, fader and mute (section 3.2). Every bus and FX send is probed once per link (its fader
+  read), so a model with fewer buses (XA-F72, test item 12) connects without them. Sends from inputs 1..16 to slots
+  01..10 (section 3.3): `level` with the XA-F40 law in 161 steps (k/160, XA-F41; echoes matched within 0.5/160), `pan`
+  (-100 + 200 f, 101 steps, section 4) and `tap` (0..5, read-only, the console words `IN`, `PREEQ`, `POSTEQ`, `PRE`,
+  `POST`, `GRP`), each per send: the sources address every send, and whether tap and pan are really per pair is test
+  item 10 (if it is, the X32 pair rule of `x32.md` X32-F84/F85 applies). `Send.on` is absent (section 3.3), so a set or
+  toggle of `sendOn` is `ERR_UNSUPPORTED`. `grpon`, sends from `/rtn/aux` and `/rtn/N`, and FX-return sends are not
+  modelled. Bus links `/config/buslink/1-2`, `/3-4`, `/5-6` (section 3.2) are read-only, on the odd bus. DCA masters
+  `/dca/N/fader`, `/dca/N/config/name`, `/dca/N/config/color` (section 3.2) and the colour of inputs, main, buses and
+  DCAs (section 3.2 `config/color`) are read; DCA faders are written, colours never. ОЦЕНКА of a full read: 16 x 10 x 3
+  = 480 send reads + 40 bus + 3 link + 12 DCA + 17 colour reads + the v0.3 table, about 680 reads; the background re-read
+  (16 per second) takes about 45 s per pass.
 - **Simulator defaults** (`sim/xair`, options for every `[TO-VERIFY]`): push to the sender with `/xremote` (H2,
   option `NoEchoToSender` for H1), no reply to a set (option `ReplyToSet` for H3), ninth client ignored
   (`EvictOldestWhenFull`), `/status` always "active" (`StandbyWhenNotServed`), `/-snap/index` not pushed on a load
@@ -636,3 +650,4 @@ knob moves of 26 need a person.
 - Warn on firmware older than 1.18 (XA-F76)? Default: one-time non-blocking hint.
 - Access point onboarding hint at 4 devices (section 8)? Default: yes, in the connect flow.
 - FX send masters as buses 7..10 in the unified model (section 3.1)? Default: yes, with a role flag for display.
+  Implemented that way in core-api v0.4 (bus `kind` `fx`); the lead can still overturn it.
