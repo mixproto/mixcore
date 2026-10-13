@@ -16,10 +16,13 @@
 //	mixcapture report     -session DIR
 //	mixcapture law        -session DIR -key /ch/01/mix/fader [-p 0.5=-10 ...]
 //	mixcapture introspect -family yamaha-rcp -console 192.168.1.70 -out DIR
+//	mixcapture introspect -family wing -console 192.168.1.71 -out DIR [-roots /ch/1,/io/in/LCL/1]
 //
 // Safety: mixcapture never originates traffic to a console. The relay
 // forwards only what the vendor app sent; introspect sends only the
-// read-only queries of docs/protocols/yamaha-rcp.md. There is no write mode.
+// read-only queries of docs/protocols/yamaha-rcp.md, or for wing only the
+// definition and data requests of docs/protocols/wing.md (DA DD, D7 <hash>
+// DD, D7 <hash> DC). There is no write mode.
 package main
 
 import (
@@ -44,7 +47,7 @@ commands:
   read        analyze a pcap or pcapng file captured elsewhere, e.g. on a mirror port (option C)
   report      re-analyze a session directory and rewrite its report (other decoder flags allowed)
   law         fit a value law for one key from labelled marks and/or -p points
-  introspect  ask a self-describing console for its parameter table (Yamaha RCP, read-only)
+  introspect  ask a self-describing console for its parameter table (Yamaha RCP, WING; read-only)
 
 Run "mixcapture <command> -h" for the flags of a command.
 While recording, type a label and Enter to mark ("ch1 fader = -10 dB"), Enter alone for an

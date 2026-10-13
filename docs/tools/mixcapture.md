@@ -13,7 +13,9 @@ controls, no modified or debug builds).
 
 ## What mixcapture never does
 - It never sends anything to a console on its own. The relay (option B) forwards only the bytes the vendor app sent;
-  `introspect` sends only the read-only queries of `docs/protocols/yamaha-rcp.md` (its client refuses any other line).
+  `introspect` sends only the read-only queries of `docs/protocols/yamaha-rcp.md` (its client refuses any other line),
+  or for WING only definition and data requests (`DA DD`, `D7 <hash> DD`, `D7 <hash> DC`; its client cannot encode a
+  value, a toggle or a step).
 - There is no write probing. To learn a write, make the vendor app (or the surface) do it while recording.
 - It never stores a session inside the public mixcore repository (it refuses such a path).
 
@@ -166,6 +168,7 @@ Each flow (transport, app endpoint, console endpoint) gets one decoder, chosen f
 | `midi` | raw MIDI bytes (running status, real-time bytes, SysEx) | `NRPN ch1 0x0017` (data entry MSB after CC 99/98), `... lsb` (CC 38), `RPN`, `CC ch1 #7`, notes, program, pressure, pitch bend, `SYSEX F0 <first 6 bytes>` | 7-bit value in hex |
 | `text` | newline-terminated text lines (RCP style) and JSON lines | the first token with `/` or `:` plus the index tokens after it; verbs and status words before it are dropped, so `set`, `OK set` and `NOTIFY set` of one parameter share a key | the last token |
 | `json` | JSON objects anywhere in a byte stream, also inside binary framing (objects over 1 MiB or 32 levels are dropped and counted in the report's Traffic section) | JSON path (`$.channels[0].fader`), or the address of an object with a `path`/`address`/`param`/`key` field and a `value` | the leaf |
+| `wing` | the WING native protocol on TCP 2222 (`docs/protocols/wing.md` WG-F13, WG-F30): the `0xDF` channel mux, then the data channel's tokens; and `WING?` discovery datagrams | the node selected before a value: `#<hash>` after `D7`, or a path from `DA` and node names; `<sel> read` for a data request, `<sel> defs` for a definition request, `def #<hash>` for a definition the console sent, `meters` for a meter-channel request | the value (`D5` floats are in the parameter's unit, e.g. dB; strings quoted; `click (toggle)`, `step n`), or the definition's name, type and range |
 | `binary` | anything else; TCP framing is guessed (u8/u16/u32, both byte orders, at offset 0/2/4, counting the rest or the whole frame) | the first `-bin-key` bytes (default 4) in hex plus the frame length | the rest in hex; the report lists the changing offsets |
 
 Flags shared by `relay`, `live`, `read`, `report`, `law`: `-window 5s`, `-quiet 2s`,
@@ -183,6 +186,34 @@ until the console answers `ERROR`, a reply times out (`-timeout 2s`) or `-max` e
 `params.csv`, `meters.csv` and `introspect.md`. The conversation is in `capture.pcap`. Facts and open questions:
 `docs/protocols/yamaha-rcp.md`. Run it when no vendor app needs the connection slot.
 
+WING consoles describe their own tree too (node definitions, WG-F33):
+```bash
+mixcapture introspect -family wing -console 192.168.1.71 \
+  -out ~/Desktop/dybyskz-mix/research/captures/wing/2026-10-20/introspect
+mixcapture introspect -family wing -console 192.168.1.71 -roots /ch/1,/io/in,/dca/1,/mgrp/1,/aux/1,/$syscfg,/$ctl/lib \
+  -out ~/Desktop/dybyskz-mix/research/captures/wing/2026-10-20/item02
+```
+It walks the definitions breadth-first, one request at a time (`DA DD`, then `D7 <hash> DD` for each node; `-roots`
+limits the walk to the paths given and the nodes on the way to them; `-max` nodes, default 60 000), and then, unless
+`-values=false`, reads each leaf once (`D7 <hash> DC`). Values come after all definitions, because whether a data
+answer ends with `DE` is unverified (item 3). It never sets a model (`mdl`) to list another model's parameters, so
+only the models loaded now are described (WG-F34). Output: `schema.csv` (path, hash, parent, index, long name, type,
+unit, read-only, range, steps, enum items, max length, value) and `introspect.md` (identity strings, the gain laws of
+item 14, name lengths of item 2, and whether the hashes the document lists match this console). It takes one of the
+console's 16 (24) TCP slots (WG-F22) while it runs. This closes items 1 (identity strings), 2 (counts per model) and
+the law half of 14 of `wing.md` section 13 without any write.
+
+### WING: capture recipe (wing.md section 13)
+- Control traffic: TCP 2222 between WING Edit or CoPilot and the console. Option A (WING Edit on the capturing Mac,
+  `mixcapture live -i <en> -console <ip>`) or C; the `wing` decoder is chosen by itself (the stream starts with `DF D1`).
+- **Meters cannot go through the relay** (option B): the vendor app tells the console a UDP port of its own in every
+  meter request (`DF D3 D3 <port>`, WG-F50) and the console sends meters there (WG-F51), so the relay never sees them.
+  Capture them with A or C: the meter request appears as key `wing meters` (port, report id, block list in hex), and
+  the meter datagrams form a separate UDP flow from the console to that port, decoded as `binary` and keyed by the
+  first 4 bytes (the report id) and the length (4 + 2 x 8 per strip block; 708 bytes for 40 channels and 4 mains).
+  Note the port from the request, then filter with `-ports <that port>` if the report is crowded.
+- Discovery: `WING?` and the console's `WING,...` reply on UDP 2222 are keyed `wing discovery` (item 1).
+
 ## Troubleshooting
 - `live` fails with a permission error: install ChmodBPF (see Build), or run with `sudo`.
 - Nothing decoded: check `-console`; the report's Traffic line counts packets "not to or from the console".
@@ -196,3 +227,5 @@ until the console answers `ERROR`, a reply times out (`-timeout 2s`) or `-max` e
 - Every setup was exercised against the simulators on loopback only (`make sim-test`); Internet Sharing, relaying a
   real vendor app and a real mirror port are not verified.
 - Yamaha RCP introspection was tested against a scripted stand-in only (T1-T4 of `yamaha-rcp.md`).
+- WING introspection and the `wing` decoder were tested against `sim/wing` only, whose hashes are placeholders
+  except the eight the protocol document lists.

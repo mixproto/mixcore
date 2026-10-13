@@ -50,6 +50,8 @@ func (k Key) String() string {
 	switch k.Kind {
 	case KindOSC, KindJSON, KindText:
 		return k.ID
+	case KindWing:
+		return "wing " + k.ID
 	case KindNRPN, KindRPN, KindCC, KindSysEx:
 		return fmt.Sprintf("%s %s", upper(k.Kind), k.ID)
 	default:
@@ -155,7 +157,7 @@ func (o Options) withDefaults() Options {
 // All returns every decoder, the generic binary one last.
 func All(o Options) []Decoder {
 	o = o.withDefaults()
-	return []Decoder{OSC{}, MIDI{opts: o}, Text{}, JSON{}, Binary{opts: o}}
+	return []Decoder{OSC{}, WING{}, MIDI{opts: o}, Text{}, JSON{}, Binary{opts: o}}
 }
 
 // ByName returns the decoder called name.
@@ -165,7 +167,7 @@ func ByName(name string, o Options) (Decoder, error) {
 			return d, nil
 		}
 	}
-	return nil, fmt.Errorf("decode: no decoder %q (have osc, midi, text, json, binary)", name)
+	return nil, fmt.Errorf("decode: no decoder %q (have osc, wing, midi, text, json, binary)", name)
 }
 
 // Choose returns the decoder with the highest score for samples, the first
