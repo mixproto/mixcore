@@ -204,11 +204,8 @@ func parseCommand(data string) (command, error) {
 	if err := checkV05Fields(c); err != nil {
 		return command{}, codeErr(CodeInvalidCommand, err)
 	}
-	if c.TrackLengthPt != nil {
-		if c.Type != cmdHoldBegin || !(*c.TrackLengthPt >= minTrackPt && *c.TrackLengthPt <= maxTrackPt) {
-			return command{}, codeErr(CodeInvalidCommand, fmt.Errorf("trackLengthPt goes with holdBegin, %v <= pt <= %v", minTrackPt, maxTrackPt))
-		}
-		// v0.5: validated and ignored (the slip guard that used it is retired, CC-1)
+	if err := checkTrackLength(c); err != nil {
+		return command{}, err
 	}
 	switch c.Type {
 	case cmdSlipGuard, cmdShowMode:
@@ -242,6 +239,15 @@ func parseCommand(data string) (command, error) {
 }
 
 func isTrue(b *bool) bool { return b != nil && *b }
+
+// checkTrackLength: trackLengthPt goes with holdBegin only, 50..10000 pt;
+// v0.5 validates and ignores it (the slip guard that used it is retired, CC-1).
+func checkTrackLength(c commandJSON) error {
+	if c.TrackLengthPt == nil || (c.Type == cmdHoldBegin && *c.TrackLengthPt >= minTrackPt && *c.TrackLengthPt <= maxTrackPt) {
+		return nil
+	}
+	return codeErr(CodeInvalidCommand, fmt.Errorf("trackLengthPt goes with holdBegin, %v <= pt <= %v", minTrackPt, maxTrackPt))
+}
 
 // parseSetting parses setSlipGuard / setShowMode: a boolean value, no param.
 func parseSetting(c commandJSON, cmd command) (command, error) {

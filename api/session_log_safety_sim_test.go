@@ -233,7 +233,7 @@ func (s *safetySession) showMode(t *testing.T) {
 		CodeOf(s.eng.Apply(gcmd("set", gain3, `,"value":31.5`))))
 	time.Sleep(100 * time.Millisecond)
 	_ = s.eng.Apply(gcmd("unlock", gain3, ""))
-	s.logf("unlock (after the UI's 1 s hold); Gain +1 (31.5) -> %q", CodeOf(s.eng.Apply(gcmd("set", gain3, `,"value":31.5`))))
+	s.logf("unlock (after the UI's one-tap Adjust, v0.5); Gain +1 (31.5) -> %q", CodeOf(s.eng.Apply(gcmd("set", gain3, `,"value":31.5`))))
 	time.Sleep(100 * time.Millisecond)
 	s.logf("while unlocked, Gain -2 (29.5) -> %q", CodeOf(s.eng.Apply(gcmd("set", gain3, `,"value":29.5`))))
 	time.Sleep(100 * time.Millisecond)
