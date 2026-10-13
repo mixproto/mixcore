@@ -142,3 +142,34 @@ func TestReread_HoldChangesReachTheSessionAtOnce(t *testing.T) {
 		}
 	})
 }
+
+// Review re-check (nit): the held list a pass is asked with is read and
+// handed to the session under one hold of mu, so a hold that begins in
+// between can never be overwritten by an older list.
+func TestReread_SkipListHandedOverUnderTheLock(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		drv := &fakeDriver{snapshot: stateWith(-6), selective: true}
+		sup, err := New(Config{Driver: drv, Rand: func() float64 { return 0.5 }, RereadEvery: time.Second})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sup.Start(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		defer sup.Stop()
+		synctest.Wait()
+		locked, calls := true, 0
+		drv.session(0).onSkip = func() {
+			calls++
+			if sup.mu.TryLock() {
+				sup.mu.Unlock()
+				locked = false
+			}
+		}
+		time.Sleep(1500 * time.Millisecond)
+		synctest.Wait()
+		if calls == 0 || !locked {
+			t.Fatalf("RereadExcept called %d times, under the lock: %v", calls, locked)
+		}
+	})
+}

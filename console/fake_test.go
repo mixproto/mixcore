@@ -95,6 +95,7 @@ type fakeSession struct {
 	failing error              // Apply returns it (a send that failed)
 	onApply func()             // called at the start of Apply (tests of lock order)
 	held    [][]model.ParamRef // SetHeld calls (selective sessions)
+	onSkip  func()             // called at the start of RereadExcept (tests of lock order)
 }
 
 // failApplies makes Apply return err (nil: succeed again).
@@ -120,6 +121,9 @@ func (s *fakeSession) heldCalls() [][]model.ParamRef {
 }
 
 func (s selectiveSession) RereadExcept(skip []model.ParamRef) error {
+	if s.onSkip != nil {
+		s.onSkip()
+	}
 	s.mu.Lock()
 	s.skips = append(s.skips, skip)
 	s.mu.Unlock()

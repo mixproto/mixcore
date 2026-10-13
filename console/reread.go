@@ -61,16 +61,16 @@ func (s *Supervisor) syncHeldLocked() {
 // skips the pass while anything is held. It never writes.
 func (s *Supervisor) reread(rr driver.Rereader) {
 	s.mu.Lock()
-	live := s.status == StatusLive
+	defer s.mu.Unlock() // the held list is read and handed over at once (Reread never blocks)
+	if s.status != StatusLive {
+		return
+	}
 	held := make([]model.ParamRef, 0, len(s.holds.active))
 	for k := range s.holds.active {
 		held = append(held, k.param)
 	}
-	s.mu.Unlock()
 	var err error
 	switch sel, ok := rr.(driver.SelectiveRereader); {
-	case !live:
-		return
 	case ok:
 		err = sel.RereadExcept(held)
 	case len(held) > 0:

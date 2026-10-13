@@ -242,11 +242,13 @@ func TestLimit_UnechoedGainWritesAreNoEvidence(t *testing.T) {
 	})
 }
 
-// Review Go S2: changes to sends, bus names and colours and bus links that
-// the re-read finds unpushed are no client-limit evidence (their pushes
-// are not documented, X32-F90 item 23): two passes with such changes only
-// raise no ClientLimitHit. One predicate (limitEvidence) serves writes and
-// re-reads.
+// Review Go S2 (re-check): changes to sends, bus names and colours and bus
+// links that the re-read finds unpushed are no client-limit evidence
+// (their pushes are not documented, X32-F90 item 23). Before each of two
+// passes a send changes on every input, so whatever slice of the sends a
+// pass reads holds changes; then the test waits two passes for a
+// ClientLimitHit that must not come. One predicate (limitEvidence)
+// serves writes and re-reads; without it this test fails.
 func TestLimit_UnpushedBusAndSendChangesAreNoEvidence(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		r := newRig(t, simx32.Options{})
@@ -254,23 +256,23 @@ func TestLimit_UnpushedBusAndSendChangesAreNoEvidence(t *testing.T) {
 		sess := r.connect()
 		events, _ := r.run(sess)
 		rr := sess.(driver.Rereader)
-		for pass, change := range []map[string]osc.Arg{
-			{"/ch/01/mix/02/level": osc.Float(0.5), "/bus/03/config/name": osc.String("Wedge"), "/ch/01/config/color": osc.Int(3)},
-			{"/ch/02/mix/02/level": osc.Float(0.5), "/bus/03/config/color": osc.Int(5), "/config/buslink/1-2": osc.Int(1)},
-		} {
-			for addr, a := range change {
-				_ = r.sim.SurfaceSet(addr, a) // nobody is told: the slots are full
+		for pass := range 2 {
+			level := osc.Float(float32(40+40*pass) / 160) // -30 dB, then -10 dB: a change on every pass
+			for ch := 1; ch <= 32; ch++ {
+				for _, bus := range []int{1, 8, 16} { // nobody is told: the slots are full
+					_ = r.sim.SurfaceSet(fmt.Sprintf("/ch/%02d/mix/%02d/level", ch, bus), level)
+				}
 			}
+			_ = r.sim.SurfaceSet("/bus/03/config/name", osc.String(fmt.Sprintf("Wedge %d", pass)))
+			_ = r.sim.SurfaceSet("/bus/03/config/color", osc.Int(int32(3+pass)))
+			_ = r.sim.SurfaceSet("/config/buslink/1-2", osc.Int(int32(1-pass)))
 			if err := rr.Reread(); err != nil {
 				t.Fatal(err)
 			}
-			time.Sleep(DefaultTiming.RereadGap + 2*passTime)
-			if _, ok := nextOf[driver.ClientLimitHit](events, 0); ok {
-				t.Fatalf("pass %d: ClientLimitHit from unpushed bus and send values", pass+1)
-			}
+			time.Sleep(DefaultTiming.RereadGap + 2*passTime) // the pass runs and ends
 		}
-		if hit, ok := nextOf[driver.ClientLimitHit](events, passTime); ok {
-			t.Fatalf("ClientLimitHit %+v", hit)
+		if hit, ok := nextOf[driver.ClientLimitHit](events, 2*passTime); ok {
+			t.Fatalf("ClientLimitHit %+v from unpushed bus and send values", hit)
 		}
 	})
 }
