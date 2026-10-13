@@ -12,6 +12,12 @@
 // sends to the app came from the console. It opens one upstream socket per
 // app endpoint, so the console sees as many clients as there are apps.
 //
+// Order: every payload is recorded before it is forwarded. The receiver
+// cannot react to bytes it has not been sent yet, so the capture is in
+// causal order: a request is always recorded before the reply it causes, and
+// a reply before the app's next request. A payload whose forward then fails
+// stays in the capture; the failure is logged.
+//
 // Exposure: anyone who can reach the listen address can reach the console
 // through the relay. Callers bind one local address and should pass the
 // vendor app's address as an allow-list (Apps); other sources are dropped

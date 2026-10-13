@@ -129,17 +129,20 @@ func (t *TCP) serveConn(ctx context.Context, app net.Conn) {
 	wg.Wait()
 }
 
-// pipe copies src to dst, recording each chunk as from -> to.
+// pipe copies src to dst, recording each chunk as from -> to before it is
+// written (see the package doc on order).
 func (t *TCP) pipe(dst io.Writer, src io.Reader, from, to netip.AddrPort) {
 	buf := make([]byte, readBuffer)
 	for {
 		n, err := src.Read(buf)
 		if n > 0 {
-			if _, werr := dst.Write(buf[:n]); werr != nil {
-				return
-			}
+			// Record first: the peer cannot answer before it has the bytes, so
+			// the capture keeps causal order (a request before its reply).
 			if rerr := t.Rec.Stream(time.Now(), from, to, buf[:n]); rerr != nil {
 				t.Logger.Error("relay: record", "err", rerr)
+			}
+			if _, werr := dst.Write(buf[:n]); werr != nil {
+				return
 			}
 		}
 		if err != nil {
