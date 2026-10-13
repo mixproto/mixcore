@@ -170,4 +170,3 @@ func TestMeterID_Random(t *testing.T) {
 		}
 	})
 }
-

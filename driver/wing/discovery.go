@@ -29,6 +29,8 @@ const (
 	identityFields   = 6
 	maxIdentityLen   = 512 // far above any documented reply
 	discoveryBuf     = 1024
+	// maxFound caps the consoles one probe lists (review sec L7).
+	maxFound = xosc.MaxFound
 )
 
 // Found is one console that answered a discovery probe (the same type as
@@ -124,6 +126,9 @@ func collectReplies(pc net.PacketConn) ([]Found, error) {
 		ip := ua.AddrPort().Addr().Unmap()
 		if err != nil || seen[ip] {
 			continue
+		}
+		if len(found) >= maxFound {
+			continue // dropped, never stored
 		}
 		seen[ip] = true
 		found = append(found, Found{Endpoint: driver.Endpoint{Host: ip.String(), Port: DefaultPort}, Identity: ident})

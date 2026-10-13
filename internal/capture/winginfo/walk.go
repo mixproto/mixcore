@@ -27,7 +27,10 @@ type Options struct {
 	Roots    []string // paths to walk below; empty: the whole tree
 	MaxNodes int      // stop after this many definitions
 	Values   bool     // also read each leaf's value (DC)
-	Progress func(n int)
+	// SkipValue, when set, leaves the values of matching leaves unread
+	// (DefaultSkipValue: show control and actions).
+	SkipValue func(Node) bool
+	Progress  func(n int)
 }
 
 // Walk reads definitions breadth-first below each root (one request at a
@@ -45,6 +48,10 @@ func Walk(ctx context.Context, c *Client, o Options) ([]Node, string, error) {
 	}
 	for i := range out {
 		if out[i].Def.Type == wingproto.TypeNode {
+			continue
+		}
+		if o.SkipValue != nil && o.SkipValue(out[i]) {
+			out[i].Err = "not read (side effects unverified)"
 			continue
 		}
 		if out[i].Value, err = c.Value(ctx, out[i].Def.Hash); err != nil {
@@ -74,6 +81,9 @@ func walkDefs(ctx context.Context, c *Client, o Options) ([]Node, string, error)
 			kids, err := c.Children(ctx, false, n.Def.Hash)
 			if err != nil {
 				return append(out, n), err.Error(), err
+			}
+			if len(queue)+len(kids) > o.MaxNodes { // the queue is bounded too (review sec L6)
+				return append(out, n), "max nodes", nil
 			}
 			queue = append(queue, childNodes(n.Path, kids)...)
 		}
@@ -107,6 +117,23 @@ func wanted(path string, roots []string) bool {
 	return false
 }
 
+// DefaultSkipValue leaves unread the values under /$ctl (show control) and
+// of action nodes ($action, $actionidx, /play/$action ...): whether a
+// read of them has side effects is unverified on hardware (review item 14).
+func DefaultSkipValue(n Node) bool {
+	last := n.Path[strings.LastIndexByte(n.Path, '/')+1:]
+	return strings.HasPrefix(n.Path, "/$ctl") || strings.Contains(strings.ToLower(last), "action")
+}
+
+// csvCell protects a cell from spreadsheet formula injection (review sec
+// L6): a cell starting with = + - @ gets a leading apostrophe.
+func csvCell(s string) string {
+	if s != "" && strings.ContainsRune("=+-@", rune(s[0])) {
+		return "'" + s
+	}
+	return s
+}
+
 // typeNames of WG-F33 for the table.
 var typeNames = []string{"node", "linf", "logf", "fader", "int", "senum", "fenum", "string"}
 
@@ -123,9 +150,13 @@ func CSV(nodes []Node) ([]byte, error) {
 			typ = typeNames[d.Type]
 		}
 		lo, hi, steps := rangeOf(d)
-		_ = w.Write([]string{n.Path, fmt.Sprintf("%08x", d.Hash), fmt.Sprintf("%08x", d.Parent), strconv.Itoa(int(d.Index)),
+		row := []string{n.Path, fmt.Sprintf("%08x", d.Hash), fmt.Sprintf("%08x", d.Parent), strconv.Itoa(int(d.Index)),
 			d.LongName, typ, strconv.Itoa(int(d.Unit)), strconv.FormatBool(d.ReadOnly), lo, hi, steps, items(d),
-			strconv.Itoa(int(d.MaxLen)), n.Value, n.Err})
+			strconv.Itoa(int(d.MaxLen)), n.Value, n.Err}
+		for i := range row {
+			row[i] = csvCell(row[i])
+		}
+		_ = w.Write(row)
 	}
 	w.Flush()
 	return []byte(b.String()), w.Error()

@@ -41,7 +41,11 @@ func introspectWing(ctx context.Context, o introspectOptions, nw netOps, d *sess
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 	c := winginfo.NewClient(session.TapConn(conn, rec), o.timeout)
-	nodes, stopped, walkErr := winginfo.Walk(ctx, c, winginfo.Options{Roots: o.roots, MaxNodes: o.max, Values: o.values,
+	skip := winginfo.DefaultSkipValue
+	if o.valuesCtl {
+		skip = nil
+	}
+	nodes, stopped, walkErr := winginfo.Walk(ctx, c, winginfo.Options{Roots: o.roots, MaxNodes: o.max, Values: o.values, SkipValue: skip,
 		Progress: func(n int) {
 			if n%progressEvery == 0 {
 				fmt.Fprintf(out, "%d nodes\n", n)

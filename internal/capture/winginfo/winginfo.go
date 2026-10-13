@@ -27,14 +27,18 @@ const (
 	Port                = 2222 // WG-F10
 	DefaultReplyTimeout = 2 * time.Second
 	DefaultMaxNodes     = 60000 // the tree has "more than 25000 elements" (wing.md 2.4)
-	readBuf             = 16 << 10
-	maxPending          = wingproto.MaxDefLen + readBuf
+	// MaxChildren caps one definition answer (review sec L6); the widest
+	// real node has a few hundred children.
+	MaxChildren = 4096
+	readBuf     = 16 << 10
+	maxPending  = wingproto.MaxDefLen + readBuf
 )
 
 // Errors.
 var (
 	ErrNoReply = errors.New("winginfo: no reply")
 	ErrStream  = errors.New("winginfo: unparseable stream")
+	ErrTooMany = errors.New("winginfo: more children than any WING node has")
 )
 
 // Client is a read-only connection to one console. Not safe for concurrent use.
@@ -108,6 +112,9 @@ func (c *Client) Children(ctx context.Context, root bool, hash uint32) ([]wingpr
 		case wingproto.KindEnd:
 			return defs, nil
 		case wingproto.KindDef:
+			if len(defs) >= MaxChildren {
+				return defs, fmt.Errorf("%w: over %d", ErrTooMany, MaxChildren)
+			}
 			if d, err := wingproto.ParseDef(tok.Bytes); err == nil {
 				defs = append(defs, d)
 			}

@@ -195,10 +195,13 @@ mixcapture introspect -family wing -console 192.168.1.71 -roots /ch/1,/io/in,/dc
 ```
 It walks the definitions breadth-first, one request at a time (`DA DD`, then `D7 <hash> DD` for each node; `-roots`
 limits the walk to the paths given and the nodes on the way to them; `-max` nodes, default 60 000), and then, unless
-`-values=false`, reads each leaf once (`D7 <hash> DC`). Values come after all definitions, because whether a data
+`-values=false`, reads each leaf once (`D7 <hash> DC`), except the leaves under `/$ctl` and action nodes
+(`$action`, `$actionidx`, `/play/$action` ...): whether reading them has side effects is not verified, so they are
+read only with `-values-ctl`. Values come after all definitions, because whether a data
 answer ends with `DE` is unverified (item 3). It never sets a model (`mdl`) to list another model's parameters, so
 only the models loaded now are described (WG-F34). Output: `schema.csv` (path, hash, parent, index, long name, type,
-unit, read-only, range, steps, enum items, max length, value) and `introspect.md` (identity strings, the gain laws of
+unit, read-only, range, steps, enum items, max length, value; a cell starting with `=`, `+`, `-` or `@` gets a leading
+`'` so a spreadsheet never runs it as a formula) and `introspect.md` (identity strings, the gain laws of
 item 14, name lengths of item 2, and whether the hashes the document lists match this console). It takes one of the
 console's 16 (24) TCP slots (WG-F22) while it runs. This closes items 1 (identity strings), 2 (counts per model) and
 the law half of 14 of `wing.md` section 13 without any write.

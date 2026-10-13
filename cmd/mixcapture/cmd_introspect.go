@@ -35,6 +35,8 @@ type introspectOptions struct {
 	timeout time.Duration
 	roots   []string // wing: walk only below these paths
 	values  bool     // wing: also read each leaf's value
+	// valuesCtl: wing: also read /$ctl and action values (default: skipped)
+	valuesCtl bool
 }
 
 func parseIntrospect(args []string, out io.Writer) (introspectOptions, error) {
@@ -45,6 +47,7 @@ func parseIntrospect(args []string, out io.Writer) (introspectOptions, error) {
 	port := fs.Int("port", 0, "console TCP port (default: yamaha-rcp 49280, YR-F01; wing 2222, WG-F10)")
 	roots := fs.String("roots", "", "wing: comma-separated paths to walk below (default: the whole tree)")
 	fs.BoolVar(&o.values, "values", true, "wing: also read every leaf's value (data requests only)")
+	fs.BoolVar(&o.valuesCtl, "values-ctl", false, "wing: also read values under /$ctl and of action nodes (side effects of reads unverified)")
 	fs.StringVar(&o.out, "out", "", "session directory (in the private research repository)")
 	fs.BoolVar(&o.force, "force", false, "overwrite a session already in -out")
 	fs.IntVar(&o.max, "max", 0, "largest number of table entries (yamaha-rcp, default 20000) or nodes (wing, default 60000)")

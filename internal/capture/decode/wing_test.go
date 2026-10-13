@@ -66,3 +66,19 @@ func TestWING_RandomBinaryNotClaimed(t *testing.T) {
 		t.Fatalf("a mid-stream capture scored %d", s)
 	}
 }
+
+// TestWING_SelectionCapped (review sec L4): a path built from names never
+// grows past wingMaxSel bytes.
+func TestWING_SelectionCapped(t *testing.T) {
+	stream := []byte{0xDF, 0xD1, 0xDA}
+	for range 200 {
+		stream = append(stream, 0xCF)
+		stream = append(stream, []byte("abcdefghijklmnop")...)
+	}
+	stream = append(stream, 0xDC)
+	var keys []string
+	(WING{}).NewStream(netpkt.TCP, nil).Feed(stream, func(m Message) { keys = append(keys, m.Key.ID) })
+	if len(keys) != 1 || len(keys[0]) > wingMaxSel+len(" read") {
+		t.Fatalf("key of %d bytes", len(keys[0]))
+	}
+}

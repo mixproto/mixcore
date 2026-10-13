@@ -30,6 +30,8 @@ const (
 	wingDiscovery   = "WING?"
 	wingIdentity    = "WING,"
 	wingMeterShow   = 128
+	// wingMaxSel caps a selection path built from names (review sec L4).
+	wingMaxSel = 256
 )
 
 // WING decodes the native protocol on TCP 2222: the 0xDF channel mux, then
@@ -152,9 +154,9 @@ func (s *wingStream) token(tok wingproto.Token, raw []byte, emit func(Message)) 
 	case wingproto.KindRoot:
 		s.sel = "/"
 	case wingproto.KindNodeName:
-		s.sel = strings.TrimSuffix(s.sel, "/") + "/" + strings.ToValidUTF8(string(tok.Bytes), "?")
+		s.sel = capSel(strings.TrimSuffix(s.sel, "/") + "/" + strings.ToValidUTF8(string(tok.Bytes), "?"))
 	case wingproto.KindNodeIndex:
-		s.sel = strings.TrimSuffix(s.sel, "/") + "/" + strconv.Itoa(int(tok.Int))
+		s.sel = capSel(strings.TrimSuffix(s.sel, "/") + "/" + strconv.Itoa(int(tok.Int)))
 	case wingproto.KindUp:
 		if i := strings.LastIndexByte(s.sel, '/'); i > 0 {
 			s.sel = s.sel[:i]
@@ -169,6 +171,13 @@ func (s *wingStream) token(tok wingproto.Token, raw []byte, emit func(Message)) 
 	default:
 		emit(newMessage(Key{KindWing, s.sel}, wingValue(tok), raw))
 	}
+}
+
+func capSel(s string) string {
+	if len(s) <= wingMaxSel {
+		return s
+	}
+	return strings.ToValidUTF8(s[:wingMaxSel], "")
 }
 
 // wingValue renders a value token: numbers keep their number for the

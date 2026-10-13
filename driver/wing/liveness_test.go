@@ -168,8 +168,9 @@ func TestChaos_LossAndJitter(t *testing.T) {
 				return nil, err
 			}
 			drvSide, mid := net.Pipe()
-			go chaosPipe(mid, inner, rand.New(rand.NewPCG(1, 2))) // one generator per direction
-			go chaosPipe(inner, mid, rand.New(rand.NewPCG(3, 4)))
+			// One seeded generator per direction: the chaos is reproducible.
+			go chaosPipe(mid, inner, rand.New(rand.NewPCG(1, 2))) //nolint:gosec // G404: reproducible test chaos, not security
+			go chaosPipe(inner, mid, rand.New(rand.NewPCG(3, 4))) //nolint:gosec // G404: reproducible test chaos, not security
 			return drvSide, nil
 		}
 		sess, err := r.drv.Connect(context.Background(), driver.Endpoint{Host: consoleIP}, opts)
