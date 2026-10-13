@@ -32,7 +32,9 @@ func v04State(t *testing.T) model.State {
 	}
 	st = st.WithMatrices(1).WithShape(model.Shape{Colours: true, DCAMasters: true, BusLinks: true,
 		Sends: model.SendShape{Level: true, On: true, Pan: true, Tap: true, PairScoped: true}})
-	bus := func(b int, f model.Field) model.ParamRef { return model.ParamRef{Strip: model.StripRef{Kind: model.StripBus, Index: b}, Field: f} }
+	bus := func(b int, f model.Field) model.ParamRef {
+		return model.ParamRef{Strip: model.StripRef{Kind: model.StripBus, Index: b}, Field: f}
+	}
 	send := func(b int, f model.Field) model.ParamRef { return model.ParamRef{Strip: in1, Field: f, Bus: b} }
 	blue, _ := model.ColourValue(4)
 	red, _ := model.ColourValue(1)
