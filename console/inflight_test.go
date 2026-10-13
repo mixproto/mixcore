@@ -144,28 +144,28 @@ func inFlightCount(sup *Supervisor) int {
 	return len(sup.safe.inFlightOf(gain3))
 }
 
-// Review pass 3, LOW 5: an in-flight value is sent again at most once per
-// echo window. A drag held past the cap of a console that does not echo
-// sends the cap value once, not every frame.
-func TestInFlight_DragPastTheCapWithoutEchoSendsTheCapOnce(t *testing.T) {
+// LOW 5 at the range end (v0.5: the cap is the headamp's writeMaxDB,
+// CC-2): a drag held past the top of a console that does not echo sends the
+// top once per echo window, never a stream of repeats.
+func TestInFlight_DragPastTheTopWithoutEchoSendsTheTopOnce(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		sup, drv := startSafe(t, SafetyConfig{}, safetyState(-6))
+		sup, drv := startSafe(t, SafetyConfig{}, gainState(55.5))
 		_, _ = sup.HoldWindow(gain3, gesture, true)
-		for i := range 125 { // 1 s of 8 ms frames, the finger far past +35.5
-			_, _ = sup.Write(set(gain3, lvl(t, math.Min(33+float64(i), 50)), gesture))
+		for i := range 125 { // 1 s of 8 ms frames, the finger far past +59.5
+			_, _ = sup.Write(set(gain3, lvl(t, math.Min(56.5+float64(i), 70)), gesture))
 			time.Sleep(8 * time.Millisecond)
 		}
-		caps := 0
+		tops := 0
 		for _, db := range gainWrites(drv) {
-			if db == 35.5 {
-				caps++
+			if db == 59.5 {
+				tops++
 			}
 		}
-		if caps != 1 {
-			t.Fatalf("the cap value was sent %d times in 1 s (writes %v)", caps, gainWrites(drv))
+		if tops != 1 {
+			t.Fatalf("the top was sent %d times in 1 s (writes %v)", tops, gainWrites(drv))
 		}
 		time.Sleep(2 * time.Second) // one echo window later, still no report
-		if r, _ := sup.Write(set(gain3, lvl(t, 50), gesture)); !r.Written {
+		if r, _ := sup.Write(set(gain3, lvl(t, 70), gesture)); !r.Written {
 			t.Fatal("after an echo window the value is sent again")
 		}
 	})
@@ -229,10 +229,10 @@ func TestInFlight_SameValueAfterAReportIsSent(t *testing.T) {
 	})
 }
 
-// Lead decision (review pass 4): a full in-flight set inside a hold is a
-// haptic wall, atCap with no write, never ERR_GAIN_BOUND mid-drag; outside
-// a hold it stays ERR_GAIN_BOUND (TestInFlight_BurstOfNineIsBounded).
-func TestInFlight_FullSetInsideAHoldIsACap(t *testing.T) {
+// Redesign CC-3 (replaces the v0.3 lead decision of review pass 4): inside a
+// hold a ninth value in flight is written like any other, never a stop;
+// outside a hold it stays ERR_GAIN_BOUND (TestInFlight_BurstOfNineIsBounded).
+func TestInFlight_FullSetInsideAHoldNeverStops(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		sup, drv := startSafe(t, SafetyConfig{}, safetyState(-6))
 		_, _ = sup.HoldWindow(gain3, gesture, true)
@@ -242,7 +242,7 @@ func TestInFlight_FullSetInsideAHoldIsACap(t *testing.T) {
 			}
 		}
 		r, err := sup.Write(set(gain3, lvl(t, 31), gesture)) // a ninth value
-		if err != nil || r.State != StateAtCap || r.Written || len(gainWrites(drv)) != 8 {
+		if err != nil || r.State != StateFree || !r.Written || len(gainWrites(drv)) != 9 {
 			t.Fatalf("ninth value in a hold: %v %s written %v, writes %v", err, r.State, r.Written, gainWrites(drv))
 		}
 	})

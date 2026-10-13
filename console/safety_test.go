@@ -80,31 +80,32 @@ func lastWrite(drv *fakeDriver) float64 {
 	return db
 }
 
-// AC-PS-03/04 core part, SR-24: a Gain gesture stays in +3 / -6 dB and the
-// cap never opens.
-func TestGain_GestureCaps(t *testing.T) {
+// gainState is the safety fixture with headamp 3 at db.
+func gainState(db float64) model.State {
+	st, err := stateWith(-6).WithHeadamps([]model.Headamp{{Index: 1}, {Index: 2}, {Index: 3, GainDB: db}})
+	if err != nil {
+		panic(err)
+	}
+	return st
+}
+
+// CC-2, CC-3 (replaces the v0.3 caps of AC-PS-03/04): a pull of the Gain
+// wheel to the bottom moves at most 6 dB per write and stops only at the
+// headamp's minDB. Each write is echoed, as by a console that echoes.
+func TestGain_PullToTheBottomSixPerWrite(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		sup, drv := startSafe(t, SafetyConfig{}, safetyState(-6))
-		r, err := sup.HoldWindow(gain3, gesture, true)
-		if err != nil || !r.Window.HasCap || r.Window.CapUp != 35.5 || r.Window.CapDown != 26.5 {
-			t.Fatalf("window %+v %v", r.Window, err)
-		}
+		_, _ = sup.HoldWindow(gain3, gesture, true)
 		for _, tc := range []struct {
-			cand, want float64
-			st         GestureState
-		}{{33.5, 33.5, StateFree}, {60, 35.5, StateAtCap}, {0, 29.5, StateAtCap}, {0, 26.5, StateAtCap}} {
-			// From +35.5 a pull to 0 first stops 6 dB lower (the per-write bound,
-			// review HIGH 1), then at the -6 dB cap of the gesture. Each write is
-			// echoed, as by a console that echoes, so it leaves the in-flight set.
-			r, _ := sup.Write(set(gain3, lvl(t, tc.cand), gesture))
+			want float64
+			st   GestureState
+		}{{26.5, StateFree}, {20.5, StateFree}, {14.5, StateFree}, {8.5, StateFree}, {2.5, StateFree}, {-3.5, StateFree}, {-9.5, StateFree}, {-12, StateAtCap}} {
+			r, _ := sup.Write(set(gain3, lvl(t, -40), gesture))
 			if dbIn(t, r) != tc.want || r.State != tc.st {
-				t.Fatalf("candidate %v: %v %s", tc.cand, dbIn(t, r), r.State)
+				t.Fatalf("pull: %v %s, want %v %s", dbIn(t, r), r.State, tc.want, tc.st)
 			}
 			drv.session(0).push <- driver.ParamChanged{Param: gain3, Value: lvl(t, tc.want), Origin: gesture}
 			synctest.Wait()
-		}
-		if max := maxWrite(drv); max > 35.5 {
-			t.Fatalf("wrote %v", max)
 		}
 	})
 }

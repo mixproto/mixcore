@@ -10,8 +10,6 @@ package console
 // one gesture (SR-24) are retired (redesign CC-1, CC-2, core-api v0.5):
 // no control stops a deliberate move inside its range.
 const (
-	gainCapUpDB       = 3.0 // SR-24: one Gain gesture moves at most +3 dB ...
-	gainCapDnDB       = 6.0 // ... and -6 dB from where it started
 	gainBoundDB       = 6.0 // SR-31: no Gain write moves more than 6 dB from the console value
 	bigRaiseDB        = 6.0 // SR-30: a typed raise of more than 6 dB asks once
 	defaultHeadroomDB = 6.0 // SR-28: monitor ceiling headroom default
@@ -36,8 +34,8 @@ func (s GestureState) String() string {
 type Window struct {
 	Start      float64
 	HasCap     bool
-	CapUp      float64 // Gain: the top of the window
-	CapDown    float64 // Gain: the bottom of the window
+	CapUp      float64 // Gain: the headamp's writeMaxDB, never below the start (CC-2)
+	CapDown    float64 // Gain: the headamp's minDB
 	HasCeiling bool
 	Ceiling    float64 // monitor: engineer's latest value + headroom
 }
@@ -46,6 +44,10 @@ type Window struct {
 type window struct {
 	Window
 	state GestureState
+	// lastWrite is the value the hold wrote last (the start before its
+	// first write): the next Gain write is bounded against it (CC-3).
+	lastWrite float64
+	wrote     bool // the hold wrote at least once (an undo entry, cancelHold)
 }
 
 // clampFader applies a fader or send-level candidate (dB): only a monitor

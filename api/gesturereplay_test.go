@@ -24,8 +24,12 @@ import (
 const (
 	trackPortrait   = 490.0 // iPhone 6.1" fader track, pt
 	trackLandscape  = 152.0
-	barPortrait     = 361.0 // Gain bar, pt
+	barPortrait     = 361.0 // the v0.3 Gain bar, pt: the legacy doubles of AC-PS-06 only
 	barLandscape    = 343.0
+	wheelPortrait   = 240.0 // gain.wheel on a 6.1" phone (fader-and-gain.md 5.1)
+	wheelLandscape  = 191.0
+	wheelHalfHeight = 32.0 // gain.wheel height 64
+	wheelFrameSlop  = 16.0 // gain.wheel.frameSlop: the frame reaches 16 pt above and below
 	lockAxisPt      = 10.0 // gesture.lockAxis
 	encoderPitchPt  = 48.0 // gain.encoderPitch: 1 dB per 48 pt
 	gainMinDB       = -12.0
@@ -79,7 +83,9 @@ type uiDouble struct {
 	t      *testing.T
 	e      *xairEnv
 	kind   controlKind
-	length float64 // track or bar length
+	length float64 // track length, or the Gain wheel's width
+	grabX  float64 // Gain: the touch-down point, pt from the wheel's left end
+	ended  bool    // Gain: the touch left the wheel's frame (SR-32)
 	start  float64 // dB at the grab
 	axis   int     // 0 undecided, 1 the control's axis, 2 the other (a scroll)
 	state  string
@@ -144,6 +150,9 @@ func (u *uiDouble) play(v pathVariant, large bool) {
 	last, prev := math.NaN(), v.Points[0]
 	for _, p := range v.Points[1:] {
 		time.Sleep(time.Duration(p.T-prev.T) * time.Millisecond)
+		if u.leftFrame(p) {
+			continue // the stroke ended; this touch writes nothing more
+		}
 		u.lockAxis(p)
 		if u.axis == 1 {
 			if c := u.candidate(p); c != last {
@@ -153,9 +162,27 @@ func (u *uiDouble) play(v pathVariant, large bool) {
 		}
 		prev = p
 	}
-	if u.axis != 2 {
+	if u.axis != 2 && !u.ended {
 		u.gesture(cmdJSON("holdEnd", u.param(), ""), prev.T)
 	}
+}
+
+// leftFrame applies the Gain wheel's frame rule (SR-32): when the touch
+// leaves the wheel's frame the stroke ends (hold-end, light haptic) and
+// coming back over the wheel does not resume it.
+func (u *uiDouble) leftFrame(p pathPoint) bool {
+	if u.kind != ctlGain || u.ended {
+		return u.ended
+	}
+	x := u.grabX + p.X
+	if x >= 0 && x <= u.length && math.Abs(p.Y) <= wheelHalfHeight+wheelFrameSlop {
+		return false
+	}
+	u.ended = true
+	if u.axis != 2 {
+		u.gesture(cmdJSON("holdEnd", u.param(), ""), p.T)
+	}
+	return true
 }
 
 func levelText(db float64) string {
@@ -167,11 +194,17 @@ func levelText(db float64) string {
 // 3 +32.5 dB; the v0.3 phone setting slipGuard on, ignored since v0.5) and
 // collects the console writes.
 func replay(t *testing.T, kind controlKind, length float64, v pathVariant, large bool) run {
+	return replayFrom(t, kind, length, length/2, v, large)
+}
+
+// replayFrom is replay with the Gain touch-down grabX pt from the wheel's
+// left end (replay: the wheel's centre).
+func replayFrom(t *testing.T, kind controlKind, length, grabX float64, v pathVariant, large bool) run {
 	var out run
 	synctest.Test(t, func(t *testing.T) {
 		e := newXAirEnv(t, simxair.Options{})
 		startWith(t, e, `{"slipGuard":true}`)
-		u := &uiDouble{t: t, e: e, kind: kind, length: length, run: run{firstAt: -1}}
+		u := &uiDouble{t: t, e: e, kind: kind, length: length, grabX: grabX, run: run{firstAt: -1}}
 		if kind == ctlGain {
 			u.start = 32.5
 		} else {

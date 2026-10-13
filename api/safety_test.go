@@ -54,8 +54,8 @@ func TestSafety_GestureResultsJSON(t *testing.T) {
 		for _, step := range []struct{ cmd, want string }{
 			{cmdJSON("holdBegin", vox1, ""), `"opensByRest":false}}`},
 			{cmdJSON("set", vox1, `,"value":3`), `{"version":0,"state":"free","value":3,"written":true,"window":{"startDB":`},
-			{cmdJSON("holdBegin", gain3, ""), `"window":{"startDB":32.5,"capUpDB":35.5,"capDownDB":26.5,"opensByRest":false}`},
-			{cmdJSON("set", gain3, `,"value":60`), `"state":"atCap","value":35.5,"written":true`},
+			{cmdJSON("holdBegin", gain3, ""), `"window":{"startDB":32.5,"capUpDB":59.5,"capDownDB":-12,"opensByRest":false}`},
+			{cmdJSON("set", gain3, `,"value":60`), `"state":"free","value":38.5,"written":true`}, // 6 dB from the previous write (CC-3)
 		} {
 			got, err := e.eng.Gesture(step.cmd)
 			if err != nil || !strings.Contains(got, step.want) || strings.Contains(got, "wallUpDB") {
@@ -66,8 +66,8 @@ func TestSafety_GestureResultsJSON(t *testing.T) {
 			t.Fatalf("openWall: %v", err)
 		}
 		synctest.Wait()
-		if v, _ := e.sim.Value("/headamp/03/gain"); v.Float != 95.0/144 {
-			t.Fatalf("mixer Gain %v, want +35.5 dB", v.Float)
+		if v, _ := e.sim.Value("/headamp/03/gain"); v.Float != 101.0/144 {
+			t.Fatalf("mixer Gain %v, want +38.5 dB", v.Float)
 		}
 	})
 }
@@ -249,38 +249,31 @@ func TestHoldBegin_TrackLength(t *testing.T) {
 	}
 }
 
-// Review pass 4, HIGH 1 probe: without an echo, write 35.5; the desk moves
-// to 50. Until the core's re-read every write is refused against the 35.5
-// in flight; after one re-read pass 49 (and lowering) works again. Before,
-// the desk push dropped the driver's mark and the set lived forever.
-func TestSafety_InFlightSetRecoversAfterOneRereadPass(t *testing.T) {
+// Review pass 4, HIGH 1 probe, v0.5 (CC-3): without an echo, write 35.5;
+// the desk moves to 50. The settle re-read within 250 ms of the write ends
+// 35.5 in flight, so 49 (the desk's value, then lowering) works at once;
+// in v0.4 the set lived until a background pass, 40 s later.
+func TestSafety_InFlightSetSettlesWithin250ms(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		e := newXAirEnv(t, simxair.Options{})
+		e := newXAirEnv(t, simxair.Options{NoGainPush: true})
 		if err := e.sim.SurfaceSet("/headamp/03/gain", osc.Float(89.0/144)); err != nil { // +32.5 dB
 			t.Fatal(err)
 		}
 		e.startLive(t)
-		e.net.SetDropFrom(consoleIP, true) // the echo of 35.5 is lost
 		if err := e.eng.Apply(cmdJSON("set", gain3, `,"value":35.5`)); err != nil {
 			t.Fatal(err)
 		}
+		time.Sleep(250 * time.Millisecond)
 		synctest.Wait()
-		e.net.SetDropFrom(consoleIP, false)
-		time.Sleep(500 * time.Millisecond)
 		if err := e.sim.SurfaceSet("/headamp/03/gain", osc.Float(124.0/144)); err != nil { // the desk: +50 dB
 			t.Fatal(err)
 		}
 		synctest.Wait()
-		if err := e.eng.Apply(cmdJSON("set", gain3, `,"value":49`)); CodeOf(err) != CodeGainBound {
-			t.Fatalf("49 with 35.5 in flight: %v", err)
-		}
-		time.Sleep(40 * time.Second) // one background re-read pass (15 s ticker, paced reads)
-		synctest.Wait()
 		for _, db := range []string{"49", "45"} {
 			if err := e.eng.Apply(cmdJSON("set", gain3, `,"value":`+db)); err != nil {
-				t.Fatalf("%s after the re-read: %v", db, err)
+				t.Fatalf("%s after the settle re-read: %v", db, err)
 			}
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(300 * time.Millisecond)
 		}
 	})
 }

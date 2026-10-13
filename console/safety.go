@@ -204,12 +204,18 @@ func (s *Supervisor) openWindowLocked(k holdKey) *window {
 	w := &window{Window: Window{Start: start}}
 	switch k.param.Field {
 	case model.FieldGain:
-		w.HasCap, w.CapUp, w.CapDown = true, start+gainCapUpDB, start-gainCapDnDB
+		// The window is the headamp's range (CC-2); the hold starts where the
+		// console is going: the latest value of ours in flight (CC-3).
+		if l, ok := s.safe.newestInFlight(k.param); ok {
+			start = l
+		}
+		w.Start, w.lastWrite = start, start
+		w.HasCap, w.CapUp, w.CapDown = true, start, start
 		if h, ok := s.caps.Headamp(k.param.Strip.Index); ok { // this headamp's own law (CR-23)
 			// The writable top (re-review LOW D), but never below the start: a
 			// grab above it never writes down (review pass 3, LOW 3).
-			w.CapUp = math.Max(math.Min(w.CapUp, h.WriteMaxDB), start)
-			w.CapDown = math.Max(w.CapDown, h.MinDB)
+			w.CapUp = math.Max(h.WriteMaxDB, start)
+			w.CapDown = math.Min(h.MinDB, start)
 		}
 	case model.FieldFader, model.FieldSendLevel:
 		w.Ceiling, w.HasCeiling = s.safe.ceiling(k.param, k.client, start)
@@ -257,11 +263,17 @@ func (s *Supervisor) gainRulesLocked(w Write, cur, v float64, st GestureState, w
 		}
 		v, st = floor, StateLocked
 	}
-	if lo, hi := gainBounds(cur, inFlight); !w.Typed && (v < lo || v > hi) {
-		if win == nil {
+	switch {
+	case w.Typed:
+	case win != nil: // inside a hold: 6 dB from the hold's previous write (CC-3); no error mid-drag
+		v = math.Min(math.Max(v, win.lastWrite-gainBoundDB), win.lastWrite+gainBoundDB)
+		if st == StateAtCap && v != win.CapUp && v != win.CapDown {
+			st = StateFree // atCap only at a range end (CC-2)
+		}
+	default:
+		if lo, hi := gainBounds(cur, inFlight); v < lo || v > hi {
 			return 0, 0, nil, fmt.Errorf("%w: %s %.1f to %.1f dB (console %.1f, in flight %v)", ErrGainBound, w.Param, cur, v, cur, inFlight)
 		}
-		v, st = math.Min(math.Max(v, lo), math.Max(lo, hi)), StateAtCap
 	}
 	s.safe.unlocks.noteEntry(h, entryBase(cur, inFlight, win), tol) // any accepted Gain write during an unlock is an entry (undo grace)
 	return v, st, windowOf(win), nil

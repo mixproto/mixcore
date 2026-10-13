@@ -93,10 +93,11 @@ func variantFor(p gesturePath, orientation string) pathVariant {
 
 type geometry struct {
 	orientation   string
-	track, gainAt float64
+	track, gainAt float64 // gainAt: the v0.3 Gain bar of the legacy doubles
+	wheel         float64 // the Gain wheel (SR-32)
 }
 
-var phone = []geometry{{"portrait", trackPortrait, barPortrait}, {"landscape", trackLandscape, barLandscape}}
+var phone = []geometry{{"portrait", trackPortrait, barPortrait, wheelPortrait}, {"landscape", trackLandscape, barLandscape, wheelLandscape}}
 
 // AC-PS-06: every legacy double reaches the range maximum on at least one
 // path (a on P2, b on P5, c on P4), for the fader and for Gain; our mapping
@@ -206,49 +207,37 @@ func lawDB(pos float64) float64 {
 	}
 }
 
-// AC-PS-02, AC-PS-03, AC-PS-05: on the Gain bar, vertical paths never write;
-// horizontal paths stay within +3 / -6 dB of +32.5 and never reach +60 dB.
+// AC-PS-02, AC-PS-06 (amended 2026-10-13), AC-RD-G02: on the Gain wheel
+// (frame rule, 1 dB per 48 pt, grabbed at its centre), vertical paths
+// never write; a horizontal path changes Gain by at most floor(half the
+// wheel / 48) dB, mirrored too, never reaches the range end, and P1R is
+// exactly one step.
 func TestTouchPaths_GainNeverJumps(t *testing.T) {
 	paths := loadPaths(t)
 	for _, g := range phone {
+		limit := math.Floor(g.wheel / 2 / encoderPitchPt)
 		for _, p := range paths.Paths {
 			v := variantFor(p, g.orientation)
-			r := replay(t, ctlGain, g.gainAt, v, p.LargeContact)
+			r := replay(t, ctlGain, g.wheel, v, p.LargeContact)
 			if !strings.HasSuffix(p.ID, "R") {
 				if len(r.writes) != 0 {
-					t.Errorf("%s %s on the Gain bar: %d writes, want none (vertical drags scroll)", g.orientation, p.ID, len(r.writes))
+					t.Errorf("%s %s on the Gain wheel: %d writes, want none (vertical drags scroll)", g.orientation, p.ID, len(r.writes))
 				}
 				continue
 			}
-			if r.max() > 35.5+writeTol || r.max() >= 60 {
-				t.Errorf("%s %s: Gain up to %.1f", g.orientation, p.ID, r.max())
+			if len(r.writes) > 0 && (r.max() > 32.5+limit+writeTol || r.max() >= 59.5) {
+				t.Errorf("%s %s: Gain up to %.1f (limit +%.0f)", g.orientation, p.ID, r.max(), limit)
 			}
-			checkGainPath(t, g.orientation, p.ID, r)
+			if p.ID == "P1R" && (len(r.writes) != 1 || math.Abs(r.last()-33.5) > writeTol) {
+				t.Errorf("%s P1R: writes %v, want exactly +1 dB", g.orientation, r.writes)
+			}
 			mirrored := pathVariant{Orientation: v.Orientation}
 			for _, q := range v.Points {
 				mirrored.Points = append(mirrored.Points, pathPoint{T: q.T, X: -q.X, Y: q.Y})
 			}
-			if m := replay(t, ctlGain, g.gainAt, mirrored, false); len(m.writes) > 0 && m.min() < 26.5-writeTol {
+			if m := replay(t, ctlGain, g.wheel, mirrored, false); len(m.writes) > 0 && m.min() < 32.5-limit-writeTol {
 				t.Errorf("%s %s mirrored: Gain down to %.1f", g.orientation, p.ID, m.min())
 			}
-		}
-	}
-}
-
-func checkGainPath(t *testing.T, orientation, id string, r run) {
-	t.Helper()
-	switch id {
-	case "P2R", "P4R":
-		if math.Abs(r.last()-35.5) > writeTol || r.stops != 1 {
-			t.Errorf("%s %s: ends at %.1f with %d caps, want +35.5 once", orientation, id, r.last(), r.stops)
-		}
-	case "P3R":
-		if math.Abs(r.last()-33.5) > writeTol {
-			t.Errorf("%s P3R: ends at %.1f, want +33.5 (90 pt = 1 step)", orientation, r.last())
-		}
-	case "P5R":
-		if len(r.writes) > 0 && math.Abs(r.last()-32.5) > 1 {
-			t.Errorf("%s P5R: ends at %.1f, want within 1 step of +32.5", orientation, r.last())
 		}
 	}
 }

@@ -61,6 +61,9 @@ func (s *Supervisor) checkAndApply(w *Write) (Result, error) {
 		return Result{}, err
 	}
 	s.safe.noteSeatSent(w.Origin, w.Param, dbOf(w.Value), s.sameLevelLocked, time.Now())
+	if iw := s.safe.windows[holdKey{param: w.Param, client: w.Origin.ClientID}]; iw != nil {
+		iw.lastWrite, iw.wrote = dbOf(w.Value), true // the next write of the hold is bounded against it (CC-3)
+	}
 	return res, nil
 }
 
@@ -131,31 +134,16 @@ func (s *Supervisor) prepareLocked(w *Write) (driver.Session, Result, error) {
 		others := slices.ContainsFunc(s.safe.inFlightOf(w.Param), func(x float64) bool { return x != v })
 		written = written || others // back to the console value while others are in flight: a real write
 		if written {
-			send, ok := s.safe.noteSent(w.Param, v, time.Now())
-			switch {
-			case !ok && win != nil: // a full set inside a hold is a wall: no write, no error mid-drag (lead decision, pass 4)
-				return s.sess, s.fullSetCapLocked(w, cur, win), nil
-			case !ok:
+			// Inside a hold the count never refuses (CC-3): the drag is bounded
+			// write by write against its previous write instead.
+			send, ok := s.safe.noteSent(w.Param, v, time.Now(), win != nil)
+			if !ok {
 				return nil, Result{}, fmt.Errorf("%w: %s: %d values in flight", ErrGainBound, w.Param, maxInFlight)
 			}
 			written = send // sent again at most once per echo window (LOW 5)
 		}
 	}
 	return s.sess, Result{Value: lv, State: st, Written: written, Window: win}, nil
-}
-
-// fullSetCapLocked answers a Gain candidate that would add a ninth value in
-// flight inside a hold: the value stays at the latest one sent, state atCap.
-func (s *Supervisor) fullSetCapLocked(w *Write, cur float64, win *Window) Result {
-	v := cur
-	if l, ok := s.safe.latest[w.Param]; ok {
-		v = l.db
-	} else if fl := s.safe.inFlightOf(w.Param); len(fl) > 0 {
-		v = fl[len(fl)-1]
-	}
-	lv, _ := model.Level(v) // finite: a Gain value already accepted
-	w.Value = lv
-	return Result{Value: lv, State: StateAtCap, Window: win}
 }
 
 // readOnlyLocked reports a parameter the core never writes, whatever the
@@ -223,5 +211,8 @@ func (s *Supervisor) HoldWindow(p model.ParamRef, origin driver.Origin, held boo
 		s.safe.unlocks.touch(p.Strip.Index)
 	}
 	w := s.openWindowLocked(k)
+	if isHeadampGain(p) {
+		cur, _ = model.Level(w.Start) // where the console is going (CC-3); finite
+	}
 	return Result{Value: cur, Window: windowOf(w)}, nil
 }

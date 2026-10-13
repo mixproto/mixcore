@@ -547,6 +547,12 @@ func (s *Supervisor) handleEvent(ev driver.Event) {
 // applyChangeLocked publishes a console-reported value at once. If it is an
 // external change of a held fader, that gesture ends (HoldExternalChange).
 func (s *Supervisor) applyChangeLocked(c Change) {
+	if own, behind := s.gainSettleLocked(c); behind {
+		s.safe.noteReport(c, s.halfStepDB(c.Param.Strip.Index)) // settles values in flight; never moves the drag back (CC-3)
+		return
+	} else if own {
+		c.OwnWrite = true // the drag's own write read back: never an external change
+	}
 	_, known := s.state.Strip(c.Param.Strip)
 	prev, had := s.state.Value(c.Param)
 	next, err := s.state.With(c.Param, c.Value)
