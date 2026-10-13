@@ -199,10 +199,10 @@ func TestIdleSession_NoWritesForAnHour(t *testing.T) {
 	})
 }
 
-// TestReconnect_DropsQueuedWritesAndReusesSchema: rule 3. After a drop the
+// TestReconnect_ReadsTheConsoleAndReusesSchema: rule 3. After a drop the
 // link's next session reads the state (changed during the outage) without
-// walking the schema again, and nothing is replayed.
-func TestReconnect_DropsQueuedWritesAndReusesSchema(t *testing.T) {
+// walking the schema again. No-replay proof: TestReconnect_NoReplay.
+func TestReconnect_ReadsTheConsoleAndReusesSchema(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		r := newRig(t, simwing.Options{})
 		l, err := r.drv.OpenLink(t.Context(), driver.Endpoint{Host: consoleIP}, r.opts())

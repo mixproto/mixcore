@@ -107,8 +107,16 @@ func faderToWire(db float64) (float32, error) {
 
 // sameFader: two fader values are one console value when their display
 // positions are within half of one of the 1024 steps (WG-F60, wing.md 2.4:
-// half a step of the parameter's law, never float equality).
+// half a step of the parameter's law, never float equality). Below the
+// display range (-90 dB) every value has position 0, so there they are
+// compared in dB: -95 dB and -inf differ (review go L3).
 func sameFader(a, b float64) bool {
+	if a <= faderDisplayMinDB || b <= faderDisplayMinDB {
+		if math.IsInf(a, -1) || math.IsInf(b, -1) {
+			return math.IsInf(a, -1) && math.IsInf(b, -1)
+		}
+		return math.Abs(a-b) <= faderEchoMinDB
+	}
 	law := faderLaw{}
 	return math.Abs(law.PositionFromDB(a)-law.PositionFromDB(b)) <= 0.5/faderSteps
 }

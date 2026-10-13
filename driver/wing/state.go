@@ -7,6 +7,7 @@ package wing
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -60,6 +61,24 @@ type sentWrite struct {
 // be older than our write and is dropped.
 type readEntry struct {
 	settle, superseded bool
+	at                 time.Time // when it was sent
+}
+
+// readExpiry: a read unanswered this long was dropped by the console; its
+// entry is forgotten so a later push is not taken for its reply (review
+// go L2). Far above a LAN round trip.
+const readExpiry = 2 * time.Second
+
+// expireReads forgets reads older than readExpiry.
+func (s *session) expireReads(now time.Time) {
+	for idx, q := range s.own.reads {
+		keep := slices.DeleteFunc(q, func(r readEntry) bool { return now.Sub(r.at) > readExpiry })
+		if len(keep) == 0 {
+			delete(s.own.reads, idx)
+		} else {
+			s.own.reads[idx] = keep
+		}
+	}
 }
 
 func newOwnerState(t *table) ownerState {
@@ -318,7 +337,7 @@ func sameWire(p *param, a, b wireValue) bool {
 		x, errA := faderFromWire(a.f)
 		y, errB := faderFromWire(b.f)
 		return errA == nil && errB == nil && a.kind == wireFloat && b.kind == wireFloat &&
-			(sameFader(x, y) || math.Abs(x-y) <= faderEchoMinDB)
+			(sameFader(x, y) || (x > faderDisplayMinDB && y > faderDisplayMinDB && math.Abs(x-y) <= faderEchoMinDB))
 	case convGain:
 		return a.kind == wireFloat && b.kind == wireFloat && math.Abs(float64(a.f-b.f)) <= p.law.halfStep()
 	}

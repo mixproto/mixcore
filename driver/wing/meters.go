@@ -6,6 +6,7 @@ package wing
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"math"
@@ -35,11 +36,22 @@ const (
 	meterLevels    = meterChannels + 2
 	meterMainBlock = meterChannels // main 1 is the first main block
 	// meterIDTag marks our report ids ("MX" in the high half); the low half
-	// counts sessions, so a stream still running for an old session is
-	// dropped (any 32-bit id works, WG-F54).
+	// is 16 random bits per session (review sec L5), so a stream still
+	// running for an old session is dropped and another host cannot guess
+	// the id of ours (any 32-bit id works, WG-F54).
 	meterIDTag    = 0x4D580000
 	meterRxBuffer = 2048
 )
+
+// newMeterID is a report id: the tag and 16 bits from crypto/rand (never
+// zero, which means "none" in the sink).
+func newMeterID() uint32 {
+	var b [2]byte
+	if _, err := rand.Read(b[:]); err != nil || (b[0] == 0 && b[1] == 0) {
+		b[1] = 1 // crypto/rand does not fail on supported platforms
+	}
+	return meterIDTag | uint32(b[0])<<8 | uint32(b[1])
+}
 
 // meterBlocksRequested is the block list of every request.
 var meterBlocksRequested = func() []wingproto.MeterBlock {

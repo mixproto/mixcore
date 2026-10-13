@@ -54,7 +54,6 @@ type link struct {
 	cur    *session
 	closed bool
 	cache  *schemaCache
-	seq    uint32
 	// schemaFails counts schema failures in a row; mismatch is set once
 	// they reach maxSchemaFailures.
 	schemaFails int
@@ -85,7 +84,7 @@ func (d *Driver) openLink(ctx context.Context, ep driver.Endpoint, opts driver.O
 // Connect implements driver.Link.
 func (l *link) Connect(ctx context.Context) (_ driver.Session, err error) {
 	defer safe.RecoverAsError(&err)
-	seq, cache, err := l.begin()
+	cache, err := l.begin()
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +99,7 @@ func (l *link) Connect(ctx context.Context) (_ driver.Session, err error) {
 	if err != nil {
 		return nil, err
 	}
-	s := newSession(l, c, seq)
+	s := newSession(l, c)
 	defer func() {
 		if err != nil {
 			_ = s.Close() // also after a recovered panic
@@ -116,9 +115,8 @@ func (l *link) Connect(ctx context.Context) (_ driver.Session, err error) {
 	return s, nil
 }
 
-// begin closes the previous session and returns this session's number and
-// the schema cache.
-func (l *link) begin() (uint32, *schemaCache, error) {
+// begin closes the previous session and returns the schema cache.
+func (l *link) begin() (*schemaCache, error) {
 	l.mu.Lock()
 	prev := l.cur
 	l.cur = nil
@@ -127,18 +125,17 @@ func (l *link) begin() (uint32, *schemaCache, error) {
 		_ = prev.Close()
 	}
 	if err := l.Err(); err != nil {
-		return 0, nil, err
+		return nil, err
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.closed {
-		return 0, nil, driver.ErrClosed
+		return nil, driver.ErrClosed
 	}
 	if l.mismatch != nil {
-		return 0, nil, l.mismatch
+		return nil, l.mismatch
 	}
-	l.seq++
-	return l.seq, l.cache, nil
+	return l.cache, nil
 }
 
 // adopt makes s current and keeps its schema.

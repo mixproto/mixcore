@@ -184,7 +184,7 @@ func (s *session) readParams(idxs ...int) {
 			continue
 		}
 		req = wingproto.AppendValueRead(req, s.tab.all[i].hash)
-		s.own.reads[i] = append(s.own.reads[i], readEntry{})
+		s.own.reads[i] = append(s.own.reads[i], readEntry{at: time.Now()})
 	}
 	if len(req) > 0 {
 		if err := s.c.writeData(req); err != nil {

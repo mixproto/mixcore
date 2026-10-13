@@ -68,9 +68,9 @@ type session struct {
 
 var _ driver.Session = (*session)(nil)
 
-func newSession(l *link, c *conn, seq uint32) *session {
+func newSession(l *link, c *conn) *session {
 	return &session{
-		timing: l.drv.timing, link: l, c: c, meterID: meterIDTag | (seq & 0xFFFF), log: logger(l.opts), audit: l.opts.WriteAudit,
+		timing: l.drv.timing, link: l, c: c, meterID: newMeterID(), log: logger(l.opts), audit: l.opts.WriteAudit,
 		pending: map[int]pendingWrite{}, done: make(chan struct{}), cmdReady: make(chan struct{}, 1),
 		meterReady: make(chan struct{}, 1), rereadReady: make(chan struct{}, 1),
 	}

@@ -39,6 +39,7 @@ func (s *session) onTick(now time.Time) error {
 		s.own.lastMeter = now
 	}
 	s.expireSent(now)
+	s.expireReads(now)
 	if err := s.sceneTick(now); err != nil {
 		return err
 	}
@@ -99,7 +100,7 @@ func (s *session) sendSettleReads(now time.Time) error {
 		}
 		delete(s.own.settleAt, idx)
 		req = wingproto.AppendValueRead(req, s.tab.all[idx].hash)
-		s.own.reads[idx] = append(s.own.reads[idx], readEntry{settle: true})
+		s.own.reads[idx] = append(s.own.reads[idx], readEntry{settle: true, at: now})
 	}
 	if len(req) == 0 {
 		return nil
@@ -197,7 +198,7 @@ func (s *session) startReread(now time.Time) error {
 		}
 		req = wingproto.AppendValueRead(req, p.hash)
 		if p.ref != (model.ParamRef{}) {
-			s.own.reads[idx] = append(s.own.reads[idx], readEntry{})
+			s.own.reads[idx] = append(s.own.reads[idx], readEntry{at: now})
 		}
 	}
 	if len(req) == 0 {
