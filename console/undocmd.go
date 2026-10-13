@@ -49,7 +49,11 @@ func (s *Supervisor) undoAsksLocked(e undoEntry, now time.Time) []string {
 	return orderAsks(asks)
 }
 
-// undoUnmutes: the undo turns a mute off or a send on (audio comes back).
+// undoUnmutes: the undo turns a mute off (a strip's own, a mute group, a
+// DCA) or a send on: audio may come back. It asks whatever the strip's
+// effective mute is, also when the console leaves it unknown (wing: muted
+// null with an engaged mute group of unknown membership), so an undo never
+// unmutes without asking.
 func undoUnmutes(e undoEntry) bool {
 	on, _ := e.from.Bool()
 	return (e.param.Field == model.FieldMute && !on) || (e.param.Field == model.FieldSendOn && on)
