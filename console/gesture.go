@@ -60,7 +60,7 @@ func (s *Supervisor) checkAndApply(w *Write) (Result, error) {
 		}
 		return Result{}, err
 	}
-	s.safe.noteSeatSent(w.Origin, w.Param, dbOf(w.Value))
+	s.safe.noteSeatSent(w.Origin, w.Param, dbOf(w.Value), s.sameLevelLocked, time.Now())
 	return res, nil
 }
 

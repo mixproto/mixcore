@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/mixproto/mixcore/driver"
 	"github.com/mixproto/mixcore/model"
@@ -70,18 +71,17 @@ type safety struct {
 	engineer map[model.ParamRef]float64 // latest value not from a monitor client (SR-28)
 	roles    map[string]Role            // per client (roles.go)
 	defRole  Role                       // every other client
-	// seatSent is the last value each monitor client sent per level
-	// parameter: a console report of it is the seat's, not the engineer's
-	// (a late or lost echo, a re-read; review Sec M1).
-	seatSent map[model.ParamRef]map[string]float64
-	pending  map[model.ParamRef][]inFlight // Gain values in flight (pending.go)
-	latest   map[model.ParamRef]lastSend   // latest Gain value sent, no report since (pending.go)
+	// seats are the values monitor clients sent per level parameter
+	// (seats.go): reports of them never raise the engineer's value.
+	seats   map[model.ParamRef]*seatLog
+	pending map[model.ParamRef][]inFlight // Gain values in flight (pending.go)
+	latest  map[model.ParamRef]lastSend   // latest Gain value sent, no report since (pending.go)
 }
 
 func newSafety(cfg SafetyConfig, role Role) safety {
 	return safety{cfg: cfg, clients: map[string]ClientSafety{}, windows: map[holdKey]*window{}, showMode: cfg.ShowMode,
 		unlocks: newUnlocks(), engineer: map[model.ParamRef]float64{}, pending: map[model.ParamRef][]inFlight{}, latest: map[model.ParamRef]lastSend{},
-		roles: map[string]Role{}, defRole: role, seatSent: map[model.ParamRef]map[string]float64{}}
+		roles: map[string]Role{}, defRole: role, seats: map[model.ParamRef]*seatLog{}}
 }
 
 func (s *safety) client(id string) ClientSafety {
@@ -100,6 +100,7 @@ func (s *safety) client(id string) ClientSafety {
 // never route a device's request to it (see the package doc, "Hub").
 func (s *Supervisor) SetClientSafety(clientID string, c ClientSafety) {
 	s.mu.Lock()
+	s.safe.forgetSeat(clientID)
 	s.safe.clients[clientID] = c
 	s.mu.Unlock()
 }
@@ -133,55 +134,34 @@ func (s *safety) isMonitorOrigin(o driver.Origin) bool {
 	return o.MayWrite() && (s.client(o.ClientID).Monitor != nil || s.role(o.ClientID).Kind == RoleMonitor)
 }
 
-// sameLevel reports whether two levels of p are one console value (half
-// a step of p's grid apart at most); see Supervisor.sameLevelLocked.
-type sameLevel func(p model.ParamRef, a, b float64) bool
-
 // noteChange keeps the engineer's latest value (SR-28): every fader and
-// send level except the writes of a monitor client, our own writes read
-// back (OwnWrite) and any report of a value a monitor seat sent last.
+// send level report that is not a monitor client's own echo, by the
+// credit rule of seats.go.
 func (s *safety) noteChange(c Change, same sameLevel) {
-	if !isCeilingField(c.Param.Field) || s.isMonitorOrigin(c.Origin) || c.OwnWrite || s.seatValue(c.Param, dbOf(c.Value), same) {
+	if !isCeilingField(c.Param.Field) || s.isMonitorOrigin(c.Origin) {
 		return
 	}
-	s.engineer[c.Param] = dbOf(c.Value)
-	delete(s.seatSent, c.Param) // the engineer moved it since
+	s.credit(c.Param, dbOf(c.Value), c.OwnWrite, same, time.Now())
 }
 
-// noteSeatSent remembers a monitor client's write that left for the console.
-func (s *safety) noteSeatSent(o driver.Origin, p model.ParamRef, db float64) {
-	if !isCeilingField(p.Field) || !s.isMonitorOrigin(o) {
-		return
-	}
-	if s.seatSent[p] == nil {
-		s.seatSent[p] = map[string]float64{}
-	}
-	s.seatSent[p][o.ClientID] = db
-}
-
-// seatValue: db is the last value some monitor seat sent for p.
-func (s *safety) seatValue(p model.ParamRef, db float64, same sameLevel) bool {
-	for _, sent := range s.seatSent[p] {
-		if same(p, sent, db) {
-			return true
-		}
-	}
-	return false
-}
-
-// adoptState takes the values of a (re)connect: a value that changed
-// meanwhile has an unknown origin and counts as the engineer's, unless it
-// is a value a monitor seat sent.
+// adoptState takes the values of a (re)connect, a full read with no hold
+// open (stale cancelled them): every value changed meanwhile is credited
+// by the rule of seats.go, and an overflowed seat set starts over.
 func (s *safety) adoptState(prev, next model.State, same sameLevel) {
+	now := time.Now()
 	for _, p := range ceilingParams(next) {
 		v, _ := next.Value(p)
 		old, _ := prev.Value(p)
-		_, seen := s.engineer[p]
-		if seen && old.Kind() != 0 && (old.Equal(v) || s.seatValue(p, dbOf(v), same)) {
+		if _, seen := s.engineer[p]; !seen || old.Kind() == 0 {
+			s.engineer[p] = dbOf(v)
 			continue
 		}
-		s.engineer[p] = dbOf(v)
-		delete(s.seatSent, p)
+		if lg := s.seats[p]; lg != nil {
+			lg.overflow = false
+		}
+		if !old.Equal(v) {
+			s.credit(p, dbOf(v), false, same, now)
+		}
 	}
 }
 

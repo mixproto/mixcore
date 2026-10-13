@@ -6,6 +6,7 @@ package console
 
 import (
 	"context"
+	"math"
 	"testing"
 	"testing/synctest"
 
@@ -107,4 +108,103 @@ func TestCeiling_UnknownReferenceIsTheFloorNotTheCurrentValue(t *testing.T) {
 	if c, ok := sf.ceiling(dca1Fader, "mon-2", 3); !ok || c != ceilingFloorDB+6 {
 		t.Fatalf("ceiling %v, %v; want %v", c, ok, ceilingFloorDB+6)
 	}
+}
+
+var (
+	seatA = driver.Origin{Kind: driver.OriginGesture, ClientID: "mon-a", Seq: 1}
+	seatB = driver.Origin{Kind: driver.OriginGesture, ClientID: "mon-b", Seq: 1}
+)
+
+// Security re-check A: two seats on one bus. Seat A sends the send down,
+// seat B raises to its ceiling, then the engineer cuts it at the desk to
+// the very value A sent. A report below the reference is always the
+// engineer's lower bound (lead rule): B is now capped at the cut + 6 dB.
+func TestCeiling_TwoSeatsMaskEngineerCut(t *testing.T) {
+	for _, cut := range []float64{-30, math.Inf(-1)} {
+		synctest.Test(t, func(t *testing.T) {
+			sup, drv := startSeat(t, SafetyConfig{}, monitorOf(2), busFixture())
+			if _, err := sup.Write(set(sendLevel(1, 2), lvl(t, cut), seatA)); err != nil {
+				t.Fatal(err)
+			}
+			if r, _ := sup.Write(set(sendLevel(1, 2), lvl(t, 10), seatB)); dbIn(t, r) != -2 {
+				t.Fatalf("seat B first raise %v, want -8 + 6", dbIn(t, r))
+			}
+			pushChange(t, drv, sendLevel(1, 2), lvl(t, cut), desk) // the engineer cuts at the desk
+			want := finiteOr(cut, ceilingFloorDB) + defaultHeadroomDB
+			if r, _ := sup.Write(set(sendLevel(1, 2), lvl(t, 10), seatB)); dbIn(t, r) != want {
+				t.Fatalf("cut to %v: seat B reaches %v, want %v", cut, dbIn(t, r), want)
+			}
+		})
+	}
+}
+
+// Security re-check B: a seat drags -4 then -2; the -2 echo matches, the
+// -4 push arrives late as a console report. It is a value the seat sent,
+// so it never raises the reference: the ceiling stays at -8 + 6.
+func TestCeiling_LateIntermediateEchoNeverRatchets(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, drv := startSeat(t, SafetyConfig{}, monitorOf(2), busFixture())
+		_, _ = sup.HoldWindow(sendLevel(1, 2), musician, true)
+		for _, v := range []float64{-4, -2} {
+			if _, err := sup.Write(set(sendLevel(1, 2), lvl(t, v), musician)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		pushChange(t, drv, sendLevel(1, 2), lvl(t, -2), musician) // the matched echo
+		pushChange(t, drv, sendLevel(1, 2), lvl(t, -4), desk)     // the late one, unmatched
+		_, _ = sup.HoldWindow(sendLevel(1, 2), musician, false)
+		if r, _ := sup.Write(set(sendLevel(1, 2), lvl(t, 10), musician)); dbIn(t, r) != -2 {
+			t.Fatalf("after a late echo the seat reaches %v, want -2", dbIn(t, r))
+		}
+	})
+}
+
+// An engineer raise at the desk that no seat ever sent is credited.
+func TestCeiling_EngineerRaiseNotSeenFromASeatIsCredited(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, drv := startSeat(t, SafetyConfig{}, monitorOf(2), busFixture())
+		_, _ = sup.Write(set(sendLevel(1, 2), lvl(t, -5), musician))
+		pushChange(t, drv, sendLevel(1, 2), lvl(t, -3), desk)
+		if r, _ := sup.Write(set(sendLevel(1, 2), lvl(t, 10), musician)); dbIn(t, r) != 3 {
+			t.Fatalf("after the engineer's -3 the seat reaches %v, want +3", dbIn(t, r))
+		}
+	})
+}
+
+// A revoked seat's values no longer mask the engineer: once seat A is a
+// viewer, the engineer raising to A's old value is credited.
+func TestCeiling_RevokedSeatNoLongerMasks(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, drv := startSeat(t, SafetyConfig{}, monitorOf(2), busFixture())
+		_, _ = sup.Write(set(sendLevel(1, 2), lvl(t, -4), seatA))
+		if err := sup.SetClientRole(seatA.ClientID, Role{Kind: RoleViewer}); err != nil {
+			t.Fatal(err)
+		}
+		pushChange(t, drv, sendLevel(1, 2), lvl(t, -4), desk) // the engineer, at A's old value
+		if r, _ := sup.Write(set(sendLevel(1, 2), lvl(t, 10), seatB)); dbIn(t, r) != 2 {
+			t.Fatalf("seat B reaches %v, want -4 + 6", dbIn(t, r))
+		}
+	})
+}
+
+// Overflow: more distinct seat values than the bounded set holds refuse
+// every raise (the oldest values are forgotten) until a full read at the
+// next connect credits as usual; lowering is still credited.
+func TestCeiling_OverflowRefusesRaisesUntilAFullRead(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, drv := startSeat(t, SafetyConfig{}, monitorOf(2), busFixture())
+		for i := range 64 + 1 { // maxSeatValues
+			db := -60 + float64(i)*0.5
+			_, _ = sup.Write(set(sendLevel(1, 2), lvl(t, min(db, -2)), musician))
+			_, _ = sup.Write(set(sendLevel(1, 2), lvl(t, -60-float64(i)*0.25), musician))
+		}
+		pushChange(t, drv, sendLevel(1, 2), lvl(t, -7), desk) // a raise nobody sent, refused in overflow
+		if r, _ := sup.Write(set(sendLevel(1, 2), lvl(t, 10), musician)); dbIn(t, r) != -2 {
+			t.Fatalf("overflow credited a raise: seat reaches %v", dbIn(t, r))
+		}
+		pushChange(t, drv, sendLevel(1, 2), lvl(t, -20), desk) // a cut is always credited
+		if r, _ := sup.Write(set(sendLevel(1, 2), lvl(t, 10), musician)); dbIn(t, r) != -14 {
+			t.Fatalf("after a cut in overflow the seat reaches %v, want -14", dbIn(t, r))
+		}
+	})
 }

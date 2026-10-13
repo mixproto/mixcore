@@ -254,14 +254,22 @@ Rules of v0.4:
     `macro` with the `clientId` of the client that sent them, matched in the driver's echo window) and everything the
     console reports (`console`: the surface, another app, MIDI, a scene recall, power-on). It cannot tell the surface
     from another app, nor another Mixhand device connected directly to the console from the surface. So the monitor
-    ceiling's "engineer's latest value" is every value except: the writes of a monitor client of this core and their
-    echoes; our own writes read back by the re-read (`OwnWrite`); and, since v0.4, any console report within half a
-    step of the grid of the last value a monitor client of this core sent for that parameter (a late or lost echo, a
-    re-read), which is never credited to the engineer. It covers every fader (channel, main, bus, DCA) and send level,
-    each taken from the console at connect; a parameter without such a value counts from -60 dB, never from its current
-    value. With several monitor devices on one bus that are not behind one hub, one device's writes count as the
-    engineer's for the others. The hub must add: a `clientId` per paired device on every write, the role and ceilings
-    per client from the pairing token (`SetClientRole`; `SetClientSafety` for `safety.monitorCeiling`), and all monitor
+    ceiling's "engineer's latest value" follows the console by this rule (lead decision on the security re-check,
+    leaning every error to a lower ceiling; `console/seats.go`):
+    - a report **below** the current value is always taken, whoever sent it (a cut at the desk is never masked);
+    - a report **above** it is taken only if it matches (within half a grid step) none of the values the monitor
+      clients of this core sent for that parameter (kept per parameter, up to 64, oldest dropped; while one has been
+      dropped no raise is taken until a cut or the full read of the next connect, reconnect or resume), and is not our
+      own write read back (`OwnWrite`);
+    - taking a value forgets the seat values older than the 2 s echo window (younger ones may still come back as late
+      echoes); a role change or `SetClientSafety` forgets that client's values;
+    - raise caution: an engineer raise at the desk to exactly a value a seat sent recently is not taken, so the seats
+      keep the lower ceiling until the engineer moves it again or the next full read (rare, and safe).
+    It covers every fader (channel, main, bus, DCA) and send level, each taken from the console at connect; a parameter
+    without such a value counts from -60 dB, never from its current value. With several monitor devices on one bus that
+    are not behind one hub, one device's writes count as the engineer's for the others. The hub must add: a `clientId`
+    per paired device on every write, the role and ceilings per client from the pairing token (`SetClientRole`;
+    `SetClientSafety` for `safety.monitorCeiling`), and all monitor
     devices of a bus behind it.
 12. **Scope: one engine.** Client ids, show mode, unlocks and their undo grace, holds and the monitor ceiling live in
     one engine (one `Start`). The core does not authenticate `clientId`: any caller of the engine may name any id.
