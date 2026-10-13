@@ -1,5 +1,13 @@
 # mixcore
 
+> **Frozen skeleton (2026-10-13).** This repository is no longer developed. Its development continues privately
+> inside Mixhand. You may use this code as a starting point for your own project under the MPL-2.0 licence below.
+> It covers Behringer X32/M32, X Air and WING (from public documents) and a capture tool, `cmd/mixcapture`.
+> To support more consoles or go deeper, map your own consoles yourself: record the network traffic between a console
+> and its own vendor app while changing one parameter at a time (black-box capture, see `docs/tools/mixcapture.md`),
+> and write your own driver from what you learn. Do not decompile vendor apps or firmware. Issues and pull requests are
+> closed.
+
 An open-source Go engine for remote control of digital mixing consoles over the local network.
 
 mixcore speaks each console family's control protocol, keeps one engineering-unit model of the console
