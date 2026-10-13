@@ -6,6 +6,7 @@ package console
 
 import (
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 	"testing/synctest"
@@ -335,6 +336,39 @@ func TestScene_NameIsCleanedInTheCore(t *testing.T) {
 		}
 		if e := newestUndo(t, u, gesture.ClientID); e.Scene == nil || e.Scene.Name != "[2JSong 2" {
 			t.Fatalf("entry %+v", e)
+		}
+	})
+}
+
+// The history is bounded: 64 entries per client (the oldest dropped) and 64
+// clients (the one whose newest entry is oldest dropped).
+func TestUndo_HistoryIsBounded(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, _ := startSafe(t, SafetyConfig{}, safetyState(-6))
+		for i := range maxUndoEntries + 6 { // typed sets never merge
+			db := -40 + float64(i%2)
+			if _, err := sup.Write(Write{Command: driver.Command{Param: ch1Fader, Value: lvl(t, db), Origin: gesture}, Typed: true}); err != nil {
+				t.Fatal(err)
+			}
+			echoOf(t, sup, ch1Fader, db, gesture)
+		}
+		sup.mu.Lock()
+		n := len(sup.undo.byClient[gesture.ClientID])
+		sup.mu.Unlock()
+		if n != maxUndoEntries {
+			t.Fatalf("%d entries, want %d", n, maxUndoEntries)
+		}
+		for i := range maxUndoClients {
+			time.Sleep(time.Millisecond)
+			o := driver.Origin{Kind: driver.OriginGesture, ClientID: fmt.Sprintf("dev-%02d", i)}
+			holdMove(t, sup, ch1Fader, o, -10-float64(i%5))
+		}
+		sup.mu.Lock()
+		_, kept := sup.undo.byClient[gesture.ClientID]
+		clients := len(sup.undo.byClient)
+		sup.mu.Unlock()
+		if kept || clients != maxUndoClients {
+			t.Fatalf("%d clients, the stalest kept: %v", clients, kept)
 		}
 	})
 }
