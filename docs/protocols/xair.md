@@ -116,9 +116,11 @@ firmware older than 1.18 (XA-F76) is a product question (proposed default: show 
 
 ### Out of scope
 WING, X32/M32 (`x32.md`), DL stage boxes, MIDI control (the X Air MIDI CC map in XS2/XS3), USB audio, firmware update,
-every network or preference write (`/-prefs/*`, `/-action/*`: mixcore never writes them), FX parameters, RTA, automix,
-solo/monitor, routing writes. Processing parameters (gain, EQ, dynamics) are documented in section 3.4 for later phases;
-v1 of the driver has the same scope as `driver/x32` (names, faders, mutes, mute groups, DCAs, input and main meters).
+every network or preference write (`/-prefs/*`, and `/-action/*` except `/-action/clearsolo`, section 3.8: mixcore never
+writes them), FX parameters, RTA, automix, solo settings, routing writes. Processing parameters (gain, EQ, dynamics) are
+documented in section 3.4 for later phases and in detail for the next milestone in sections 3.7-3.9 (processing, solo,
+names), 7.1 (snapshot list, recall, store) and 8.1 (network check); v1 of the driver has the same scope as `driver/x32`
+(names, faders, mutes, mute groups, DCAs, input and main meters).
 
 ## 2. Transport, discovery, session
 
@@ -265,6 +267,9 @@ Quirk for later phases: XS10 never writes 1.0 to gain, gate, pan and FX paramete
 "Strange bug when setting 1 in some binary values" (`shared.js:39`) `[PERMISSIVE-CODE Apache-2.0]` `[TO-VERIFY]`
 (test item 7). Faders are not in that list.
 
+Sections 3.7-3.9 (XA-F118 onward, read 2026-10-13) refine these rows per strip with sources; where they differ (for
+example polarity and low cut exist on input channels only), sections 3.7-3.9 win.
+
 ### 3.5 Examples
 | What | Message | Bytes (hex) |
 |---|---|---|
@@ -316,6 +321,44 @@ If item 22 shows that the mixer does not echo a Gain write, X Air Gain becomes r
 review pass 4): the in-flight bound would otherwise rest on the background re-read alone. Until then, on a mixer that
 does not echo Gain, a hold with 8 values in flight stops at `atCap` in both directions, lowerings included, until the
 next re-read (intended).
+
+### 3.7 Processing per strip (next milestone)
+Read 2026-10-13 from XS1 (pages 3-4 re-read on the mirror), XS5, XS6/XS7 (one lineage: XS7 is derived from XS6), XS10
+(code and its virtual-X18 state file `src/virtual-devices/x18/data.json`, which XS10's capture tool `x18/capture/`
+recorded from a connected mixer; model and firmware of that mixer are not stated, so it is code evidence only) and
+XS12. Same as X32: the leaf names, enums and laws of `x32.md` X32-F91..F106, with `<s>` a strip root of section 3.1.
+Differs: which strips have what, the key-source list, the EQ mode switch with a built-in GEQ, no crossover EQ types, no
+compressor position, no HPF slope. Grid counts are X32's; on X Air they are `[TO-VERIFY]` (item 31), and XS10's state
+file holds values on those grids (ch 01 band 1 f 0.245 = 49/200, q 0.2676056 = 19/71; bus 1 band 1 q 0.4647887 = 33/71).
+Every write follows the X Air 1.0 rule of XA-F116 until item 7: never the wire maximum 1.0.
+
+| ID | Fact | Source |
+|---|---|---|
+| XA-F118 | **Low cut, input channels only:** `/ch/NN/preamp/hpon` (1 = on), `/ch/NN/preamp/hpf` **Hz = 20 x 20^f** (20..400 Hz); no `hpslope` in any source `[TO-VERIFY]`, item 27. XS12 gives 20..200 Hz (contradiction, item 28). | XS5 `buildStripDefs.js:46-49` (`preamp/hpon`, proc list of `ch` only), XS7 section 8 `[PERMISSIVE-CODE MIT]`; XS10 `device/bus/lowCut.js` (`lowCutHas` = channel, 20..400 log) `[PERMISSIVE-CODE Apache-2.0]`; XS12 `[COMMUNITY]` |
+| XA-F119 | **Polarity, input channels only:** `/ch/NN/preamp/invert`, 1 = inverted. Section 3.4's `<s>/preamp/invert` is narrowed: no source addresses it on `/rtn`, `/bus` or `/lr`. | XS5 `defStrip.js:15` (`invert` only in the `ch` proc list) `[PERMISSIVE-CODE MIT]`; XS10 `device/bus/polarity.js` (channel only) `[PERMISSIVE-CODE Apache-2.0]`; XS12 (`/ch/01` only) `[COMMUNITY]` |
+| XA-F120 | **Return sources and trims.** Besides XA-F114/F115 (channels): `/rtn/aux` and `/rtn/1..4` have `preamp/rtnsw` ("preamp/USB" switch, 1 = USB), `preamp/rtntrim` (-18..+18 dB) and `config/rtnsrc` (int 0..8, XS12 labels "U0102, U0304, U0506, - U1718", incomplete); channels' `config/rtnsrc` is int 0..17 = USB 1..18. Meaning per model `[TO-VERIFY]`, item 27. | XS12 `[COMMUNITY]`; XS5 `defStrip.js:34`, `:122` (`rtnsw` on `rtn`, `rtn/aux`) `[PERMISSIVE-CODE MIT]` |
+| XA-F121 | **EQ bands, types, laws.** `<s>/eq/on`; **4 bands** `eq/1..4` on `/ch/01..16`, `/rtn/aux`, `/rtn/1..4`; **6 bands** `eq/1..6` on `/bus/1..6`, `/lr`; none on `/fxsend` and `/dca`. Band type int 0..5 = LCut, LShv, PEQ, VEQ, HShv, HCut on every strip (no crossover types). Laws as X32-F97: Hz = 20 x 1000^f, dB = 30 f - 15, Q = 10 x 0.03^f. | XS10 `device/bus/equalizer.js` (`parametersPerType`, `types`, scales) `[PERMISSIVE-CODE Apache-2.0]`; XS7 section 8 (4 or 6 bands, laws) `[PERMISSIVE-CODE MIT]`; XS5 `defStrip.js` (`eq` in the proc lists of ch, rtn, bus, lr, rtn/aux; `fxsend` proc empty) `[PERMISSIVE-CODE MIT]`; XS12 (types 0-5 on ch, bus, lr, rtn) `[COMMUNITY]` |
+| XA-F122 | **EQ mode switch (D09).** `/bus/N/eq/mode` and `/lr/eq/mode`: int **0 PEQ, 1 GEQ, 2 TEQ** (parametric, graphic, TrueEQ). Only buses 1..6 and main LR have it: XS10 offers mode, GEQ and TEQ only on bus and main; XS10's state file has `/bus/1/eq/mode` 1 and no `/ch/01/eq/mode`; XS12 lists the mode on bus and LR only. XS6/XS7 put `mode` on every EQ (one generic class, author tested an MR18 only) and XS12 has one stray row `/ch/01/geq/0` "Channel graphics EQ level": input-channel GEQ `[TO-VERIFY]`, item 29. What the switch does to the stored PEQ bands is unknown (item 29); it changes the bus sound at once. | XS10 `device/bus/equalizer.js` (`modeOptions`, `modeHas`, `graphicHas`, `trueHas` = main, secondary) `[PERMISSIVE-CODE Apache-2.0]`; XS6 `shared.py` `EQ.mode` (`peq`, `geq`, `teq`), XS7 `[PERMISSIVE-CODE MIT]`; XS12 `[COMMUNITY]` |
+| XA-F123 | **Built-in GEQ bands.** `<s>/geq/<band>` on `/bus/1..6` and `/lr`, 31 bands addressed by name: `20 25 31.5 40 50 63 80 100 125 160 200 250 315 400 500 630 800 1k 1k25 1k6 2k 2k5 3k15 4k 5k 6k3 8k 10k 12k5 16k 20k`; **dB = 30 f - 15** (-15..+15). TEQ uses the same addresses in XS10. XS12 prints `/bus/1/geq/0` (an index), against the named form of XS7, XS10 and the state file `[TO-VERIFY]`, item 29; step not documented (item 29). 217 reads for 7 strips. | XS10 `device/bus/equalizer.js` (`graphOptions`, `graphEqGainOsc`, `trueEqGainOsc`), state file (`/bus/1/geq/1k25` etc.) `[PERMISSIVE-CODE Apache-2.0]`; XS7 section 8 `[PERMISSIVE-CODE MIT]`; XS12 `[COMMUNITY]` |
+| XA-F124 | **Compressor** `<s>/dyn/...` on `/ch/01..16`, `/bus/1..6`, `/lr` only; leaves and laws of X32-F102 (`on, mode, det, env, thr, ratio 0..11, knee, mgain, attack, hold, release, mix, auto, filter/on, filter/type, filter/f`), **without `pos`** (no source has it, item 27). `keysrc` on `/ch` and `/bus` only: int **0..22 = SELF, Ch01..Ch16, Bus1..Bus6** (X32: 0..64). | XS10 `device/bus/compressor.js` (`compressorHas` = channel, secondary, main; `sidechainHas` = channel, secondary; `ratioOptions`, `sidechainSourceOptions`) `[PERMISSIVE-CODE Apache-2.0]`; XS6 `shared.py` `Dyn`, XS7 section 6 and 8 `[PERMISSIVE-CODE MIT]`; XS12 `[COMMUNITY]` |
+| XA-F125 | **Gate**, input channels only: leaves and laws of X32-F103, `keysrc` 0..22 as XA-F124. **Mode order contradiction:** XS6/XS7 and XS10 `0 EXP2, 1 EXP3, 2 EXP4, 3 GATE, 4 DUCK` (the X32 order) against XS12 "GATE, EXP2, EXP3, EXP4, DUCK"; mixcore follows the code `[TO-VERIFY]`, item 30. | XS10 `device/bus/gate.js` (`modeOptions`, `gateHas` = channel) `[PERMISSIVE-CODE Apache-2.0]`; XS6 `shared.py` `Gate.mode`, XS7 section 6 `[PERMISSIVE-CODE MIT]`; XS12 `[COMMUNITY]` |
+| XA-F126 | **Insert** `<s>/insert/on`; the selector is `insert/fxslot` 0..8 = OFF, FX1A, FX1B .. FX4B in XS12 but `insert/sel` in XS10's state file (contradiction). Not needed for D09 (the GEQ is built in); not modelled. | XS12 `[COMMUNITY]`; XS10 state file `[PERMISSIVE-CODE Apache-2.0]` |
+| XA-F127 | **Gain-reduction meters.** `/meters ,si "/meters/0" <ch>` returns 8 int16: pre-fader L, R (0, 1), **gate GR (2), comp GR (3)**, post-fader L, R (4, 5), gate key (6), comp key (7). `/meters/6` ("ALL DYN") returns 39 int16: 16 gate GR, 16 channel comp GR, 6 bus comp GR, 1 LR comp GR: one request for a whole GR row. Scale int16/256 dB (XA-F51); sign and zero point of GR are not documented `[TO-VERIFY]`, item 32. XS8 calls `/meters/0` "NOT input meters" (probably requested without the channel int). Rate and lifetime as XA-F56. | XS1 p.3 `[VENDOR-DOC]`; XS10 `device/bus/gate.js`, `compressor.js` (`gainReduction`: `meterId: 0`, `v[2]`, `v[3]`) `[PERMISSIVE-CODE Apache-2.0]`; XS8 README `[PERMISSIVE-CODE MIT]` |
+
+Processing pushes and echoes follow section 2 (no surface: every change comes from another client, MIDI or a snapshot
+load); none is vendor-documented for these addresses `[TO-VERIFY]`, item 31.
+
+### 3.8 Solo
+| ID | Fact | Source |
+|---|---|---|
+| XA-F128 | **Solo switches** `/-stat/solosw/NN`, int 1 = on, two digits: **01-16 ch, 17 aux return, 18-21 FX return 1..4, 40-45 bus 1..6, 46-49 FX send 1..4, 50 LR, 51-54 DCA 1..4**. 22-39 are USB returns 1..18 in XS10, marked "Guessing..." `[TO-VERIFY]`, item 33. `/-stat/solo` (1 = any solo) and `/-action/clearsolo ,i 1` as X32-F108. | XS5 `defSolo.js` (offsets 0, 16, 17, 39, 45, 49, 50), `buildSoloDefs.js` (`pad0(offset + n)`) `[PERMISSIVE-CODE MIT]`; XS10 `device/bus/to/on.js` (`monitorValue`), `device/dca/solo.js` (51..54) `[PERMISSIVE-CODE Apache-2.0]`; XS12 ("[01..20??]") `[COMMUNITY]` |
+| XA-F129 | **Solo settings** `/config/solo/...` (the phones/monitor bus): `level` (161-step level law), `source` int 0..14 = OFF, LR, LRPFL, LRAFL, AUX, U1718, Bus1..Bus6, Bus12, Bus34, Bus56, `sourcetrim` -18..+12 dB (73 values; X32 -18..+18), `chmode`, `busmode` 0 PFL 1 AFL, `dim`, `dimatt` -40..0 dB, `dimpfl`, `mono`, `mute`. No `dcamode` or `exclusive` in any source. mixcore reads `chmode` and `busmode` and never writes `/config/solo`. | XS12 `[COMMUNITY]`; XS5 `defSolo.js` (`fadeType` 161, 73, 40) `[PERMISSIVE-CODE MIT]`; XS7 section 8 `[PERMISSIVE-CODE MIT]` |
+| XA-F130 | **Solo pushes.** XS5 reads each `solosw` once (`pollStats` polls only values not yet received) and then updates only from received messages, so another client's solo is expected as a push like any parameter; not vendor-documented `[TO-VERIFY]`, item 33. | XS5 `index.js:492-534` (`pollStats`), `:740-745` `[PERMISSIVE-CODE MIT]` |
+
+### 3.9 Names, colours, icons
+| ID | Fact | Source |
+|---|---|---|
+| XA-F131 | **Writes** `<s>/config/name ,s` and `<s>/config/color ,i 0..15` on `/ch`, `/rtn/aux`, `/rtn/1..4`, `/bus/1..6`, `/fxsend/1..4`, `/lr`, `/dca/1..4` (section 3.2). **No icons on X Air**: no source has `config/icon`, and XS10's icon feature is hard-wired to "absent". Name length `[TO-VERIFY]`, item 14. Snapshots carry names and colours, so a load can change them (scope flag "config"). The mixer has no surface: these apps and the vendor editors are the only place a name is set or seen, which is why D14 matters on X Air. | XS10 `device/bus/name.js`, `color.js`, `icon.js` (`has` false) `[PERMISSIVE-CODE Apache-2.0]`; XS12 `[COMMUNITY]` |
 
 ## 4. Value encodings
 
@@ -418,6 +461,23 @@ confidence; within 1 s of a burst it is attached as `LoadedScene` ("loaded or sa
 Because no X Air has a surface (XA-F74), "external change" always means another app, MIDI or a load. If test item 13
 shows that a save does not move the pushed index, it can become a signal of its own.
 
+### 7.1 Snapshot list, recall and store (next milestone)
+Same as X32: a load reaches clients as a burst of pushes, overwrites happen without asking, a slot's contents cannot
+be read. Differs: 64 slots 1..64, no `hasdata` flag, a per-slot scope string instead of global safes, no GO, no
+snippets or cues, no undo in any source.
+
+| ID | Fact | Source |
+|---|---|---|
+| XA-F132 | **List.** Read `/-snap/01..64/name` (31 characters) and `/scope`; a slot with an empty (or blank) name is treated as unused by XS10 and shown as "#NN" by XS5. No source has a "slot holds data" flag: whether an unnamed slot can hold a snapshot is `[TO-VERIFY]`, item 34. 128 reads for the whole list. | XS1 p.4 `[VENDOR-DOC]`; XS10 `device/scene/active.js` (non-empty trimmed name), `options.js` (`/-snap/NN`) `[PERMISSIVE-CODE Apache-2.0]`; XS5 `buildSnapshotDefs.js`, `index.js:707-710` (empty name -> default) `[PERMISSIVE-CODE MIT]` |
+| XA-F133 | **Scope string** (59 characters, `+` = recalled, `-` or any other character = not recalled): it is the X Air form of recall safes, per slot. **Order contradiction:** the vendor list reads ch1..16, aux, fxreturn1..4, busmaster1..6, fxsendmaster1..4, main lr, **dca1..4, fx1..4**, source, input, config, eq, dyn, bussend1..6, fxsend1..4, fader-pan, mute, routing, console configuration; XS10 indexes 0-15 ch, 16 aux, 17-20 FX return, 21-26 bus, 27-30 FX send, 31 LR, 32 source, 33 input, 34 configuration, 35 EQ, 36 dynamics, 37 level and pan, 38 mute, 39-44 bus sends, 45-48 FX sends, 49 in/out, 50 configuration, **51-54 DCA, 55-58 FX**. Both are 59 long `[TO-VERIFY]`, item 35. Writing a slot's `scope` changes it at once (XA-F60): mixcore reads it and never writes it. | XS1 p.4 `[VENDOR-DOC]`; XS10 `device/scene/scope.js` (`options`, `valueRead`) `[PERMISSIVE-CODE Apache-2.0]` |
+| XA-F134 | **Recall.** `/-snap/load ,i N` (1..64) is the only recall: no GO, no highlight, no snippets, no cues. The slot's own scope applies. A reply to the sender is not documented; XS11 sends N as a string, mixcore sends an int (XS5, XS10). After a load expect a burst of pushes (section 7) and run one full read-only re-read once it settles (XS11 waits 1 s and reloads for the same reason, `x32.md` X32-F116). XS12 lists `/-action/mididump` as "used at end of snapshot recall": the mixer's own step, never sent by mixcore. Reply, burst and scope behaviour `[TO-VERIFY]`, item 36. | XS1 p.4 `[VENDOR-DOC]`; XS5 `actions.js:152-175` `[PERMISSIVE-CODE MIT]`; XS10 `device/scene/load.js` `[PERMISSIVE-CODE Apache-2.0]`; XS11 `mixer_type_xair.py:8`, `mixer_base.py:173-183` `[PERMISSIVE-CODE MIT]`; XS12 `[COMMUNITY]` |
+| XA-F135 | **Store and delete.** `/-snap/save ,i N` stores the live state into slot N **without asking**; the stored name is `/-snap/name` ("snapshot name for save"), so a store is `/-snap/name ,s <name>` then `/-snap/save ,i N`; XS10 also writes `/-snap/NN/name` first. `/-snap/delete ,i N` deletes. Replies are not documented. Warning from code: XS5's action "Snapshot: Save" sends `/-snap/load` (a store button that loads), so store must be proven on hardware before it ships `[TO-VERIFY]`, item 34. Never slot 64 (XA-F63). | XS1 p.4 `[VENDOR-DOC]`; XS10 `device/scene/save.js`, `erase.js` `[PERMISSIVE-CODE Apache-2.0]`; XS5 `actions.js:177-200` (`save_snap_num` sends `/-snap/load`), `:220-226` (`save_snap` sends `/-snap/save`) `[PERMISSIVE-CODE MIT]` |
+
+Design for the next milestone (not protocol facts): the v1 rule "never sends any other `/-snap/` address" (section "As
+implemented") is relaxed only for these gestures: list reads on demand, `/-snap/load` after a confirmation naming the
+slot, `/-snap/name` + `/-snap/save` after a confirmation that names the slot it overwrites, never slot 64, never
+`scope` or `delete` writes in the first release.
+
 ## 8. Wi-Fi, network modes and limits
 | ID | Fact | Source |
 |---|---|---|
@@ -433,6 +493,13 @@ Product consequence (for the lead, not a protocol fact): in access point mode th
 associations, so 4 devices in total can reach the mixer (for example the engineer's tablet plus 3 musician phones), long
 before the 8-client OSC limit. Musician monitor seats need an external router; the onboarding screen should say so
 when the mixer reports `192.168.1.1` (XA-F81) and 4 seats are used.
+
+### 8.1 Network check data (next milestone)
+| ID | Fact | Source |
+|---|---|---|
+| XA-F136 | **What the mixer reports.** `/xinfo`, `/info` (XA-F10), `/status` "active" or "standby" (XA-F16). Ethernet: `/-prefs/lan/mode` int 0..2 = STATIC, DHCP, DHCPS (DHCP server), `/-prefs/lan/addr/0..3`, `/mask/0..3`, `/gateway/0..3`, `/-stat/netmode` 0..2. Wi-Fi client ("is"): `/-prefs/is/mode` 0 DHCP, 1 STATIC, `/-prefs/is/addr`, `/mask`, `/gateway` `/0..3`, `/-prefs/is/ssid`, `/-prefs/is/security` 0..3 = OPEN, WEP, WPA, WPA2. Access point: `/-prefs/ap/ssid`, `/-prefs/ap/channel` 1..11, `/-prefs/ap/security` 0 OPEN, 1 WEP. `/-prefs/name`. XS10's state file also holds a bare `/-prefs/lan` (meaning unknown). | XS12 `[COMMUNITY]`; XS10 `device/configuration/networkLan.js`, `networkWifiClient.js`, `networkAccessPoint.js`, `device.js`, state file `[PERMISSIVE-CODE Apache-2.0]` |
+| XA-F137 | **Secrets.** `/-prefs/is/key` and `/-prefs/ap/key` are the Wi-Fi passwords and answer reads (XS10 reads and writes them; XS12 lists them). mixcore never reads, logs or shows them, and never sends `/-action/updnet` (applies network settings), `/-action/wlanscan` (LAN mode only; results in `/-stat/networks/NN/ssid`, `/strength`, `/flags`) or `/-action/initall`. | XS10 `networkAccessPoint.js:52-54`, `networkWifiClient.js:73-75` `[PERMISSIVE-CODE Apache-2.0]`; XS12 `[COMMUNITY]` |
+| XA-F138 | **Not reported.** No source has an address for the REMOTE switch position (which of LAN, Wi-Fi client, access point is active), for the mixer's own Wi-Fi signal strength or for the number of associated Wi-Fi clients `[TO-VERIFY]`, item 37. A client can infer AP mode from the mixer at `192.168.1.1` (XA-F81) and measure round trip and loss itself. | XS2, XS12 (absent) |
 
 ## 9. What the vendor apps do
 | ID | Fact | Source |
@@ -653,6 +720,44 @@ only down, mutes only on, one channel name) and restored. Items 4, 6, 17, 19, th
 and the write part of 18 need a person or a write mixprobe cannot bound; the report lists them as skipped. Items 21-26
 are not in mixprobe yet: the read parts of 21, 23, 24 and 26 can be automated; the writes of 22 (+60 dB) and 25 and the
 knob moves of 26 need a person.
+
+Processing, solo, snapshot and network items (XA-F118..F138). Safety as for items 21-26; lab snapshot slots 60..63
+only, never 64; "A" = a socket renewing `/xremote`, "B" = the write socket.
+27. **Addresses per strip (XA-F118..F120, F124)**, mixprobe. Read `/ch/01/preamp/hpslope`, `/rtn/aux/preamp/invert`,
+    `/rtn/aux/preamp/hpon`, `/bus/1/gate/on`, `/lr/dyn/keysrc`, `/ch/01/dyn/pos`, `/rtn/1/dyn/on`, `/fxsend/1/eq/on`,
+    `/rtn/1/config/rtnsrc`. Pass: which answer (expect none but the last).
+28. **Low-cut range (XA-F118)**, manual plus mixprobe read. In X AIR Edit set ch 1 low cut to 200 Hz, then to its
+    maximum; read `/ch/01/preamp/hpf` after each. Pass: 0.77 and 1.0 with the maximum shown as 400 Hz (20..400 law), or
+    1.0 at 200 Hz (XS12).
+29. **EQ mode and GEQ (XA-F122, F123, D09)**, mixprobe plus manual. Read `/bus/1/eq/mode`, `/lr/eq/mode`,
+    `/ch/01/eq/mode`, `/rtn/1/eq/mode`, `/bus/1/geq/1k`, `/bus/1/geq/0`, `/ch/01/geq/1k`, `/ch/01/geq/0`. In X AIR Edit
+    switch bus 1 to GEQ, move 1 kHz by one step, log A; switch to TEQ, then back to PEQ, and compare `/bus/1/eq/1..6/*`
+    before and after. Pass: address set, GEQ step, pushes, PEQ values kept or not.
+30. **Gate mode order (XA-F125)**, manual. In X AIR Edit set ch 1 gate mode to Gate, Ducker, Exp 2:1; read
+    `/ch/01/gate/mode` after each. Pass: 3, 4, 0 (code order) or 0, 4, 1 (XS12 order).
+31. **Grids and pushes of processing (XA-F121, F124)**, mixprobe. From B write the off-grid values of `x32.md` item 35
+    to the same X Air addresses; read back; log A. Pass: X32 grids hold on X Air; echo per H1-H3.
+32. **GR meters (XA-F127)**, manual. 1 kHz tone at -10 dBFS on ch 1, compressor on (threshold -30 dB, ratio 4.0); send
+    `/meters ,si "/meters/0" 0` and `/meters ,si "/meters/6" 0`; log values 2, 3 of bank 0 and 16 of bank 6. Pass: sign
+    and zero point of GR (expect about -15 dB, -3840, if GR is negative dB; 0 without compression).
+33. **Solo ids and pushes (XA-F128..F130)**, manual. From B write `/-stat/solosw/NN ,i 1` then `,i 0` for NN = 01, 17,
+    18, 22, 40, 46, 50, 51; note which strip X AIR Edit shows soloed; log A. Send `/-action/clearsolo ,i 1`. Pass: id
+    map (18-21 and 22-39 in particular) and pushes.
+34. **Snapshot list and store (XA-F132, F135)**, mixprobe plus manual. Read all `/-snap/NN/name` and `/scope`. Send
+    `/-snap/name ,s "mixcore test"` then `/-snap/save ,i 60`; log B and A; read `/-snap/60/name`, `/-snap/index`. Save slot
+    61 with an empty `/-snap/name`, then load 61. `/-snap/delete ,i 60`; read its name. Pass: name source on save,
+    replies, whether an unnamed slot holds data, delete clears the name.
+35. **Scope order (XA-F133)**, manual. In slot 62, in X AIR Edit, clear only "Ch 2", then only "DCA 1", only "EQ", only
+    "Bus send 1"; read `/-snap/62/scope` after each. Pass: the index of each flag (vendor or XS10 order).
+36. **Recall (XA-F134)**, mixprobe plus manual. Load slots 62 and 63 from B with `/-snap/load ,i N`; log A and B for 3 s;
+    then load a slot whose scope excludes EQ after changing ch 1 EQ. Pass: reply or none, burst size and duration,
+    scope honoured.
+37. **Network status (XA-F136..F138)**, mixprobe. In each REMOTE switch position read `/status`, `/-prefs/lan/mode`,
+    `/-stat/netmode`, `/-prefs/lan`, `/-prefs/lan/addr/0..3`, `/-prefs/is/mode`, `/-prefs/is/ssid`,
+    `/-prefs/is/security`, `/-prefs/ap/ssid`, `/-prefs/ap/channel`, `/-prefs/ap/security` (never a `/key`). Pass: an
+    address whose value follows the switch, or none.
+Items 27, 29 (reads), 31, 34 (lab slot 60), 36 (reads and lab loads) and 37 can be added to `cmd/mixprobe --family xair`;
+28, 30, 32, 33 and 35 need a person with X AIR Edit or a tone source.
 
 ## Open questions for the lead (with recommended defaults)
 - Warn on firmware older than 1.18 (XA-F76)? Default: one-time non-blocking hint.
