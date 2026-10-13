@@ -35,7 +35,10 @@ func enumProbeConsole(c net.Conn, perNode, items int) {
 	var got []byte
 	buf := make([]byte, 4096)
 	rootSent, floodSent := false, false
-	out := func(b []byte) bool { _, err := c.Write(wingproto.AppendFrame(nil, wingproto.ChannelData, b)); return err == nil }
+	out := func(b []byte) bool {
+		_, err := c.Write(wingproto.AppendFrame(nil, wingproto.ChannelData, b))
+		return err == nil
+	}
 	for {
 		n, err := c.Read(buf)
 		if err != nil {
