@@ -107,6 +107,7 @@ type session struct {
 	// back is not limit evidence (follow-up 1).
 	unconfirmed map[int]osc.Arg
 	rr          rereadPass
+	settle      settleState // settle re-reads of unechoed Gain writes (settle.go)
 }
 
 var _ driver.Session = (*session)(nil)
@@ -117,7 +118,7 @@ func newSession(d *Driver, c *conn, opts driver.Options) *session {
 		timing: d.timing, params: &d.params, c: c, log: logger(opts), audit: opts.WriteAudit,
 		pending: map[int]pendingWrite{}, done: make(chan struct{}), cmdReady: make(chan struct{}, 1), meterReady: make(chan struct{}, 1),
 		rereadReady: make(chan struct{}, 1), tx: make([]byte, 0, rxBufSize), sent: map[int][]sentWrite{}, unconfirmed: map[int]osc.Arg{},
-		rr: rereadPass{asked: map[int]bool{}}, scene: newSceneState(), present: newHeadampSet(d.params.layout.maxHeadamp()),
+		rr: rereadPass{asked: map[int]bool{}}, settle: newSettleState(), scene: newSceneState(), present: newHeadampSet(d.params.layout.maxHeadamp()),
 		buses: newHeadampSet(d.params.layout.maxBus()),
 	}
 }
@@ -317,6 +318,7 @@ func (s *session) flushPending() {
 		s.markTouched(idx)
 		if w.param.conv == convGain {
 			s.unconfirmed[idx] = w.arg
+			s.noteGainWrite(idx, now)
 		}
 		if s.audit != nil {
 			s.audit(driver.WriteRecord{Param: w.param.ref, Address: w.param.addr, Origin: w.origin, At: now})

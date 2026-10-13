@@ -193,7 +193,7 @@ func (s *Supervisor) recheckHoldsLocked(only func(client string) bool) {
 		}
 		if !s.allowsLocked(s.safe.role(k.client), k.param) {
 			s.holds.cancel(k, ReasonRole)
-			delete(s.safe.windows, k)
+			s.closeWindowLocked(k)
 		}
 	}
 }
@@ -226,12 +226,23 @@ func (s *Supervisor) SetClientRole(clientID string, r Role) error {
 	defer s.syncHeldLocked()
 	s.recheckHoldsLocked(func(c string) bool { return c == clientID })
 	for k := range s.holds.active {
-		if _, ok := s.safe.windows[k]; ok && k.client == clientID {
-			s.openWindowLocked(k)
+		if old, ok := s.safe.windows[k]; ok && k.client == clientID {
+			s.reopenWindowLocked(k, old)
 		}
 	}
 	s.signal()
 	return nil
+}
+
+// reopenWindowLocked opens the window of a kept hold under the client's new
+// role (a new ceiling) and keeps what the hold already did: its start, its
+// last write and whether it wrote.
+func (s *Supervisor) reopenWindowLocked(k holdKey, old *window) {
+	w := s.openWindowLocked(k)
+	w.Start, w.lastWrite, w.wrote = old.Start, old.lastWrite, old.wrote
+	if w.HasCap {
+		w.CapUp, w.CapDown = math.Max(w.CapUp, old.Start), math.Min(w.CapDown, old.Start)
+	}
 }
 
 // checkRoleLocked refuses a write, hold or setting outside the client's role.
@@ -258,6 +269,9 @@ func (s *Supervisor) SetShowModeBy(origin driver.Origin, on bool) error {
 	}
 	s.mu.Lock()
 	err := s.checkConsoleRoleLocked(origin)
+	if err == nil && !on && s.showLockedLocked() {
+		err = fmt.Errorf("%w: show mode is locked by a PIN", ErrRole)
+	}
 	s.mu.Unlock()
 	if err != nil {
 		return err

@@ -179,7 +179,7 @@ func changeIn(m stateJSON, kind string, index int, field string) *changeJSON {
 // moving inputs, and a sounding Main L/R.
 func assertDemoMeters(t *testing.T, eng *Engine, fam string) {
 	t.Helper()
-	want := map[string]int{familyX32: 34, familyXAir: 18}[fam]
+	want := map[string]int{familyX32: 50, familyXAir: 28}[fam] // v0.5: bus meters between the inputs and Main L/R
 	a := eng.MeterFrame()
 	time.Sleep(300 * time.Millisecond)
 	synctest.Wait()
@@ -193,6 +193,12 @@ func assertDemoMeters(t *testing.T, eng *Engine, fam string) {
 	moved := false
 	for i := range n - 2 {
 		moved = moved || lv(a, i) != lv(b, i)
+	}
+	busFirst := map[string]int{familyX32: 32, familyXAir: 16}[fam]
+	for bus := range 6 { // the six monitor mixes carry the band: their meters move (v0.5, CC-13)
+		if l := lv(b, busFirst+bus); l < -60 || l > 0 {
+			t.Fatalf("%s bus %d meter %v dBFS", fam, bus+1, l)
+		}
 	}
 	mainL, mainR := lv(b, n-2), lv(b, n-1)
 	if !moved || mainL < -40 || mainL > 0 || mainR < -40 || mainR > 0 {
@@ -500,8 +506,9 @@ func assertDemoHeadamps(t *testing.T, st stateJSON, fam string) {
 	}
 }
 
-// A demo session goes through the same safety path as a console: the slip
-// guard stops a fader at its wall, a Gain drag stops at its cap.
+// A demo session goes through the same safety path as a console: a fader
+// push is never stopped (v0.5, the slip guard is retired), a Gain hold's
+// window is the headamp's range and one write moves at most 6 dB.
 func assertDemoSafetyPath(t *testing.T, d *demoEnv) {
 	t.Helper()
 	gesture := func(typ, param, extra string) gestureResultJSON {
@@ -514,23 +521,23 @@ func assertDemoSafetyPath(t *testing.T, d *demoEnv) {
 		return r
 	}
 	hold := gesture("holdBegin", demoVox1Fader, "")
-	if hold.Window == nil || hold.Window.WallUpDB == nil {
-		t.Fatalf("fader window %+v: slipGuard must apply to the demo", hold.Window)
+	if hold.Window == nil {
+		t.Fatalf("fader window %+v", hold.Window)
 	}
-	if r := gesture("set", demoVox1Fader, `,"value":10`); r.State != "atWall" || r.Value.(float64) != *hold.Window.WallUpDB {
-		t.Fatalf("fader +10 dB in a slip-guard hold: %+v, want atWall at %v", r, *hold.Window.WallUpDB)
+	if r := gesture("set", demoVox1Fader, `,"value":10`); r.State != "free" || r.Value.(float64) != 10 {
+		t.Fatalf("fader +10 dB in a hold: %+v, want free at +10 (no wall since v0.5)", r)
 	}
 	gesture("holdEnd", demoVox1Fader, "")
-	if g := gesture("holdBegin", demoVox1Gain, ""); g.Window == nil || g.Window.CapUpDB == nil || *g.Window.CapUpDB != demoVox1DB+3 {
-		t.Fatalf("Gain window %+v", g.Window)
+	if g := gesture("holdBegin", demoVox1Gain, ""); g.Window == nil || g.Window.CapUpDB == nil || *g.Window.CapUpDB != 59.5 {
+		t.Fatalf("Gain window %+v, want the headamp's range up to +59.5", g.Window)
 	}
-	if r := gesture("set", demoVox1Gain, `,"value":59`); r.State != "atCap" || r.Value.(float64) != demoVox1DB+3 || !r.Written {
-		t.Fatalf("Gain drag to +59 dB: %+v, want atCap at +%v", r, demoVox1DB+3)
+	if r := gesture("set", demoVox1Gain, `,"value":59`); r.State != "free" || r.Value.(float64) != demoVox1DB+6 || !r.Written {
+		t.Fatalf("Gain candidate +59 dB: %+v, want +%v (6 dB from the previous write)", r, demoVox1DB+6)
 	}
 	gesture("holdEnd", demoVox1Gain, "")
 	time.Sleep(echoWait)
 	synctest.Wait()
-	if c := findChange(d.rec.all(), "headamp", 10, "gain"); c == nil || c.Value.(float64) != demoVox1DB+3 {
+	if c := findChange(d.rec.all(), "headamp", 10, "gain"); c == nil || c.Value.(float64) != demoVox1DB+6 {
 		t.Fatalf("Gain echo %+v", c)
 	}
 }

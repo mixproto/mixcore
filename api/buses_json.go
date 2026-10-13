@@ -31,6 +31,9 @@ type outputJSON struct {
 	Mute    bool   `json:"mute"`
 	Linked  *bool  `json:"linked,omitempty"`  // the odd bus of a linkable pair
 	SendPan bool   `json:"sendPan,omitempty"` // buses only: inputs have a send pan into it (with sendFields.pan)
+	// MeterIndex: v0.5, buses only: the level of its meter in the meter
+	// frame (CC-13); absent when the frame has none for it.
+	MeterIndex *int `json:"meterIndex,omitempty"`
 }
 
 // sendJSON is one send of an input strip.
@@ -65,7 +68,7 @@ func colourJSON(st model.State, ref model.StripRef) string {
 
 // busesJSON lists the buses with their kind and, on the odd bus of a
 // linkable pair, the link.
-func busesJSON(st model.State) []outputJSON {
+func busesJSON(st model.State, c model.Capabilities) []outputJSON {
 	infos := st.BusInfos()
 	out := make([]outputJSON, 0, len(infos))
 	for i, b := range st.Buses() {
@@ -74,6 +77,10 @@ func busesJSON(st model.State) []outputJSON {
 		if v, ok := st.Value(model.ParamRef{Strip: b.Ref, Field: model.FieldLinked}); ok {
 			on, _ := v.Bool()
 			j.Linked = &on
+		}
+		if n := b.Ref.Index; n >= 1 && n <= c.BusMeters {
+			level := c.BusMeterFirst + n - 1
+			j.MeterIndex = &level
 		}
 		out = append(out, j)
 	}

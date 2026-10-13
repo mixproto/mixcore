@@ -41,6 +41,7 @@ func (s *session) onTick(now time.Time) error {
 		s.sendSub(addrXinfo) // a read, never a write
 		s.live.lastProbe = now
 	}
+	s.settleTick(now)
 	s.expireUnechoed(now)
 	s.sceneTick(now)
 	s.rereadDue(now)

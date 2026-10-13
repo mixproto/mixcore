@@ -240,10 +240,10 @@ func TestMeters_Bank1PublishedInDBFS(t *testing.T) {
 		}
 		time.Sleep(time.Second)
 		var fr meters.Frame
-		if !r.slot.CopyLatest(&fr) || fr.Count != 18 {
-			t.Fatalf("frame count %d, want 18", fr.Count)
+		if !r.slot.CopyLatest(&fr) || fr.Count != 28 { // 16 inputs, 10 buses (v0.5), Main L/R
+			t.Fatalf("frame count %d, want 28", fr.Count)
 		}
-		want := map[int]float64{0: 0, 1: -18, 2: math.Inf(-1), 3: 1, 4: math.Inf(-1), 15: math.Inf(-1), 16: -1, 17: -6}
+		want := map[int]float64{0: 0, 1: -18, 2: math.Inf(-1), 3: 1, 4: math.Inf(-1), 15: math.Inf(-1), 26: -1, 27: -6}
 		for i, w := range want {
 			if got := float64(fr.Levels[i]); got != w {
 				t.Errorf("level %d = %v, want %v", i, got, w)
@@ -279,6 +279,7 @@ func wantHeadamps(n int) []model.HeadampInfo {
 func wantCapabilities() model.Capabilities {
 	return model.Capabilities{Headamps: wantHeadamps(16), InputCount: 16, HasMain: true, MuteGroups: 4, DCAs: 4, MainMuteGroups: false,
 		InputMeters: true, EchoesOwnWrites: true, MaxPushClients: 8, Buses: wantBuses(), FaderSteps: 1023, SendLevelSteps: 160, EchoWindow: DefaultTiming.EchoWindow,
+		BusMeterFirst: 16, BusMeters: 10, // core-api v0.5, CC-13
 		TapLabels: [model.TapCount]string{"IN", "PREEQ", "POSTEQ", "PRE", "POST", "GRP"}}
 }
 

@@ -54,7 +54,7 @@ func TestABI_DemoMixer(t *testing.T) {
 		t.Fatalf("MixApply = %d", code)
 	}
 	waitFor(t, "the echo", func() bool { return anyContains(demoStateCtx, `"clientId":"abi-demo"`) })
-	waitFor(t, "an xair meter frame", func() bool { b, _ := testMeterFrame(536); return len(b) == 24+18*4 })
+	waitFor(t, "an xair meter frame", func() bool { b, _ := testMeterFrame(536); return len(b) == 24+28*4 }) // v0.5: 16 inputs, 10 bus meters, Main L/R
 	if code := MixStopDemo(); code != 0 {
 		t.Fatalf("MixStopDemo = %d", code)
 	}

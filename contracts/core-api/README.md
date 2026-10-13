@@ -1,4 +1,4 @@
-# mixcore core API, contract v0.4
+# mixcore core API, contract v0.5
 
 The in-process API that every app uses to drive a console (`api.Engine` in Go; the `mobile` gomobile wrapper and the
 `capi` c-shared wrapper expose the same calls). Structured data crosses the boundary as JSON strings (schemas in this
@@ -70,11 +70,12 @@ behave the same and a UI bug cannot bypass them:
 
   The wire maximum (`maxDB`, f = 1.0) is read but never written until hardware confirms it (xair.md item 22, x32.md
   item 17; XS10 avoids it): each entry's `writeMaxDB` is the top a write may reach (+59.5 mic, +19.5 line); a set above
-  it is `ERR_INVALID_VALUE`, and a Gain gesture's cap stops there. Rule (lead decision, review pass 4): if hardware
-  (x32.md item 17, xair.md item 22) shows that a family does not echo Gain writes, that family's Gain becomes read-only
-  (`writable: false`): the in-flight bound would otherwise rest on re-reads alone. Until then, on a console that does
-  not echo Gain, a hold that has 8 values in flight stops at `atCap` in both directions, lowerings included, until the
-  next re-read ends them (intended: the core cannot know where the console is; lift and drag again after the re-read).
+  it is `ERR_INVALID_VALUE`, and a Gain hold's window ends there (`atCap`, v0.5). Rule (lead decision, review pass 4): if
+  hardware (x32.md item 17, xair.md item 22) shows that a family does not echo Gain writes, that family's Gain becomes
+  read-only (`writable: false`): the in-flight bound would otherwise rest on re-reads alone. v0.4: on a console that does
+  not echo Gain, a hold that had 8 values in flight stopped at `atCap` until the next re-read. **v0.5 (CC-3)**: the
+  driver reads an unechoed Gain write back within 250 ms (the settle re-read, rule 8) and the in-flight count never
+  stops a hold, so whether the read-only rule still applies is the lead's call after the hardware session.
 
   The index is a model number, never UI text: the UI names a headamp by `bank` and `number` ("Local 1", "AES50 A 05",
   "Aux"). On x32 an input's `headamp` field says which headamp feeds it (`null`: none, the channel has no Gain); xair
@@ -128,8 +129,40 @@ Rules of v0.4:
   xair.md "Background re-read"). Pushes still carry every change at once.
 - **Ceilings for sends** (lead decision OQ 68): an engineer's send (or fader) at `-inf` counts as -60 dB, so a seat's
   `+1` from `-inf` reaches -60 dB (AC-MV-16) and the ceiling is -60 dB + headroom (rule 11).
-- **Bus meters** (AC-SF-12, the bus master meter) are not in the meter frame yet: the frame rule "Main L/R are the last two
-  levels" would break. Follow-up with a meter-frame decision.
+- **Bus meters** (AC-SF-12, the bus master meter) arrive in v0.5 (below).
+
+**v0.5 is backwards compatible with v0.4** (the `version` field stays 0; no call, binding signature or error code
+changes; new command types, fields and events only). It implements the accepted redesign (`dybyskz-mix`
+`docs/design/redesign/` `fader-and-gain.md` 15, CC-1 to CC-13; `phone-safety.md` revision 3, SR-27 to SR-36, CR-22 to
+CR-33; acceptance `AC-RD-*`) under one rule: **during a show no live control refuses or stalls a deliberate move**.
+Safety comes from the input rules, showing what changed, and Undo. Three v0.3 behaviours change while the schemas stay
+valid (CC-1 to CC-3); a v0.4 app keeps working, it just never meets a wall or a +3 dB Gain cap again.
+
+| Area | Change | Ref |
+|---|---|---|
+| Slip guard (deprecated) | config `safety.slipGuard` and command `setSlipGuard` are accepted and ignored; `openWall` is `ERR_UNSUPPORTED`; the gesture state `atWall` and the window's `wallUpDB` are never sent, `opensByRest` is always false. **All of it is removed in v0.6** | CC-1, SR-26 retired |
+| Gain window | a Gain hold's window is the headamp's range: `capDownDB` = `minDB`, `capUpDB` = `writeMaxDB` (never below the start); `atCap` only at a range end. The stroke is bounded by the UI's frame rule (SR-32); the core needs no stroke cap | CC-2, SR-24 retired |
+| Gain inside a hold | each write within 6 dB of the previous write of the same hold (the first from the start); no in-flight count limit inside a hold; a settle re-read of an unechoed Gain write within 250 ms; a report that matches one of the drag's own writes never ends the hold, and one that matches an earlier write never moves the state back (rule 8) | CC-3, SR-31 |
+| Show mode | the 20 s idle relock pauses while a Gain hold is open on that headamp and restarts at release; `unlock` follows a one-tap `Adjust`, no minimum hold | CC-4, SR-27 |
+| Typed raises | `ERR_NEEDS_CONFIRM` for a typed raise over 6 dB on every level: channel, main, bus and DCA faders, send levels and Gain (Trim is not modelled) | CC-5, SR-30 |
+| Undo | command `undo` (and `confirmed`); state `undo`: the newest entry per client with what an undo of it would ask (rule 14) | CC-6, CC-9, SR-13, SR-29 |
+| Cancel a held move | command `cancelHold`: one write of the grab value, the hold ends, no history entry (rule 14) | CC-9, AC-RD-U04 |
+| Favourites | config `favourites`, command `setFavourites`, state `favourites`: one ordered user layer per console (strip refs, at most 32); never written to the console (rule 17) | CC-7, D-23 |
+| Scene recall | `sceneRecalledAtConsole` gains `sceneNumber` (the loaded scene when the console reports one: xair) and `sceneName` (when the core knows it: no family yet, the name read waits for a lead decision; the core cleans any name to at most 64 runes without control, format or separator characters); the undo history is cut at it | CC-10, SR-34 |
+| Watch | command `watch` names the bus on screen; event `externalChangeInScope` when anyone else changes it (rule 15) | CC-11, SR-34 |
+| Show mode PIN | commands `lockShowMode` and `unlockShowMode` with a 4-digit `pin`; config `safety.showModeLock`; state `showModeLocked`; the `Gesture` result of `lockShowMode` carries the hashed `pinRecord` to store (rule 16) | CC-12, CR-31 |
+| Bus meters | the meter frame carries the bus meters between the inputs and Main L/R (Main stays last); snapshot `buses[].meterIndex` (`meter-frame.md`) | CC-13, CR-32 |
+| Fixtures | `fixtures/gesture-paths.json`: the slip-guard paths P9 and P10 are gone; Gain wheel paths G1 to G4 (frame rule, off-frame, longest stroke, edge swipes) added | CC-8 |
+
+Rules of v0.5 (numbered rules below are amended in place):
+- **No wall, no cap inside the range.** A deliberate fader push goes to +10 dB and a Gain stroke to the headamp's
+  `writeMaxDB` without a stop (AC-RD-F01, AC-RD-G01, AC-RD-G04). The only stops left are a control's range end
+  (`atCap` on Gain), a monitor ceiling (`atCeiling`), show mode (`locked`), stale and an external change.
+- **Every Gain write is still bounded** (SR-31): outside a hold by 6 dB from the console value and every value in flight
+  (at most 8, the ninth is `ERR_GAIN_BOUND`), inside a hold by 6 dB from the previous write of the hold; only typed entry
+  (after `confirmed`), a confirmed undo and scene recall move further.
+- **Deprecated in v0.5, removed in v0.6:** `safety.slipGuard`, `setSlipGuard`, `openWall`, `atWall`, `wallUpDB` and
+  `opensByRest`. The `set` flag `undo` stays (an app-made undo, rule 10); the core's own `undo` command is preferred.
 
 ## Calls
 
@@ -143,7 +176,7 @@ Rules of v0.4:
 | `SetStateListener(l)` | `StateListener` with `OnState(stateJSON string)` | | no. The next message is a full snapshot |
 | `RequestSnapshot()` | | | **no**: the next listener message is a full snapshot |
 | `Apply(commandJSON)` | `command.schema.json` | error code | **no**: validates and hands the write to the session goroutine; never waits on the network |
-| `Gesture(commandJSON)` (v0.3) | `command.schema.json` | `gesture-result.schema.json`, or an error code | **no**: the same command and rules as `Apply`; answers what the core applied (value, `free` / `atWall` / `atCap` / `atCeiling` / `locked`, window) so the UI draws it and plays the haptic |
+| `Gesture(commandJSON)` (v0.3) | `command.schema.json` | `gesture-result.schema.json`, or an error code | **no**: the same command and rules as `Apply`; answers what the core applied (value, `free` / `atCap` / `atCeiling` / `locked`, window) so the UI draws it and plays the haptic. v0.5: `lockShowMode` answers the `pinRecord` to store (rule 16). `lockShowMode` and `unlockShowMode` hash the PIN on the calling thread (about 10 ms on a phone) |
 | `MeterFrame()` | | bytes, `meter-frame.md` | **never blocks**: copies the newest frame under a lock that is never held across I/O |
 | `FaderPosition(db)` | dB (`-inf` allowed) | position 0..1 | **never blocks**: pure function of the family's fader law |
 | `FaderDB(position)` | position 0..1 | dB (`-inf` at 0) | **never blocks**: pure |
@@ -195,6 +228,15 @@ Rules of v0.4:
    change, whether or not that fader's own update has arrived yet. A report of the value the state already has (for
    example the core's re-read of an unchanged Gain) is not a change and never ends a hold; nor is the core's re-read of
    the last Gain value it sent (on a console that does not echo Gain it updates the state, but it is our own write).
+   v0.5 (CC-3, review blockers 1 and 2): only two kinds of Gain report can be the drag's own write: the holding
+   client's own echo (its origin) and the core's authoritative read-back (the settle re-read). Such a report that
+   matches (within half a step of the headamp's law) the hold's last write or a value of ours still in flight never
+   ends the hold. The holder's late echo of an earlier write is not published (the shown value never moves back
+   mid-drag); a read-back always is (it is the console's value). Everything else ends the hold as
+   `externalChangeOnHeld`, also when its value matches one of ours: the desk, a scene recall, another client's echo.
+   One finger per preamp: a `holdBegin` on a headamp's Gain that another client holds ends that client's hold
+   (`externalChangeOnHeld`, SR-15). **For UIs:** touching a Gain control takes that preamp away from another device
+   that is holding it; that device shows "Changed at the mixer" and its finger must lift and grab again.
 5. Echo: a diff caused by the app's own write carries the write's origin (`kind`, `clientId`, `seq`), so the UI can tell
    its own echo from a change made at the desk. A write of another client (another `clientId` through the same engine,
    or a MixLink client) carries that client's origin and is an external change for everyone else's holds.
@@ -209,15 +251,13 @@ Rules of v0.4:
 7. **Gesture window (v0.3, CR-22).** `holdBegin` opens a window for that client and parameter; every `set` of that
    client on that parameter until `holdEnd` is a candidate the core clamps, so no value ever moves past the window in
    one write, whatever the UI computed:
-   - **Slip guard** (faders, when `slipGuard` is on for the client, SR-26): the value stops at `max(start, -16) + 6` dB
-     (from `-inf` the first stop is -10 dB); downward is never stopped. After the UI measured a 300 ms rest at the wall it
-     sends `openWall`: accepted only after the finger has been still at the wall for 300 ms (`wall.dwell`, checked in the
-     core). Still means the candidates stay within 9 pt of the track (`wall.restSpeed` 30 pt/s x 300 ms, phone-safety.md
-     4.1) when `holdBegin` carried `trackLengthPt` (50..10000 pt) and that is smaller than 2 dB of fader travel below the
-     wall, else within those 2 dB; a larger move restarts
-     the 300 ms, and earlier the result stays `atWall`. The core re-anchors (the next upward move
-     continues from the wall value, no jump) and sets the next wall 6 dB higher. Show mode never changes it.
-   - **Gain caps** (headamp gain, every client, SR-24): `[start - 6, start + 3]` dB within the range; never opens.
+   - **Slip guard**: retired in v0.5 (CC-1, SR-26). `slipGuard` and `setSlipGuard` are ignored, `openWall` is
+     `ERR_UNSUPPORTED`, no window has a wall and `atWall` is never sent. A fader, send, bus or DCA window has only the
+     monitor ceiling below.
+   - **Gain range** (headamp gain, every client; v0.5, CC-2): `[minDB, writeMaxDB]` of the headamp's own law, never
+     below the start (a grab above `writeMaxDB` never writes down); `atCap` only there. The v0.3 caps `[start - 6,
+     start + 3]` are gone: the UI's wheel bounds a stroke by its frame (SR-32). Inside the range each write is bounded by
+     rule 8.
    - **Monitor ceiling** (`safety.monitorCeiling`, SR-28): every fader write of this engine (channel, bus, main; a
      musician's `My level` is the bus fader) and, since v0.4, every send-level write stops at the engineer's latest
      value + headroom, and never below that value; it never opens and we never lower a value to meet it. A `monitor`
@@ -226,25 +266,42 @@ Rules of v0.4:
    Typed entry (`typed`), steps and nudges outside a hold are not windowed (the ceiling and the Gain bound still apply).
 8. **Gain bound (CR-23, SR-31).** No Gain write moves more than 6 dB from the console's current value, whatever sent it
    (gesture, stepper, undo, macro, another client through the same core): `ERR_GAIN_BOUND`. Only `typed` (after
-   `confirmed` for a raise over 6 dB) may move further; scene recall happens at the console and is never refused.
+   `confirmed` for a raise over 6 dB) and a confirmed `undo` (rule 14) may move further; scene recall happens at the
+   console and is never refused.
+   **Inside a hold (v0.5, CC-3)** the first write is bounded like a write outside a hold, against the console value and
+   every value in flight (`fader-and-gain.md` 15: "the first from the console value"); every later one against the
+   value the hold wrote last and the latest value any client sent. When no value is within 6 dB of all of them (the
+   values in flight span more than 12 dB), a `set` in a hold writes nothing (`written: false`, `value` is the hold's
+   start, the hold stays open) until the settle re-read brings them together (review re-check, lead decision). The hold's start (`startDB`) is the latest value of
+   ours still in flight, where the console is going, else the console value. A candidate further than 6 dB is moved to 6 dB from
+   it (state `free`, `value` says where; at 1 dB per 48 pt a finger never asks for it). The in-flight count of the next
+   paragraph never refuses or stalls a hold: values in flight are kept per console step (at most one per step of the
+   headamp's grid), so a drag at 40 dB/s is written step by step. On a console that did not echo a Gain write the driver
+   re-reads that headamp at most 250 ms after the last write of a burst (the **settle re-read**, x32 and xair: 100 ms
+   after the last write, checked every 100 ms); its reply ends every value in flight (rule 4 says how it is matched).
+   Outside a hold this rule is unchanged:
    A Gain value outside the console's range is `ERR_INVALID_VALUE`, never clamped. The bound also holds against every
    Gain value in flight: each value sent that no console report has matched yet (at most 8 per headamp; a ninth is
    `ERR_GAIN_BOUND`, but inside a hold the candidate stays at the latest value sent with state `atCap` and no write,
    never an error mid-drag). Show mode's raise check uses the lowest of the console value and those values. There is no
-   timer, because Gain echo is unverified (X32-F79, XA-F116): a report within half a step of an in-flight value ends
+   timer, because Gain echo is unverified (X32-F79, XA-F116) (v0.5: the settle re-read above ends them within 250 ms): a report within half a step of an in-flight value ends
    that value; any other report only updates the console value; the core's own re-read of a Gain it wrote ends them
    all; stale, a reconnect, Stop, Pause or a failed send end them too. A set of the console value while other values
    are in flight is sent, never skipped; a set is skipped (`written: false`) only when it repeats the latest value
    sent, no report of that parameter arrived since, and less than an echo window (2 s) has passed: a drag held at a cap
    on a console that does not echo sends the cap once, while a return to an earlier value or the same value after a
    report is sent.
-9. **Typed raises (CR-26, SR-30).** A `typed` set that raises a fader or Gain by more than 6 dB from the console value
+9. **Typed raises (CR-26, SR-30).** A `typed` set that raises a level by more than 6 dB from the console value
    returns `ERR_NEEDS_CONFIRM` unless `confirmed`; the UI shows `Raise ... from {from} to {to}?` and resends with
-   `confirmed: true`. Lowering never asks.
+   `confirmed: true`. Lowering never asks. v0.5 (CC-5): every level, the same rule: input, main, bus and DCA faders,
+   send levels (`sendLevel`) and Gain; from `-inf` every typed value is a raise of more than 6 dB. Only a person types
+   (`typed` needs origin kind `gesture`).
 10. **Show mode (CR-24, SR-27).** `setShowMode` writes nothing. While on, raising Gain is `ERR_SHOW_MODE` (lowering stays
-    live, also inside a hold: the window stops at the start with state `locked`). `unlock` (after the UI's 1 s hold)
-    allows raising Gain on that headamp until `relock`, 20 s without a command on it, stale, pause or stop
-    (event `gainUnlockEnded`). For 10 s after the relock an `undo` set may raise Gain on that headamp, but only back
+    live, also inside a hold: the window stops at the start with state `locked`). `unlock` (v0.5: after a one-tap `Adjust`,
+    no hold) allows raising Gain on that headamp until `relock`, 20 s without a command on it, stale, pause or stop
+    (event `gainUnlockEnded`). v0.5 (CC-4): the 20 s never run out while a Gain hold on that headamp is open; they
+    start again when it ends, so closing never ends a stroke in progress. While show mode is locked by a PIN (rule 16)
+    `unlock` and `setShowMode` `false` are `ERR_ROLE`. For 10 s after the relock an `undo` set may raise Gain on that headamp, but only back
     to a value Gain had before an entry of that unlock (within half a step of that headamp's law: the start of the hold, else the value in
     flight, else the console value); any other raise is `ERR_SHOW_MODE`.
     Show mode survives reconnects; the UI restores it at `Start` from `safety.showMode`. Future gates (no such command
@@ -277,13 +334,14 @@ Rules of v0.4:
     one engine (one `Start`). The core does not authenticate `clientId`: any caller of the engine may name any id.
     Until the hub binds each `clientId` to a paired session (hub requirement, ADR-0008), these are per-device rules,
     not per-person ones; two apps on two devices connected directly to one console each have their own show mode.
-13. **Roles (v0.4, invariant 4, SR-09).** Every write, toggle, hold-begin, `openWall`, `unlock`, `relock` and
-    `setShowMode` is checked against the role of its `clientId` in the core's session layer (`console.Supervisor`), so
+13. **Roles (v0.4, invariant 4, SR-09).** Every write, toggle, hold-begin, `unlock`, `relock`, `setShowMode`, and
+    since v0.5 `undo`, `cancelHold`, `lockShowMode` and `unlockShowMode`, is checked against the role of its `clientId` in the core's session layer (`console.Supervisor`), so
     a UI bug cannot write outside a musician's mix: `ERR_ROLE`, nothing written. The role comes from config `role` for
     every client of the engine; the hub sets one per paired device (Go `Supervisor.SetClientRole`), and a role change
     applies at once: holds the new role does not allow end with `holdCancelled`, reason `role`. A `monitor` writes
     `sendLevel`, `sendOn`, `sendPan` into its buses and the `fader` and `mute` of those buses, nothing else; a `viewer`
-    writes nothing; `holdEnd` and `setSlipGuard` (this device only) are always allowed. The writes of a monitor role
+    writes nothing; `holdEnd`, `setSlipGuard` (ignored), and since v0.5 `watch` and `setFavourites` (this device only)
+    are always allowed. An `undo` or `cancelHold` writes only what the role may write. The writes of a monitor role
     (or of a client with `safety.monitorCeiling`) never move the engineer's latest value of the ceiling (rule 11).
     Reads are not filtered by the in-process API; the hub must filter what it sends to each device.
     Pairs and FX (review Sec M2, Sec L3): a write that acts on both buses of a pair needs both buses in the role, else
@@ -297,7 +355,70 @@ Rules of v0.4:
     message, viewer by default for a paired device (the config's default, owner, is only for the device user on a
     direct connection); on revoke it sets the client to viewer (ending its holds) before closing its sockets; it uses
     `SetShowModeBy` for a client's show-mode request. `SetShowMode` and `SetClientSafety` are unchecked, owner-only Go
-    internals that the hub never exposes to a device.
+    internals that the hub never exposes to a device. v0.5 (review sec L4, L5): the state carries every client's
+    newest `undo` entry, every client's `favourites` layer and every client's `externalChangeInScope` events; the hub
+    sends each device only its own (by its `clientId`) and the default favourites layer, and caps `watch` per
+    authenticated device (one scope each; the core keeps at most 64 watches and 64 favourites layers).
+
+14. **Undo in the core (v0.5, CC-6, CC-9, SR-13, SR-29).** The core keeps an undo history per `clientId` (newest last,
+    64 entries per client, the oldest dropped; 64 clients, the one whose newest entry is oldest dropped). Entries:
+    - a hold that wrote: one entry from its start (the grab value) to the last value it wrote, made when the hold ends
+      (`holdEnd`, an external change, stale, a role change);
+    - a `set` outside a hold: one entry from the console value before it to the value written; non-typed sets of one
+      parameter by one client less than 1 s apart merge into one entry (the `-1` / `+1` steppers);
+    - a `toggle`: one entry.
+    Fields: `fader`, `gain`, `sendLevel` (kind `level`), `mute`, `sendOn` (kind `switch`), `sendPan` (kind `pan`). Names,
+    cancelled holds (`cancelHold`) and undos make no entry.
+    `undo` (no param) writes the `from` of that client's newest entry once and removes the entry. It asks first
+    (`ERR_NEEDS_CONFIRM`, nothing written) unless it carries `confirmed: true`, when any of these holds:
+    `unmute` (it sets `mute` false or `sendOn` true), `raiseOver6dB` (it raises a level more than 6 dB above the console
+    value), `raiseAfterRecentLower` (it raises a level the entry lowered less than 30 s ago: the feedback pull-down),
+    `conflict` (the console value is no longer the entry's `to`: changed elsewhere), `beforeSceneRecall` (a scene
+    recall at the console came after the entry: the history is cut there) and `gainOver6dB` (it moves Gain more than
+    6 dB either way, SR-31). There is no age rule. A confirmed undo is exempt from the Gain bound like a confirmed typed
+    entry; the role, stale, the monitor ceiling and show mode (with its undo grace) still apply. Nothing to undo:
+    `ERR_UNSUPPORTED`; the client holds that parameter: `ERR_INVALID_COMMAND` (send `cancelHold`).
+    State `undo` (every message, snapshot or diff, while a client has an entry): per client its newest entry
+    `{clientId, param, kind, from, to, delta, direction, asks, scene}`, `direction` the way the change went (`up`,
+    `down`, `none` for switches and pans), `asks` the flags above as of that message, `scene` the recall that cut it
+    (`number`, `name` when known). The core sends a new message whenever they change (a console change, a recall, the
+    30 s running out); an `undo` checks them again when it runs.
+    `cancelHold` (param of this client's open hold): if the hold wrote, one write of its start, which is exempt from the
+    window and show mode (it is never above the value the console had at `holdBegin`). For Gain a cancel that lowers back
+    to the grab value is always written, however far the drag went (the safe direction is never refused in a feedback
+    emergency); one that would raise Gain more than 6 dB above the hold's last write is `ERR_GAIN_BOUND` and the hold
+    stays open (lead decision, review nit 7). The hold then ends like an external change: a
+    further `set` of it is `ERR_GESTURE_ENDED` until `holdBegin` or `holdEnd`. No history entry. Not live: `ERR_STALE`;
+    no open hold: `ERR_UNSUPPORTED` (`ERR_GESTURE_ENDED` when it already ended).
+15. **Watch (v0.5, CC-11, SR-34).** `watch` with `scope: {"bus": n}` names the bus this client shows (sends mode, bus
+    detail, monitor view); `watch` without `scope` clears it (one scope per client, 64 clients). A change in scope
+    (a send of any input into bus n: level, on, pan, tap; bus n's fader, mute, name, colour; the same of its partner
+    while the pair is linked) that this client did not make (the desk, a scene recall, another client, a re-read that
+    found a lost push; never this client's own echo or Gain settle) is counted, and the event
+    `externalChangeInScope {clientId, scope, count}` reports it: at once for the first change, then at most once per 2 s
+    while changes continue (`count` = changes since the previous event). The UI shows `Mon 2 changed at the mixer` at most
+    once per 10 s. It never writes.
+16. **Show mode locked by a PIN (v0.5, CC-12, CR-31).** `lockShowMode` with `pin` (exactly 4 ASCII digits) is for the
+    `owner` role only (`ERR_ROLE` otherwise, and while already locked); it turns show mode on and locks it. The `Gesture`
+    result of `lockShowMode` carries `pinRecord`: the app stores it with the console's settings and passes it back in
+    config `safety.showModeLock.pinRecord` at every `Start`. The record is a salted PBKDF2-SHA256 hash; the PIN itself is
+    never stored, logged or sent in a state message, and the record never appears in one either. While locked the state
+    says `showModeLocked: true`, `setShowMode` `false` and `unlock` are `ERR_ROLE`, and every live control (faders,
+    mutes, sends, lowering Gain) is unchanged. `unlockShowMode` with the right PIN (owner or engineer) unlocks; show mode
+    stays on until `setShowMode` `false`. A wrong PIN is `ERR_ROLE`. Online guessing is bounded (review security M1, go
+    S5, sec L3): an attempt is reserved before the PIN is hashed and only one hash runs at a time (`ERR_ROLE` while one
+    does); 5 wrong PINs of one client, or 10 of all clients together, lock attempts out for 30 s, then 60 s, 120 s, ...
+    at most 10 minutes; the owner is never held by a lockout other clients caused. Locking ends every Gain unlock (event
+    `gainUnlockEnded`, reason `showModeLocked`) and its undo grace (review sec M2). `Apply` of `lockShowMode` drops the
+    record: only `Gesture` returns it. A 4-digit PIN cannot resist an offline guess of the record: the app keeps it in
+    protected storage (Keychain, Keystore, DPAPI).
+17. **Favourites (v0.5, CC-7, D-23).** `setFavourites` with `favourites`, an ordered list of strip refs (`input`, `main`,
+    `bus`, `dca`, `matrix`; index at most 128; each once; at most 32), replaces the favourites layer of the command's
+    `clientId` (per device, review sec L4); any role may set it. Config `favourites` is the default layer of every
+    client without its own, restored at `Start`. State `favourites` lists the layers (`{clientId?, strips}`: the default
+    without `clientId` first, then each client's, at most 64) in every snapshot that has one and in the first message
+    after a change. It is never written to the console. A ref the console does not
+    have stays in the list; the UI shows only strips the snapshot has.
 
 ## Error codes
 `Apply`, `Start`, `Stop`, `Pause`, `Resume` and `RequestSnapshot` return an error whose message is exactly one of
@@ -306,20 +427,20 @@ these codes (details go to the log, never to the user):
 | Code | Meaning |
 |---|---|
 | `ERR_INVALID_CONFIG` | config JSON malformed, unknown family, bad host or port |
-| `ERR_INVALID_COMMAND` | command JSON malformed, wrong version, unknown type/field, value of the wrong type |
+| `ERR_INVALID_COMMAND` | command JSON malformed, wrong version, unknown type/field, value of the wrong type; v0.5: `undo` of a parameter the client holds (send `cancelHold`), a PIN that is not 4 digits |
 | `ERR_INVALID_VALUE` | value outside what the console accepts (x32 and xair: a name longer than 12 characters or not printable ASCII) |
 | `ERR_NOT_USER_ORIGIN` | origin kind is not `gesture` or `macro` |
 | `ERR_STALE` | not live: connecting, stale, limited (v0.1), paused or stopped |
 | `ERR_GESTURE_ENDED` | the hold this write belongs to was ended by an external change or cancelled by a connection loss; send `holdBegin` again |
-| `ERR_UNSUPPORTED` | the console has no such parameter, or hold on a non-fader field |
+| `ERR_UNSUPPORTED` | the console has no such parameter, or hold on a non-fader field; v0.5: `openWall` (slip guard retired), `undo` with nothing to undo, `cancelHold` without an open hold |
 | `ERR_NOT_STARTED` | call needs `Start` first |
 | `ERR_ALREADY_STARTED` | `Start` while started |
 | `ERR_INTERNAL` | a bug; recovered panic |
-| `ERR_ROLE` | v0.4: the role of the command's client does not allow it (config `role`, rule 13); nothing was written |
+| `ERR_ROLE` | v0.4: the role of the command's client does not allow it (config `role`, rule 13); nothing was written. v0.5: show mode locked by a PIN (rule 16): `setShowMode` false, `unlock`, a wrong PIN, 30 s after 5 wrong PINs |
 | `ERR_BUSY` | `Discover` while a probe is running; v0.3: `Stop`, `Pause` or `StopDemo` called from inside `OnState` (nothing changed; call again from the app's thread) |
 | `ERR_NETWORK` | discovery result: no socket could be opened or every probe send was refused (e.g. Local Network access denied); `StartDemo`: the loopback socket could not be opened |
 | `ERR_INVALID_ARGUMENT` | C binding only: a NULL pointer or a negative length from native code |
-| `ERR_NEEDS_CONFIRM` | v0.3: a `typed` raise of more than 6 dB without `confirmed` (CR-26); nothing was written |
+| `ERR_NEEDS_CONFIRM` | v0.3: a `typed` raise of more than 6 dB without `confirmed` (CR-26); v0.5: on every level, and an `undo` that asks (rule 14, the reasons are the state's `undo` `asks`); nothing was written |
 | `ERR_SHOW_MODE` | v0.3: show mode locks this write (raising Gain without an unlock, CR-24); nothing was written |
 | `ERR_GAIN_BOUND` | v0.3: a Gain write more than 6 dB from the console value without `typed` (CR-23); nothing was written |
 
@@ -327,7 +448,7 @@ these codes (details go to the log, never to the user):
 
 Both bindings expose the calls above and nothing else; behaviour is identical because both only translate types.
 
-Both bindings are unchanged by v0.2: the family is a string inside the config JSON, the meter frame carries its own `n`. v0.3 adds `Gesture`, `StartDemo` and `StopDemo`, and three error codes to both. v0.4 changes no binding: buses, sends and roles travel in the JSON, and `ERR_ROLE` (`MobileErrRole`, `Mobile.ErrRole`, `MIX_ERR_ROLE`) already existed.
+Both bindings are unchanged by v0.2: the family is a string inside the config JSON, the meter frame carries its own `n`. v0.3 adds `Gesture`, `StartDemo` and `StopDemo`, and three error codes to both. v0.4 changes no binding: buses, sends and roles travel in the JSON, and `ERR_ROLE` (`MobileErrRole`, `Mobile.ErrRole`, `MIX_ERR_ROLE`) already existed. v0.5 changes no binding either: `undo`, `cancelHold`, `watch`, `setFavourites`, `lockShowMode` and `unlockShowMode` are command types for `Apply` and `Gesture`, and every code they return already existed.
 
 **gomobile (`mobile/`, `make xcframework`, AAR by the Android build).** One package, one engine per process. Names:
 

@@ -93,10 +93,11 @@ func variantFor(p gesturePath, orientation string) pathVariant {
 
 type geometry struct {
 	orientation   string
-	track, gainAt float64
+	track, gainAt float64 // gainAt: the v0.3 Gain bar of the legacy doubles
+	wheel         float64 // the Gain wheel (SR-32)
 }
 
-var phone = []geometry{{"portrait", trackPortrait, barPortrait}, {"landscape", trackLandscape, barLandscape}}
+var phone = []geometry{{"portrait", trackPortrait, barPortrait, wheelPortrait}, {"landscape", trackLandscape, barLandscape, wheelLandscape}}
 
 // AC-PS-06: every legacy double reaches the range maximum on at least one
 // path (a on P2, b on P5, c on P4), for the fader and for Gain; our mapping
@@ -112,7 +113,7 @@ func TestTouchPaths_NegativeControl(t *testing.T) {
 		for _, g := range phone {
 			hit := map[string]bool{}
 			for _, p := range paths.Paths {
-				if p.LargeContact || strings.HasPrefix(p.ID, "P1D") || p.ID == "P8" {
+				if p.LargeContact || strings.HasPrefix(p.ID, "P1D") || p.ID == "P8" || p.Start != nil {
 					continue
 				}
 				pts := variantFor(p, g.orientation).Points
@@ -144,97 +145,99 @@ func anyGain(hit map[string]bool) bool {
 	return false
 }
 
-// AC-PS-06 (ours), AC-PS-01: through our mapping and the core, no path on
-// the fader writes above the slip-guard wall (start + 6 dB), none reaches
-// +10 dB, and holds and palms write nothing.
+// AC-PS-01 (amended 2026-10-13), AC-RD-F01: through our mapping and the
+// core, every fader write follows the finger through the fader law: P2 (a
+// deliberate push) ends at +10 dB with no stop, P1 moves 60 pt worth,
+// holds and palms write nothing, P1D falls with the finger, and no write
+// leaves the range.
 func TestTouchPaths_FaderNeverJumps(t *testing.T) {
 	paths := loadPaths(t)
-	start := -6.0
 	for _, g := range phone {
-		for _, p := range paths.Paths {
+		p0 := 0.6 // -6 dB on the x32/xair law (X32-F40, XA-F40)
+		for _, p := range onControl(paths.Paths) {
 			v := variantFor(p, g.orientation)
 			r := replay(t, ctlFader, g.track, v, p.LargeContact)
-			if p.ID == "P9" {
-				checkClimb(t, g.orientation, r)
-				continue
+			if r.stops != 0 || r.max() > 10+writeTol {
+				t.Errorf("%s %s: %d stops, highest %.2f dB", g.orientation, p.ID, r.stops, r.max())
 			}
-			if p.ID == "P10" {
-				checkTremble(t, g.orientation, r, start)
-				continue
-			}
-			if r.max() > start+6+writeTol || r.max() >= 10 {
-				t.Errorf("%s %s: wrote up to %.2f dB", g.orientation, p.ID, r.max())
-			}
-			switch p.ID {
-			case "P7", "P8":
-				if len(r.writes) != 0 {
-					t.Errorf("%s %s: %d writes, want none", g.orientation, p.ID, len(r.writes))
-				}
-			case "P4":
-				if r.firstAt >= 0 && r.firstAt < 1000 {
-					t.Errorf("%s P4: a write at %d ms, during the hold", g.orientation, r.firstAt)
-				}
-				fallthrough
-			case "P2":
-				if math.Abs(r.last()-(start+6)) > writeTol || r.walls != 1 {
-					t.Errorf("%s %s: ends at %.2f with %d wall arrivals, want the wall once", g.orientation, p.ID, r.last(), r.walls)
-				}
-			case "P1D":
-				want := 80*(0.6-60/g.track) - 50 // the finger's own value: never stopped downwards
-				if g.orientation == "landscape" {
-					want = 160*(0.6-60/g.track) - 70
-				}
-				if r.walls != 0 || math.Abs(r.last()-want) > writeTol || r.min() < want-writeTol {
-					t.Errorf("%s P1D: ends at %.2f (want %.2f), %d walls", g.orientation, r.last(), want, r.walls)
-				}
-			}
+			checkFollowsFinger(t, g, p, v, r, p0)
 		}
 	}
 }
 
-// AC-PS-02, AC-PS-03, AC-PS-05: on the Gain bar, vertical paths never write;
-// horizontal paths stay within +3 / -6 dB of +32.5 and never reach +60 dB.
+// checkFollowsFinger: the last write is the finger's own value on the law
+// (constant ratio, no acceleration, no jump), per path.
+func checkFollowsFinger(t *testing.T, g geometry, p gesturePath, v pathVariant, r run, p0 float64) {
+	t.Helper()
+	switch p.ID {
+	case "P7", "P8":
+		if len(r.writes) != 0 {
+			t.Errorf("%s %s: %d writes, want none", g.orientation, p.ID, len(r.writes))
+		}
+		return
+	case "P4":
+		if r.firstAt >= 0 && r.firstAt < 1000 {
+			t.Errorf("%s P4: a write at %d ms, during the hold", g.orientation, r.firstAt)
+		}
+	case "P3", "P5", "P6":
+		return // the axis lock decides; covered by the negative control
+	}
+	if !strings.HasSuffix(p.ID, "R") && len(r.writes) > 0 {
+		end := v.Points[len(v.Points)-1].Y
+		want := lawDB(math.Min(math.Max(p0+end/g.track, 0), 1))
+		if math.Abs(r.last()-want) > writeTol {
+			t.Errorf("%s %s: ends at %.2f dB, the finger is at %.2f dB", g.orientation, p.ID, r.last(), want)
+		}
+	}
+}
+
+// lawDB is the x32/xair fader law (X32-F40, XA-F40) for a test oracle.
+func lawDB(pos float64) float64 {
+	switch {
+	case pos <= 0:
+		return math.Inf(-1)
+	case pos >= 0.5:
+		return pos*40 - 30
+	case pos >= 0.25:
+		return pos*80 - 50
+	case pos >= 0.0625:
+		return pos*160 - 70
+	default:
+		return pos*480 - 90
+	}
+}
+
+// AC-PS-02, AC-PS-06 (amended 2026-10-13), AC-RD-G02: on the Gain wheel
+// (frame rule, 1 dB per 48 pt, grabbed at its centre), vertical paths
+// never write; a horizontal path changes Gain by at most floor(half the
+// wheel / 48) dB, mirrored too, never reaches the range end, and P1R is
+// exactly one step.
 func TestTouchPaths_GainNeverJumps(t *testing.T) {
 	paths := loadPaths(t)
 	for _, g := range phone {
-		for _, p := range paths.Paths {
+		limit := math.Floor(g.wheel / 2 / encoderPitchPt)
+		for _, p := range onControl(paths.Paths) {
 			v := variantFor(p, g.orientation)
-			r := replay(t, ctlGain, g.gainAt, v, p.LargeContact)
+			r := replay(t, ctlGain, g.wheel, v, p.LargeContact)
 			if !strings.HasSuffix(p.ID, "R") {
 				if len(r.writes) != 0 {
-					t.Errorf("%s %s on the Gain bar: %d writes, want none (vertical drags scroll)", g.orientation, p.ID, len(r.writes))
+					t.Errorf("%s %s on the Gain wheel: %d writes, want none (vertical drags scroll)", g.orientation, p.ID, len(r.writes))
 				}
 				continue
 			}
-			if r.max() > 35.5+writeTol || r.max() >= 60 {
-				t.Errorf("%s %s: Gain up to %.1f", g.orientation, p.ID, r.max())
+			if len(r.writes) > 0 && (r.max() > 32.5+limit+writeTol || r.max() >= 59.5) {
+				t.Errorf("%s %s: Gain up to %.1f (limit +%.0f)", g.orientation, p.ID, r.max(), limit)
 			}
-			checkGainPath(t, g.orientation, p.ID, r)
+			if p.ID == "P1R" && (len(r.writes) != 1 || math.Abs(r.last()-33.5) > writeTol) {
+				t.Errorf("%s P1R: writes %v, want exactly +1 dB", g.orientation, r.writes)
+			}
 			mirrored := pathVariant{Orientation: v.Orientation}
 			for _, q := range v.Points {
 				mirrored.Points = append(mirrored.Points, pathPoint{T: q.T, X: -q.X, Y: q.Y})
 			}
-			if m := replay(t, ctlGain, g.gainAt, mirrored, false); len(m.writes) > 0 && m.min() < 26.5-writeTol {
+			if m := replay(t, ctlGain, g.wheel, mirrored, false); len(m.writes) > 0 && m.min() < 32.5-limit-writeTol {
 				t.Errorf("%s %s mirrored: Gain down to %.1f", g.orientation, p.ID, m.min())
 			}
-		}
-	}
-}
-
-func checkGainPath(t *testing.T, orientation, id string, r run) {
-	t.Helper()
-	switch id {
-	case "P2R", "P4R":
-		if math.Abs(r.last()-35.5) > writeTol || r.walls != 1 {
-			t.Errorf("%s %s: ends at %.1f with %d caps, want +35.5 once", orientation, id, r.last(), r.walls)
-		}
-	case "P3R":
-		if math.Abs(r.last()-33.5) > writeTol {
-			t.Errorf("%s P3R: ends at %.1f, want +33.5 (90 pt = 1 step)", orientation, r.last())
-		}
-	case "P5R":
-		if len(r.writes) > 0 && math.Abs(r.last()-32.5) > 1 {
-			t.Errorf("%s P5R: ends at %.1f, want within 1 step of +32.5", orientation, r.last())
 		}
 	}
 }
@@ -248,41 +251,65 @@ func sortedKeys(m map[string]bool) []string {
 	return out
 }
 
-// checkClimb: P9 only moves up and rests at each wall, so its writes never
-// fall (review HIGH 2: a second opened wall made the fader jump down), and
-// it opens more than one wall.
-// trembleStepDB: the largest change between two writes a P10 finger can
-// make (at most 0.6 pt per 8 ms frame, about 0.16 dB in landscape).
-const trembleStepDB = 0.5
-
-// checkTremble: a finger resting at the wall with a +-3 pt tremble opens it
-// in both orientations, and the value then follows the finger (the sway
-// down included: down is never stopped) without a jump.
-func checkTremble(t *testing.T, orientation string, r run, start float64) {
-	t.Helper()
-	wall := start + 6
-	if r.max() <= wall+writeTol || r.max() > wall+6+writeTol {
-		t.Errorf("%s P10: highest write %.2f; the wall at %.2f must open (and the next one hold)", orientation, r.max(), wall)
-	}
-	for i := 1; i < len(r.writes); i++ {
-		if math.Abs(r.writes[i]-r.writes[i-1]) > trembleStepDB {
-			t.Errorf("%s P10: write %d jumped from %.2f to %.2f", orientation, i, r.writes[i-1], r.writes[i])
-			return
+// onControl keeps the paths that start on the control itself (P1..P8, P1D,
+// P1R..P6R); the Gain-row paths (Start set) have their own proof.
+func onControl(ps []gesturePath) []gesturePath {
+	var out []gesturePath
+	for _, p := range ps {
+		if p.Start == nil {
+			out = append(out, p)
 		}
 	}
+	return out
 }
 
-func checkClimb(t *testing.T, orientation string, r run) {
-	t.Helper()
-	for i := 1; i < len(r.writes); i++ {
-		if r.writes[i] < r.writes[i-1]-writeTol {
-			t.Errorf("%s P9: write %d fell from %.2f to %.2f while the finger only moved up", orientation, i, r.writes[i-1], r.writes[i])
-			return
-		}
+// iPhone 6.1 inch portrait Gain row (fader-and-gain.md 5.1): screen 393 pt,
+// the wheel 240 pt wide, 76 pt from each screen edge.
+const (
+	screenPortrait  = 393.0
+	wheelEdgeOffset = 76.0
+)
+
+// grabXOf places a Gain-row path's touch-down in wheel coordinates.
+func grabXOf(s *pathStart, wheel float64) float64 {
+	switch {
+	case s.Control == "screenEdge" && s.Edge == "left":
+		return s.FromEdgePt - wheelEdgeOffset
+	case s.Control == "screenEdge":
+		return screenPortrait - s.FromEdgePt - wheelEdgeOffset
+	case s.FromLeftPt != nil:
+		return *s.FromLeftPt
 	}
-	// The 152 pt landscape throw ends after the first wall (the finger is at
-	// the top of the track), so only portrait can reach a second wall.
-	if (orientation == "portrait" && r.walls < 2) || r.max() >= 10+writeTol {
-		t.Errorf("%s P9: %d wall arrivals, highest %.2f; want two or more walls in portrait", orientation, r.walls, r.max())
+	return wheel / 2
+}
+
+// AC-RD-G01, AC-RD-G02 (CC-8): on the iPhone portrait wheel a stroke from
+// near the left end writes four 1 dB steps; leaving the frame (touch or
+// mouse, drift included) ends the stroke after at most floor(120 / 48) dB
+// and coming back writes nothing; the longest stroke is at most 5 dB; a
+// back swipe from 10 to 40 pt off either edge writes no Gain at all.
+func TestTouchPaths_GainWheelFrameRule(t *testing.T) {
+	want := map[string]struct{ writes, maxUp int }{
+		"G1": {4, 4}, "G2": {2, 2}, "G2D": {2, 2}, "G2M": {2, 2}, "G3": {4, 5},
+	}
+	for _, p := range loadPaths(t).Paths {
+		if p.Start == nil {
+			continue
+		}
+		v := variantFor(p, "portrait")
+		r := replayFrom(t, ctlGain, wheelPortrait, grabXOf(p.Start, wheelPortrait), v, false)
+		w, gainRow := want[p.ID]
+		if !gainRow { // E10L..E40R: back swipes over the steppers
+			if len(r.writes) != 0 {
+				t.Errorf("%s: %d Gain writes from a back swipe, want none", p.ID, len(r.writes))
+			}
+			continue
+		}
+		if len(r.writes) != w.writes || r.max() > 32.5+float64(w.maxUp)+writeTol || r.stops != 0 {
+			t.Errorf("%s: writes %v (%d stops), want %d writes up to +%d dB", p.ID, r.writes, r.stops, w.writes, w.maxUp)
+		}
+		if p.ID == "G1" && math.Abs(r.last()-36.5) > writeTol {
+			t.Errorf("G1 ends at %.1f, want +36.5 (AC-RD-G01)", r.last())
+		}
 	}
 }

@@ -335,12 +335,12 @@ func TestDeskChange_ScriptReturnsHome(t *testing.T) {
 }
 
 type lastMeters struct {
-	inputs       []float64
-	mainL, mainR float64
+	inputs, buses []float64
+	mainL, mainR  float64
 }
 
-func (l *lastMeters) publish(inputs []float64, mainL, mainR float64) {
-	l.inputs, l.mainL, l.mainR = append(l.inputs[:0], inputs...), mainL, mainR
+func (l *lastMeters) publish(inputs, buses []float64, mainL, mainR float64) {
+	l.inputs, l.buses, l.mainL, l.mainR = append(l.inputs[:0], inputs...), append(l.buses[:0], buses...), mainL, mainR
 }
 
 // Main L/R follow the console: faders, mutes and mute groups as set now.

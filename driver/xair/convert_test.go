@@ -107,11 +107,14 @@ func bank1Blob(count int, values map[int]int16) []byte {
 
 func TestDecodeBank1_LayoutAndRejections(t *testing.T) {
 	var fr meters.Frame
-	if err := decodeBank1(bank1Blob(40, map[int]int16{0: 0, 15: -2560, 16: 0, 36: -512, 37: -768}), &fr); err != nil {
+	if err := decodeBank1(bank1Blob(40, map[int]int16{0: 0, 15: -2560, 16: 0, 26: -256, 35: -1280, 36: -512, 37: -768}), &fr); err != nil {
 		t.Fatal(err)
 	}
-	if fr.Levels[0] != 0 || fr.Levels[15] != -10 || fr.Levels[16] != -2 || fr.Levels[17] != -3 || !math.IsInf(float64(fr.Levels[1]), -1) {
-		t.Fatalf("levels %v", fr.Levels[:18])
+	// v0.5 (CC-13): buses 1..6 and FX sends 1..4 (values 26..35) are levels
+	// 16..25 between the inputs and Main L/R (26, 27); value 16 (aux L) is not in the frame.
+	if fr.Levels[0] != 0 || fr.Levels[15] != -10 || fr.Levels[16] != -1 || fr.Levels[25] != -5 || fr.Levels[26] != -2 || fr.Levels[27] != -3 ||
+		!math.IsInf(float64(fr.Levels[1]), -1) || !math.IsInf(float64(fr.Levels[17]), -1) {
+		t.Fatalf("levels %v", fr.Levels[:meterLevels])
 	}
 	for name, blob := range map[string][]byte{
 		"short":                    {1, 2},

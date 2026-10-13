@@ -36,6 +36,9 @@ const (
 	xairGroups    = 4  // xair.md section 3.1: 4 mute groups, 4 DCAs
 	// xairBank1Values: /meters/1 holds 40 values (XA-F53).
 	xairBank1Values = 40
+	xairBank1Bus1   = 26 // XA-F53: buses 1..6 are bank 1 values 26..31
+	xairBank1Buses  = 6
+	x32BusMeters    = 16 // X32-F55: bank 2 values 0..15
 	// tapPre is PRE on the wire of both families: x32 type 0..5 = IN/LC,
 	// <-EQ, EQ->, PRE, POST, GRP (X32-F85); xair tap 0..5 = IN, PREEQ,
 	// POSTEQ, PRE, POST, GRP (xair.md section 3.3).
@@ -59,7 +62,7 @@ type console interface {
 
 // meterOut publishes one tick of input (pre-fader) and Main L/R levels in dBFS.
 type meterOut interface {
-	publish(inputs []float64, mainL, mainR float64)
+	publish(inputs, buses []float64, mainL, mainR float64)
 }
 
 // family is the shape of one simulated console.
@@ -215,29 +218,37 @@ func boolInt(b bool) int32 {
 type x32Meters struct {
 	sim *simx32.Sim
 	lin [x32Inputs]float32
+	bus [x32BusMeters]float32
 }
 
-func (m *x32Meters) publish(inputs []float64, mainL, mainR float64) {
+func (m *x32Meters) publish(inputs, buses []float64, mainL, mainR float64) {
 	for i, db := range inputs[:min(len(inputs), x32Inputs)] {
 		m.lin[i] = float32(dbToAmp(db))
 	}
 	m.sim.SetInputLevels(m.lin[:])
+	for b, db := range buses[:min(len(buses), len(m.bus))] {
+		m.bus[b] = float32(dbToAmp(db))
+	}
+	m.sim.SetBusLevels(m.bus[:]) // bank 2 values 0..15 (X32-F55)
 	m.sim.SetMainLevels(float32(dbToAmp(mainL)), float32(dbToAmp(mainR)))
 }
 
 // xairMeters writes bank /meters/1 in 1/256 dB (XA-F52): inputs at 0..15,
-// Main L/R at 36, 37, everything else silent (XA-F53).
+// buses 1..6 at 26..31, Main L/R at 36, 37, everything else silent (XA-F53).
 type xairMeters struct {
 	sim  *simxair.Sim
 	bank [xairBank1Values]int16
 }
 
-func (m *xairMeters) publish(inputs []float64, mainL, mainR float64) {
+func (m *xairMeters) publish(inputs, buses []float64, mainL, mainR float64) {
 	for i := range m.bank {
 		m.bank[i] = simxair.MeterSilence
 	}
 	for i, db := range inputs[:min(len(inputs), xairInputs)] {
 		m.bank[i] = xairRaw(db)
+	}
+	for b, db := range buses[:min(len(buses), xairBank1Buses)] {
+		m.bank[xairBank1Bus1+b] = xairRaw(db) // values 26..31 (XA-F53)
 	}
 	m.bank[simxair.Bank1MainL], m.bank[simxair.Bank1MainL+1] = xairRaw(mainL), xairRaw(mainR)
 	m.sim.SetMeterValues(m.bank[:])

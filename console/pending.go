@@ -33,8 +33,12 @@ import (
 //     real change and is sent.
 
 const (
-	// maxInFlight caps the values in flight per headamp.
+	// maxInFlight caps the values in flight per headamp outside a hold.
 	maxInFlight = 8
+	// maxInFlightHeld bounds the memory of a hold's values in flight: more
+	// than the 145 values of the widest Gain law (X32-F72), so a drag over
+	// the whole range keeps every one; past it the oldest is dropped.
+	maxInFlightHeld = 160
 )
 
 // inFlight is one value sent and not yet matched by a report.
@@ -65,8 +69,8 @@ func (s *safety) inFlightOf(p model.ParamRef) []float64 {
 // noteSent records a value about to be sent. send is false for a value
 // sent less than the driver's echo window ago (Capabilities.EchoWindow,
 // seats.go echoWindow); ok is false when the set is full and the
-// value is not in it.
-func (s *safety) noteSent(p model.ParamRef, db float64, now time.Time) (send, ok bool) {
+// value is not in it. Inside a hold (held) the set never refuses (CC-3).
+func (s *safety) noteSent(p model.ParamRef, db float64, now time.Time, held bool) (send, ok bool) {
 	if l, has := s.latest[p]; has && l.db == db && now.Sub(l.at) < s.echoWindow() {
 		return false, true // the same latest value, no report since, within the echo window
 	}
@@ -76,13 +80,32 @@ func (s *safety) noteSent(p model.ParamRef, db float64, now time.Time) (send, ok
 		set[i].sentAt = now
 		s.pending[p] = set
 	} else {
-		if len(set) >= maxInFlight {
+		switch {
+		case held && len(set) >= maxInFlightHeld:
+			set = slices.Delete(slices.Clone(set), 0, 1)
+		case !held && len(set) >= maxInFlight:
 			return false, false
 		}
 		s.pending[p] = append(slices.Clip(set), inFlight{db: db, sentAt: now})
 	}
 	s.latest[p] = lastSend{db: db, at: now}
 	return true, true
+}
+
+// newestInFlight is the value of ours most recently sent for p that no
+// report has matched yet: where the console is going.
+func (s *safety) newestInFlight(p model.ParamRef) (float64, bool) {
+	set := s.pending[p]
+	if len(set) == 0 {
+		return 0, false
+	}
+	newest := set[0]
+	for _, v := range set[1:] {
+		if !v.sentAt.Before(newest.sentAt) { // the later of two sent at the same instant
+			newest = v
+		}
+	}
+	return newest.db, true
 }
 
 // forgetSent removes one value whose send failed.

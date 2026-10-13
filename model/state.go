@@ -464,4 +464,8 @@ type Capabilities struct {
 	// (index tap - 1), when the console reports send taps (X32-F85,
 	// xair.md 3.3); shown untranslated (CR-16).
 	TapLabels [TapCount]string
+	// BusMeterFirst and BusMeters: the meter frame carries the meter of bus
+	// b (1 <= b <= BusMeters) at level BusMeterFirst + b - 1 (core-api
+	// v0.5, meter-frame.md). BusMeters 0: no bus meters.
+	BusMeterFirst, BusMeters int
 }

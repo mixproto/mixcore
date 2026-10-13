@@ -111,9 +111,10 @@ func sceneEventsJSON(scenes []driver.SceneRecalled) []eventJSON {
 			e.HighlightedScene = &n
 		}
 		if sc.LoadedScene >= 1 { // v0.2, xair: snapshots are 1-based; 0 and NoScene mean unknown
-			n := sc.LoadedScene
-			e.LoadedScene = &n
+			n, m := sc.LoadedScene, sc.LoadedScene
+			e.LoadedScene, e.SceneNumber = &n, &m // v0.5: sceneNumber (CC-10)
 		}
+		e.SceneName = sc.SceneName
 		out = append(out, e)
 	}
 	return out

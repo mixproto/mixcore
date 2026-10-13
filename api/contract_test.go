@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"math"
 	"os"
+	"slices"
 	"testing"
 
 	"github.com/mixproto/mixcore/console"
@@ -143,6 +144,13 @@ func parseCommandSeeds() []string {
 		`{"version":0,"type":"setSlipGuard","value":false,"origin":{"kind":"gesture","clientId":"ui"}}`,
 		`{"version":0,"type":"holdBegin","param":{"strip":{"kind":"input","index":1},"field":"fader"},"typed":true,"origin":{"kind":"gesture"}}`,
 		`{"version":0,"type":"holdBegin","param":{"strip":{"kind":"input","index":1},"field":"fader"},"trackLengthPt":152,"origin":{"kind":"gesture"}}`,
+		// v0.5 (redesign CC-6, CC-7, CC-9, CC-11, CC-12).
+		`{"version":0,"type":"undo","confirmed":true,"origin":{"kind":"gesture","clientId":"ui"}}`,
+		`{"version":0,"type":"cancelHold","param":{"strip":{"kind":"headamp","index":3},"field":"gain"},"origin":{"kind":"gesture"}}`,
+		`{"version":0,"type":"watch","scope":{"bus":2},"origin":{"kind":"gesture"}}`,
+		`{"version":0,"type":"setFavourites","favourites":[{"kind":"input","index":1},{"kind":"main"}],"origin":{"kind":"gesture"}}`,
+		`{"version":0,"type":"lockShowMode","pin":"2468","origin":{"kind":"gesture"}}`,
+		`{"version":0,"type":"unlockShowMode","pin":"24a8","origin":{"kind":"gesture"}}`,
 		// v0.4 buses and sends.
 		`{"version":0,"type":"set","param":{"strip":{"kind":"input","index":4},"field":"sendLevel","bus":2},"value":4,"origin":{"kind":"gesture"}}`,
 		`{"version":0,"type":"set","param":{"strip":{"kind":"input","index":4},"field":"sendPan","bus":1},"value":-40,"origin":{"kind":"gesture"}}`,
@@ -162,18 +170,23 @@ func fuzzParseCommand(t *testing.T, in string) {
 		}
 		return
 	}
-	if c.trackPt != 0 && (c.kind != cmdHoldBegin || !(c.trackPt >= minTrackPt && c.trackPt <= maxTrackPt)) {
-		t.Fatalf("trackLengthPt %v accepted on %s", c.trackPt, c.kind)
+	var raw struct {
+		TrackLengthPt *float64 `json:"trackLengthPt"`
+	}
+	if json.Unmarshal([]byte(in), &raw) == nil && raw.TrackLengthPt != nil && (c.kind != cmdHoldBegin || !(*raw.TrackLengthPt >= minTrackPt && *raw.TrackLengthPt <= maxTrackPt)) {
+		t.Fatalf("trackLengthPt %v accepted on %s", *raw.TrackLengthPt, c.kind)
 	}
 	if (c.typed || c.confirmed) && c.origin.Kind != driver.OriginGesture {
 		t.Fatalf("typed/confirmed accepted from origin %s", c.origin.Kind)
 	}
-	if c.kind != cmdSet && (c.typed || c.confirmed || c.undo) {
+	if (c.kind != cmdSet && (c.typed || c.undo)) || (c.confirmed && c.kind != cmdSet && c.kind != cmdUndo) {
 		t.Fatalf("%s accepted with typed/confirmed/undo", c.kind)
 	}
-	if (c.kind == cmdSlipGuard || c.kind == cmdShowMode) != (c.param == model.ParamRef{}) {
+	noParam := slices.Contains([]string{cmdSlipGuard, cmdShowMode, cmdUndo, cmdWatch, cmdFavourites, cmdLockShow, cmdUnlockShow}, c.kind)
+	if noParam != (c.param == model.ParamRef{}) {
 		t.Fatalf("%s with param %v", c.kind, c.param)
 	}
+	checkV05Invariants(t, c)
 	if c.param.Field.IsSend() != (c.param.Bus > 0) || c.param.Bus < 0 {
 		t.Fatalf("param %v: a bus goes with send fields only (v0.4)", c.param)
 	}
@@ -201,6 +214,7 @@ func FuzzParseConfig(f *testing.F) {
 	f.Add(`{"version":0,"family":"x32","host":"10.0.0.1","role":{"kind":"monitor","buses":[{"bus":2},{"bus":3,"monitorCeiling":"off"}]}}`)
 	f.Add(`{"version":0,"family":"x32","host":"10.0.0.1","role":{"kind":"viewer"}}`)
 	f.Add(`{"version":0,"family":"x32","host":"10.0.0.1","role":null}`)
+	f.Add(`{"version":0,"family":"x32","host":"10.0.0.1","favourites":[{"kind":"bus","index":2}],"safety":{"showModeLock":{"pinRecord":"pbkdf2-sha256$20000$c2FsdHNhbHRzYWx0c2FsdA$Zm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFyMTI"}}}`)
 	f.Fuzz(func(t *testing.T, in string) {
 		c, err := parseConfig(in)
 		if err != nil {
@@ -216,4 +230,28 @@ func FuzzParseConfig(f *testing.F) {
 			t.Fatalf("accepted config has an invalid role %+v: %v", r, err)
 		}
 	})
+}
+
+// checkV05Invariants: an accepted v0.5 command keeps its contract (a PIN of
+// 4 digits, at most 32 distinct favourites of the allowed kinds, a scope bus
+// in 0..64, confirmed only from a person).
+func checkV05Invariants(t *testing.T, c command) {
+	t.Helper()
+	if (c.kind == cmdLockShow || c.kind == cmdUnlockShow) != (c.v05.pin != "") || (c.v05.pin != "" && !console.ValidPIN(c.v05.pin)) {
+		t.Fatalf("%s with pin %q", c.kind, c.v05.pin)
+	}
+	if len(c.v05.favourites) > maxFavourites || (c.kind != cmdFavourites && c.v05.favourites != nil) {
+		t.Fatalf("%s with %d favourites", c.kind, len(c.v05.favourites))
+	}
+	for i, r := range c.v05.favourites {
+		if console.ValidFavourite(r) != nil || slices.Contains(c.v05.favourites[:i], r) {
+			t.Fatalf("favourite %v accepted", r)
+		}
+	}
+	if c.v05.scope < 0 || c.v05.scope > maxScopeBus || (c.kind != cmdWatch && c.v05.scope != 0) {
+		t.Fatalf("%s with scope %d", c.kind, c.v05.scope)
+	}
+	if c.confirmed && c.origin.Kind != driver.OriginGesture {
+		t.Fatalf("confirmed from origin %s", c.origin.Kind)
+	}
 }

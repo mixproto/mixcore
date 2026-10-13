@@ -50,6 +50,13 @@ func (s *Supervisor) Write(w Write) (Result, error) {
 func (s *Supervisor) checkAndApply(w *Write) (Result, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.applyLocked(w, true)
+}
+
+// applyLocked is checkAndApply under mu. A write outside a hold that left
+// for the console becomes an undo entry when record is set (undo.go).
+func (s *Supervisor) applyLocked(w *Write, record bool) (Result, error) {
+	before := s.undoBaseLocked(w.Param)
 	sess, res, err := s.prepareLocked(w)
 	if err != nil || !res.Written {
 		return res, err
@@ -61,7 +68,26 @@ func (s *Supervisor) checkAndApply(w *Write) (Result, error) {
 		return Result{}, err
 	}
 	s.safe.noteSeatSent(w.Origin, w.Param, dbOf(w.Value), s.sameLevelLocked, time.Now())
+	if iw := s.safe.windows[holdKey{param: w.Param, client: w.Origin.ClientID}]; iw != nil {
+		iw.lastWrite, iw.wrote = dbOf(w.Value), true // the next write of the hold is bounded against it (CC-3)
+	} else if record {
+		s.recordLocked(w.Origin, w.Param, before, w.Value, !w.Typed && undoKindOf(w.Param.Field) == UndoLevel)
+	}
 	return res, nil
+}
+
+// undoBaseLocked is the value an undo entry of p starts from: the console
+// value, for Gain the newest value of ours in flight (where it is going).
+func (s *Supervisor) undoBaseLocked(p model.ParamRef) model.Value {
+	if p.Field == model.FieldGain {
+		if v, ok := s.safe.newestInFlight(p); ok {
+			if lv, err := model.Level(v); err == nil {
+				return lv
+			}
+		}
+	}
+	v, _ := s.state.Value(p)
+	return v
 }
 
 // sameLevelLocked reports whether levels a and b of p are one console
@@ -107,7 +133,7 @@ func (s *Supervisor) prepareLocked(w *Write) (driver.Session, Result, error) {
 		return nil, Result{}, ErrGestureEnded
 	}
 	if _, held := s.holds.active[k]; !held {
-		delete(s.safe.windows, k)
+		s.closeWindowLocked(k)
 	}
 	if !isLevel(w.Param.Field) || w.Value.Kind() != model.KindLevel {
 		return s.sess, Result{Value: w.Value, Written: true}, nil
@@ -118,6 +144,10 @@ func (s *Supervisor) prepareLocked(w *Write) (driver.Session, Result, error) {
 	}
 	cur := dbOf(curV)
 	v, st, win, err := s.clampLocked(*w, cur)
+	if errors.Is(err, errEmptyGainBound) { // write nothing; the hold stays open until a read-back settles it
+		start, _ := model.Level(win.Start)
+		return s.sess, Result{Value: start, Window: win}, nil
+	}
 	if err != nil {
 		return nil, Result{}, err
 	}
@@ -131,31 +161,16 @@ func (s *Supervisor) prepareLocked(w *Write) (driver.Session, Result, error) {
 		others := slices.ContainsFunc(s.safe.inFlightOf(w.Param), func(x float64) bool { return x != v })
 		written = written || others // back to the console value while others are in flight: a real write
 		if written {
-			send, ok := s.safe.noteSent(w.Param, v, time.Now())
-			switch {
-			case !ok && win != nil: // a full set inside a hold is a wall: no write, no error mid-drag (lead decision, pass 4)
-				return s.sess, s.fullSetCapLocked(w, cur, win), nil
-			case !ok:
+			// Inside a hold the count never refuses (CC-3): the drag is bounded
+			// write by write against its previous write instead.
+			send, ok := s.safe.noteSent(w.Param, v, time.Now(), win != nil)
+			if !ok {
 				return nil, Result{}, fmt.Errorf("%w: %s: %d values in flight", ErrGainBound, w.Param, maxInFlight)
 			}
 			written = send // sent again at most once per echo window (LOW 5)
 		}
 	}
 	return s.sess, Result{Value: lv, State: st, Written: written, Window: win}, nil
-}
-
-// fullSetCapLocked answers a Gain candidate that would add a ninth value in
-// flight inside a hold: the value stays at the latest one sent, state atCap.
-func (s *Supervisor) fullSetCapLocked(w *Write, cur float64, win *Window) Result {
-	v := cur
-	if l, ok := s.safe.latest[w.Param]; ok {
-		v = l.db
-	} else if fl := s.safe.inFlightOf(w.Param); len(fl) > 0 {
-		v = fl[len(fl)-1]
-	}
-	lv, _ := model.Level(v) // finite: a Gain value already accepted
-	w.Value = lv
-	return Result{Value: lv, State: StateAtCap, Window: win}
 }
 
 // readOnlyLocked reports a parameter the core never writes, whatever the
@@ -187,19 +202,6 @@ func (s *Supervisor) Hold(p model.ParamRef, origin driver.Origin, held bool) err
 // only begin while live (ErrStale otherwise), so no finger held through an
 // outage writes after the reconnect; ending a hold always works.
 func (s *Supervisor) HoldWindow(p model.ParamRef, origin driver.Origin, held bool) (Result, error) {
-	return s.HoldWindowWith(p, origin, held, HoldOptions{})
-}
-
-// HoldOptions describe the control a hold is on.
-type HoldOptions struct {
-	// TrackLengthPt is the on-screen track length (pt or dp); with it the
-	// rest before openWall is checked in the spec's 9 pt (review pass 3,
-	// MEDIUM 2). 0: unknown, 2 dB of fader travel.
-	TrackLengthPt float64
-}
-
-// HoldWindowWith is HoldWindow with the control's geometry.
-func (s *Supervisor) HoldWindowWith(p model.ParamRef, origin driver.Origin, held bool, opts HoldOptions) (Result, error) {
 	if !origin.MayWrite() {
 		return Result{}, driver.ErrNotUserOrigin
 	}
@@ -222,52 +224,26 @@ func (s *Supervisor) HoldWindowWith(p model.ParamRef, origin driver.Origin, held
 		return Result{}, fmt.Errorf("console: hold %s: read-only: %w", p, driver.ErrUnsupported)
 	}
 	delete(s.holds.ended, k)
-	delete(s.safe.windows, k)
+	s.closeWindowLocked(k) // a hold that wrote is one undo entry (CC-6)
 	if !held {
 		delete(s.holds.active, k)
+		if isHeadampGain(p) {
+			s.safe.unlocks.touch(p.Strip.Index) // the idle 20 s start again at release (CC-4)
+		}
 		return Result{}, nil
 	}
 	cur, ok := s.state.Value(p)
 	if !ok {
 		return Result{}, fmt.Errorf("console: hold %s: %w", p, model.ErrUnknownParam)
 	}
+	s.endOtherGainHoldsLocked(p, origin) // one finger per preamp (review blocker 1)
 	s.holds.active[k] = struct{}{}
 	if isHeadampGain(p) {
 		s.safe.unlocks.touch(p.Strip.Index)
 	}
 	w := s.openWindowLocked(k)
-	w.trackPt = opts.TrackLengthPt
+	if isHeadampGain(p) {
+		cur, _ = model.Level(w.Start) // where the console is going (CC-3); finite
+	}
 	return Result{Value: cur, Window: windowOf(w)}, nil
-}
-
-// OpenWall re-opens a slip-guard wall after the UI measured a 300 ms rest
-// there (CR-22, SR-26). It is accepted only while the last candidate stopped
-// at the wall; the next upward move then continues from the wall value and
-// the next wall is 6 dB higher. Gain caps and monitor ceilings never open
-// (ErrUnsupported). It writes nothing.
-func (s *Supervisor) OpenWall(p model.ParamRef, origin driver.Origin) (Result, error) {
-	if !origin.MayWrite() {
-		return Result{}, driver.ErrNotUserOrigin
-	}
-	k := holdKey{param: p, client: origin.ClientID}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.checkRoleLocked(p, origin); err != nil {
-		return Result{}, err
-	}
-	if s.holds.isEnded(p, origin.ClientID) {
-		return Result{}, ErrGestureEnded
-	}
-	w, held := s.safe.windows[k]
-	if _, active := s.holds.active[k]; !active || !held {
-		return Result{}, fmt.Errorf("console: open wall %s without a hold: %w", p, driver.ErrUnsupported)
-	}
-	if !w.OpensByRest {
-		return Result{}, fmt.Errorf("console: %s never opens by rest: %w", p, driver.ErrUnsupported)
-	}
-	cur, _ := s.state.Value(p)
-	if !w.openWall() {
-		return Result{Value: cur, State: w.state, Window: windowOf(w)}, nil
-	}
-	return Result{Value: cur, State: StateFree, Window: windowOf(w)}, nil
 }

@@ -49,17 +49,14 @@ func TestSend_HoldWindowAndExternalChange(t *testing.T) {
 	})
 }
 
-// SR-26: the slip guard (when a client turns it on) works on a send like on a fader.
-func TestSend_SlipGuardWindow(t *testing.T) {
+// Redesign CC-1 (AC-RD-F02): a deliberate push of a held send is never
+// stopped inside its range (the slip guard is retired).
+func TestSend_HeldPushIsNeverStopped(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		sup, _ := startRole(t, Role{}, busFixture())
-		sup.SetSlipGuard("ui", true)
-		r, _ := sup.HoldWindow(sendLevel(1, 2), gesture, true)
-		if !r.Window.HasWall || r.Window.WallUp != -2 {
-			t.Fatalf("window %+v", r.Window)
-		}
-		if r, _ := sup.Write(set(sendLevel(1, 2), lvl(t, 6), gesture)); dbIn(t, r) != -2 || r.State != StateAtWall {
-			t.Fatalf("stopped at %v %s", dbIn(t, r), r.State)
+		_, _ = sup.HoldWindow(sendLevel(1, 2), gesture, true)
+		if r, _ := sup.Write(set(sendLevel(1, 2), lvl(t, 10), gesture)); dbIn(t, r) != 10 || r.State != StateFree {
+			t.Fatalf("a push to +10 stopped at %v %s", dbIn(t, r), r.State)
 		}
 	})
 }

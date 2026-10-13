@@ -137,11 +137,11 @@ func TestXAir_ApplyEchoAndMeters(t *testing.T) {
 		}
 		buf := make([]byte, MeterFrameMaxBytes)
 		n := e.eng.ReadMeterFrame(buf)
-		if count := binary.LittleEndian.Uint16(buf[6:]); n != 24+4*18 || count != 18 {
+		if count := binary.LittleEndian.Uint16(buf[6:]); n != 24+4*28 || count != 28 { // 16 inputs, 10 bus meters (v0.5), Main L/R
 			t.Fatalf("meter frame %d bytes, n = %d", n, count)
 		}
 		l0 := math.Float32frombits(binary.LittleEndian.Uint32(buf[24:]))
-		mainL := math.Float32frombits(binary.LittleEndian.Uint32(buf[24+4*16:]))
+		mainL := math.Float32frombits(binary.LittleEndian.Uint32(buf[24+4*26:]))
 		if l0 != -18 || mainL != -1 {
 			t.Fatalf("input 1 %v dBFS, Main L %v dBFS", l0, mainL)
 		}
@@ -172,7 +172,7 @@ func TestXAir_SceneRecallEvent(t *testing.T) {
 		e.rec.mu.Lock()
 		joined := strings.Join(e.rec.raw, "\n")
 		e.rec.mu.Unlock()
-		want := `{"type":"sceneRecalledAtConsole","confidence":"low","signals":["burst","snapshotIndex"],"loadedScene":7}` // the index only enriches the burst (XA-F60)
+		want := `{"type":"sceneRecalledAtConsole","confidence":"low","signals":["burst","snapshotIndex"],"loadedScene":7,"sceneNumber":7}` // the index only enriches the burst (XA-F60); v0.5 sceneNumber (CC-10)
 		if !strings.Contains(joined, want) {
 			t.Fatalf("no %s in\n%s", want, joined)
 		}

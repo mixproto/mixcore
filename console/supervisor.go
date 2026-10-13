@@ -13,7 +13,7 @@
 // While live it asks the session for a slow, read-only background re-read
 // (DefaultRereadEvery); held parameters are left out of it.
 //
-// Roles (roles.go) are checked below every UI: each write, hold, openWall,
+// Roles (roles.go) are checked below every UI: each write, hold,
 // unlock, relock and SetShowModeBy is refused with ErrRole when the role of
 // its origin's client does not allow it.
 //
@@ -37,6 +37,7 @@ import (
 	"errors"
 	"log/slog"
 	"math/rand/v2"
+	"slices"
 	"sync"
 	"time"
 
@@ -127,6 +128,17 @@ type Update struct {
 	ShowMode    bool
 	Unlocked    []int
 	UnlockEnded []UnlockEvent
+	// Undo is every client's newest undo entry with what undoing it would
+	// ask (core-api v0.5 rule 14), by client id.
+	Undo []UndoSummary
+	// Favourites are the favourites layers (core-api v0.5 rule 17): the
+	// default first, then each client's own.
+	Favourites []FavouritesLayer
+	// ShowModeLocked: show mode is locked on by the owner's PIN (rule 16).
+	ShowModeLocked bool
+	// Scopes are changes in watched buses since the last Drain (rule 15;
+	// never folded into Full, like Events).
+	Scopes []ScopeEvent
 }
 
 // Config configures a Supervisor.
@@ -138,7 +150,7 @@ type Config struct {
 	Meters   driver.MeterRequest // re-applied after every connect
 	Logger   *slog.Logger
 	Rand     func() float64 // jitter source in [0, 1); nil: math/rand/v2
-	// Safety are the phone safety defaults (slip guard, monitor ceiling, show
+	// Safety are the phone safety defaults (monitor ceiling, show
 	// mode); see safety.go.
 	Safety SafetyConfig
 	// RereadEvery is the background re-read interval while live (sessions
@@ -147,6 +159,8 @@ type Config struct {
 	// Role is the role of every client without SetClientRole (roles.go);
 	// the zero value is the owner (a direct connection).
 	Role Role
+	// Favourites restores the favourites layer (favourites.go).
+	Favourites []model.StripRef
 }
 
 // Supervisor owns the connection lifecycle of one console.
@@ -169,6 +183,12 @@ type Supervisor struct {
 	sess       driver.Session
 	holds      holds
 	safe       safety
+	undo       undoHistory                 // per client (undo.go)
+	favourites []model.StripRef            // the default favourites layer, from the config (favourites.go)
+	clientFavs map[string]clientFavourites // per client; replaced, never changed in place
+	watches    map[string]*watcher         // per client (watch.go)
+	lock       showLock                    // show mode locked by a PIN (showlock.go)
+	scopes     []ScopeEvent                // watch events since the last Drain
 	changes    []Change
 	eff        effective
 	scenes     []driver.SceneRecalled
@@ -201,6 +221,17 @@ func New(cfg Config) (*Supervisor, error) {
 	if err := cfg.Role.Validate(); err != nil {
 		return nil, err
 	}
+	if err := validFavourites(cfg.Favourites); err != nil {
+		return nil, err
+	}
+	var lock showLock
+	if cfg.Safety.ShowModeLock != "" {
+		rec, err := parsePINRecord(cfg.Safety.ShowModeLock)
+		if err != nil {
+			return nil, err
+		}
+		lock.record, cfg.Safety.ShowMode = &rec, true
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
@@ -212,7 +243,8 @@ func New(cfg Config) (*Supervisor, error) {
 	}
 	return &Supervisor{
 		cfg: cfg, notify: make(chan struct{}, 1),
-		holds: newHolds(), safe: newSafety(cfg.Safety, cfg.Role),
+		holds: newHolds(), safe: newSafety(cfg.Safety, cfg.Role), undo: newUndoHistory(), favourites: slices.Clone(cfg.Favourites), clientFavs: map[string]clientFavourites{},
+		watches: map[string]*watcher{}, lock: lock,
 	}, nil
 }
 
@@ -254,6 +286,7 @@ func (s *Supervisor) halt(closeLink bool) {
 		s.wg.Wait()
 		s.mu.Lock()
 		s.holds.cancelAll(StatusStopped.String())
+		s.closeEndedWindowsLocked()
 		s.safe.unlocks.endAll(UnlockStopped)
 		s.safe.dropAllPending() // nothing of the closed session is in flight
 		s.setStatusLocked(StatusStopped, "stopped")
@@ -277,8 +310,8 @@ func (s *Supervisor) Drain() Update {
 	if !s.full {
 		u.Changes, u.Effective = s.changes, s.eff.changes
 	}
-	u.Events, u.Scenes, u.UnlockEnded = s.holds.events, s.scenes, s.safe.unlocks.events
-	s.changes, s.full, s.holds.events, s.eff.changes, s.scenes = nil, false, nil, nil, nil
+	u.Events, u.Scenes, u.UnlockEnded, u.Scopes = s.holds.events, s.scenes, s.safe.unlocks.events, s.scopes
+	s.changes, s.full, s.holds.events, s.eff.changes, s.scenes, s.scopes = nil, false, nil, nil, nil, nil
 	s.safe.unlocks.events = nil
 	return u
 }
@@ -296,7 +329,8 @@ func (s *Supervisor) snapshotLocked() Update {
 	s.seq++
 	return Update{Seq: s.seq, Status: s.status, Reason: s.reason, Cause: s.cause, StaleSince: s.staleSince, Offline: s.offline,
 		Limited: s.limited != "", LimitedReason: s.limited, Identity: s.ident, Capabilities: s.caps, State: s.state,
-		ShowMode: s.safe.showMode, Unlocked: s.safe.unlocks.list()}
+		ShowMode: s.safe.showMode, Unlocked: s.safe.unlocks.list(), Undo: s.undoSummariesLocked(),
+		Favourites: s.favouritesLocked(), ShowModeLocked: s.showLockedLocked()}
 }
 
 func (s *Supervisor) signal() {
@@ -418,6 +452,7 @@ func (s *Supervisor) adopt(sess driver.Session) {
 	s.safe.window = s.caps.EchoWindow
 	s.safe.adoptState(s.state, sess.Snapshot(), s.sameLevelLocked)
 	s.safe.dropAllPending() // the fresh read is the console's value (re-review MEDIUM A)
+	s.undo.markAllForeign() // anything may have changed meanwhile: undo checks for conflicts
 	s.state = sess.Snapshot()
 	s.changes = nil
 	s.eff.reset(s.state)
@@ -459,6 +494,7 @@ func (s *Supervisor) markStale(ctx context.Context, cause error) {
 		return // stopping: Stop sets the final status and cancels holds
 	}
 	s.holds.cancelAll(StatusStale.String())
+	s.closeEndedWindowsLocked()
 	s.safe.unlocks.endAll(UnlockStale)
 	reason := "connection lost"
 	if cause != nil {
@@ -500,7 +536,8 @@ func (s *Supervisor) runSession(ctx context.Context, sess driver.Session) error 
 func (s *Supervisor) handleEvent(ev driver.Event) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	defer s.syncHeldLocked() // an external change, a recall or the limit may have ended holds
+	defer s.syncHeldLocked()          // an external change, a recall or the limit may have ended holds
+	defer s.closeEndedWindowsLocked() // and those holds' moves are undo entries
 	switch e := ev.(type) {
 	case driver.ParamChanged:
 		s.applyChangeLocked(Change{Param: e.Param, Value: e.Value, Origin: e.Origin, Authoritative: e.Authoritative, OwnWrite: e.OwnWrite})
@@ -521,6 +558,8 @@ func (s *Supervisor) handleEvent(ev driver.Event) {
 		// SR-15: a recall at the desk ends every held fader, even one whose own
 		// update has not arrived (or was lost); the driver re-reads meanwhile.
 		s.endHeldOnReplaceLocked()
+		e.SceneName = driver.SceneName(e.SceneName) // user content from the console (review item 8)
+		s.undo.cut(sceneMarkOf(e))                  // the history is cut at a recall (CC-10)
 		if len(s.scenes) < maxPendingEvents {
 			s.scenes = append(s.scenes, e)
 		}
@@ -547,6 +586,12 @@ func (s *Supervisor) handleEvent(ev driver.Event) {
 // applyChangeLocked publishes a console-reported value at once. If it is an
 // external change of a held fader, that gesture ends (HoldExternalChange).
 func (s *Supervisor) applyChangeLocked(c Change) {
+	if own, behind := s.gainSettleLocked(c); behind {
+		s.safe.noteReport(c, s.halfStepDB(c.Param.Strip.Index)) // settles values in flight; never moves the drag back (CC-3)
+		return
+	} else if own {
+		c.OwnWrite = true // the drag's own write read back: never an external change
+	}
 	_, known := s.state.Strip(c.Param.Strip)
 	prev, had := s.state.Value(c.Param)
 	next, err := s.state.With(c.Param, c.Value)
@@ -559,6 +604,8 @@ func (s *Supervisor) applyChangeLocked(c Change) {
 	// our own write read back is not someone else's change (follow-up 2).
 	if (!had || !prev.Equal(c.Value)) && !c.OwnWrite {
 		s.holds.external(c)
+		s.undo.markForeign(c.Param, c.Origin) // a later undo may meet a conflict (CC-6)
+		s.noteScopeChangeLocked(c)            // "Mon 2 changed at the mixer" (CC-11)
 	}
 	s.safe.noteChange(c, s.sameLevelLocked)
 	if c.Param.Field == model.FieldLinked {

@@ -16,12 +16,17 @@ import (
 
 // Errors of the phone safety rules (contracts/core-api README v0.3).
 var (
-	// ErrNeedsConfirm: a typed raise of more than 6 dB without Confirmed (CR-26).
-	ErrNeedsConfirm = errors.New("console: typed raise over 6 dB needs confirmation")
+	// ErrNeedsConfirm: a typed raise of more than 6 dB without Confirmed
+	// (CR-26), or an undo that asks (core-api v0.5 rule 14).
+	ErrNeedsConfirm = errors.New("console: needs confirmation")
 	// ErrShowMode: show mode locks this write (raising Gain, CR-24).
 	ErrShowMode = errors.New("console: locked in show mode")
 	// ErrGainBound: a Gain write more than 6 dB from the console value (CR-23).
 	ErrGainBound = errors.New("console: Gain write over the 6 dB bound")
+	// errEmptyGainBound: inside a hold no Gain value is within 6 dB of every
+	// value the console may be at; the write is skipped, never an error
+	// mid-drag (prepareLocked).
+	errEmptyGainBound = errors.New("console: no Gain value within the bound of every value in flight")
 	// ErrTypedOrigin: only a person types; Typed or Confirmed from another
 	// origin (a macro) would skip the bound SR-31 puts on macros.
 	ErrTypedOrigin = errors.New("console: typed entry needs a gesture origin")
@@ -33,16 +38,19 @@ type MonitorCeiling struct {
 	HeadroomDB float64 // 0..10
 }
 
-// ClientSafety are the safety settings of one client (one device).
+// ClientSafety are the safety settings of one client (one device). The
+// slip guard (SR-26) is retired since core-api v0.5 (redesign CC-1).
 type ClientSafety struct {
-	SlipGuard bool            // SR-26, per device class
-	Monitor   *MonitorCeiling // nil: not a monitor seat
+	Monitor *MonitorCeiling // nil: not a monitor seat
 }
 
 // SafetyConfig are the defaults for every client and the session settings.
 type SafetyConfig struct {
 	Client   ClientSafety // default for clients without SetClientSafety
 	ShowMode bool         // SR-27, restored by the UI at Start
+	// ShowModeLock is the PIN record of a show mode locked by the owner
+	// (showlock.go, CC-12); empty: not locked.
+	ShowModeLock string
 }
 
 // Write is one user write with the flags of the safety rules.
@@ -59,6 +67,8 @@ type Result struct {
 	State   GestureState
 	Written bool
 	Window  *Window // the active window, if any
+	// PinRecord is the stored form of a show-mode PIN lock (LockShowMode).
+	PinRecord string
 }
 
 // safety is the supervisor's safety state. Guarded by Supervisor.mu.
@@ -94,7 +104,7 @@ func (s *safety) client(id string) ClientSafety {
 }
 
 // SetClientSafety sets the safety settings of one client (a MixLink device
-// from its pairing token; the in-process UI uses the config and SetSlipGuard).
+// from its pairing token; the in-process UI uses the config).
 //
 // Unchecked and owner-only (review Sec L5): it checks no role, and a
 // client given its own settings could drop its monitor ceiling. Only the
@@ -103,16 +113,6 @@ func (s *safety) client(id string) ClientSafety {
 func (s *Supervisor) SetClientSafety(clientID string, c ClientSafety) {
 	s.mu.Lock()
 	s.safe.forgetSeat(clientID, time.Now())
-	s.safe.clients[clientID] = c
-	s.mu.Unlock()
-}
-
-// SetSlipGuard turns the slip guard on or off for one client (SR-26). It
-// writes nothing and never changes an active window.
-func (s *Supervisor) SetSlipGuard(clientID string, on bool) {
-	s.mu.Lock()
-	c := s.safe.client(clientID)
-	c.SlipGuard = on
 	s.safe.clients[clientID] = c
 	s.mu.Unlock()
 }
@@ -214,18 +214,20 @@ func (s *Supervisor) openWindowLocked(k holdKey) *window {
 	w := &window{Window: Window{Start: start}}
 	switch k.param.Field {
 	case model.FieldGain:
-		w.HasCap, w.CapUp, w.CapDown = true, start+gainCapUpDB, start-gainCapDnDB
+		// The window is the headamp's range (CC-2); the hold starts where the
+		// console is going: the latest value of ours in flight (CC-3).
+		if l, ok := s.safe.newestInFlight(k.param); ok {
+			start = l
+		}
+		w.Start, w.lastWrite = start, start
+		w.HasCap, w.CapUp, w.CapDown = true, start, start
 		if h, ok := s.caps.Headamp(k.param.Strip.Index); ok { // this headamp's own law (CR-23)
 			// The writable top (re-review LOW D), but never below the start: a
 			// grab above it never writes down (review pass 3, LOW 3).
-			w.CapUp = math.Max(math.Min(w.CapUp, h.WriteMaxDB), start)
-			w.CapDown = math.Max(w.CapDown, h.MinDB)
+			w.CapUp = math.Max(h.WriteMaxDB, start)
+			w.CapDown = math.Min(h.MinDB, start)
 		}
-	case model.FieldFader, model.FieldSendLevel: // a send moves on the fader law (X32-F83, XA-F40)
-		w.law = s.cfg.Driver.FaderLaw()
-		if s.safe.client(k.client).SlipGuard {
-			w.HasWall, w.WallUp, w.OpensByRest = true, slipWall(start), true
-		}
+	case model.FieldFader, model.FieldSendLevel:
 		w.Ceiling, w.HasCeiling = s.safe.ceiling(k.param, k.client, start)
 		w.Ceiling = math.Max(w.Ceiling, start) // never lower a value to meet the ceiling (review MEDIUM 3)
 	}
@@ -239,7 +241,7 @@ func (s *Supervisor) openWindowLocked(k holdKey) *window {
 func (s *Supervisor) clampLocked(w Write, cur float64) (float64, GestureState, *Window, error) {
 	p, c := w.Param, dbOf(w.Value)
 	if w.Typed && c-cur > bigRaiseDB && !w.Confirmed {
-		return 0, 0, nil, fmt.Errorf("%w: %s %.1f to %.1f dB", ErrNeedsConfirm, p, cur, c)
+		return 0, 0, nil, fmt.Errorf("%w: typed raise over 6 dB, %s %.1f to %.1f dB", ErrNeedsConfirm, p, cur, c)
 	}
 	v, st := c, StateFree
 	win := s.safe.windows[holdKey{param: p, client: w.Origin.ClientID}]
@@ -271,14 +273,40 @@ func (s *Supervisor) gainRulesLocked(w Write, cur, v float64, st GestureState, w
 		}
 		v, st = floor, StateLocked
 	}
-	if lo, hi := gainBounds(cur, inFlight); !w.Typed && (v < lo || v > hi) {
-		if win == nil {
+	switch {
+	case w.Typed:
+	case win != nil: // inside a hold: bounded, never an error mid-drag (CC-3)
+		lo, hi := s.holdBoundsLocked(w.Param, win, cur, inFlight)
+		if lo > hi { // the values in flight span more than 12 dB: nowhere is safe (review re-check)
+			return 0, 0, windowOf(win), errEmptyGainBound
+		}
+		v = math.Min(math.Max(v, lo), hi)
+		if st == StateAtCap && v != win.CapUp && v != win.CapDown {
+			st = StateFree // atCap only at a range end (CC-2)
+		}
+	default:
+		if lo, hi := gainBounds(cur, inFlight); v < lo || v > hi {
 			return 0, 0, nil, fmt.Errorf("%w: %s %.1f to %.1f dB (console %.1f, in flight %v)", ErrGainBound, w.Param, cur, v, cur, inFlight)
 		}
-		v, st = math.Min(math.Max(v, lo), math.Max(lo, hi)), StateAtCap
 	}
 	s.safe.unlocks.noteEntry(h, entryBase(cur, inFlight, win), tol) // any accepted Gain write during an unlock is an entry (undo grace)
 	return v, st, windowOf(win), nil
+}
+
+// holdBoundsLocked is where a Gain write inside a hold may go: the first
+// write within 6 dB of the console value and every value in flight (as
+// outside a hold, fader-and-gain.md 15: "the first from the console
+// value"), every later one within 6 dB of the hold's previous write and of
+// the latest value any client sent (review blockers 1, should-fix 4).
+func (s *Supervisor) holdBoundsLocked(p model.ParamRef, win *window, cur float64, inFlight []float64) (lo, hi float64) {
+	if !win.wrote {
+		return gainBounds(cur, inFlight)
+	}
+	lo, hi = win.lastWrite-gainBoundDB, win.lastWrite+gainBoundDB
+	if l, ok := s.safe.latest[p]; ok {
+		lo, hi = math.Max(lo, l.db-gainBoundDB), math.Min(hi, l.db+gainBoundDB)
+	}
+	return lo, hi
 }
 
 // halfStepDB is half a step of headamp h's own law: two Gain values closer

@@ -89,8 +89,9 @@ type Engine struct {
 	// check; nil in production.
 	afterGenCheck atomic.Pointer[func()]
 	// lastSafety is the show mode and unlock list of the last message
-	// (guarded by deliverMu).
-	lastSafety string
+	// (guarded by deliverMu); lastFavourites the favourites (v0.5).
+	lastSafety     string
+	lastFavourites string
 }
 
 // NewEngine returns an engine with the built-in drivers.
@@ -161,6 +162,7 @@ func (e *Engine) Start(configJSON string) (out string, err error) {
 		RereadEvery: e.opts.RereadEvery,
 		Safety:      cfg.safety(),
 		Role:        cfg.mustRole(),
+		Favourites:  cfg.favourites(),
 	})
 	if err != nil {
 		return "", err
@@ -324,15 +326,18 @@ func (e *Engine) run(commandJSON string) (console.Result, error) {
 	if err != nil {
 		return console.Result{}, err
 	}
+	if res, handled, err := runV05(sup, cmd); handled {
+		return res, err
+	}
 	switch cmd.kind {
 	case cmdHoldBegin:
-		return sup.HoldWindowWith(cmd.param, cmd.origin, true, console.HoldOptions{TrackLengthPt: cmd.trackPt})
+		return sup.HoldWindow(cmd.param, cmd.origin, true)
 	case cmdHoldEnd:
 		return sup.HoldWindow(cmd.param, cmd.origin, false)
 	case cmdToggle:
 		return console.Result{}, sup.Toggle(cmd.param, cmd.origin)
-	case cmdOpenWall:
-		return sup.OpenWall(cmd.param, cmd.origin)
+	case cmdOpenWall: // the slip guard is retired (core-api v0.5, CC-1)
+		return console.Result{}, codeErr(CodeUnsupported, errors.New("openWall: the slip guard is retired"))
 	case cmdUnlock:
 		return console.Result{}, sup.Unlock(cmd.param, cmd.origin)
 	case cmdRelock:
@@ -345,7 +350,8 @@ func (e *Engine) run(commandJSON string) (console.Result, error) {
 	}
 }
 
-// setting applies setSlipGuard / setShowMode; neither writes.
+// setting applies setShowMode; setSlipGuard is accepted and ignored
+// (core-api v0.5, CC-1; removed in v0.6). Neither writes.
 func setting(sup *console.Supervisor, cmd command) error {
 	if !cmd.origin.MayWrite() {
 		return driver.ErrNotUserOrigin
@@ -353,7 +359,6 @@ func setting(sup *console.Supervisor, cmd command) error {
 	if cmd.kind == cmdShowMode {
 		return sup.SetShowModeBy(cmd.origin, cmd.on) // owner and engineer only (v0.4)
 	}
-	sup.SetSlipGuard(cmd.origin.ClientID, cmd.on)
 	return nil
 }
 

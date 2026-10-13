@@ -89,8 +89,8 @@ func TestABI_StartApplyMetersDiscoverWithCMemory(t *testing.T) {
 		t.Fatalf("typed raise without confirmed = %d %q, want MIX_ERR_NEEDS_CONFIRM", code, res)
 	}
 
-	waitFor(t, "a meter frame", func() bool { b, _ := testMeterFrame(536); return len(b) == 24+34*4 })
-	if _, n := testMeterFrame(10); n != 24+34*4 {
+	waitFor(t, "a meter frame", func() bool { b, _ := testMeterFrame(536); return len(b) == 24+50*4 }) // v0.5: 32 inputs, 16 bus masters, Main L/R
+	if _, n := testMeterFrame(10); n != 24+50*4 {
 		t.Fatalf("short buffer returned %d, want the needed length", n)
 	}
 

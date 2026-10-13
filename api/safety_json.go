@@ -16,11 +16,10 @@ import (
 
 type windowJSON struct {
 	StartDB     any      `json:"startDB"`
-	WallUpDB    *float64 `json:"wallUpDB,omitempty"`
 	CapUpDB     *float64 `json:"capUpDB,omitempty"`
 	CapDownDB   *float64 `json:"capDownDB,omitempty"`
 	CeilingDB   *float64 `json:"ceilingDB,omitempty"`
-	OpensByRest bool     `json:"opensByRest"`
+	OpensByRest bool     `json:"opensByRest"` // deprecated in v0.5: always false, removed in v0.6
 }
 
 type gestureResultJSON struct {
@@ -29,20 +28,19 @@ type gestureResultJSON struct {
 	Value   any         `json:"value,omitempty"`
 	Written bool        `json:"written"`
 	Window  *windowJSON `json:"window,omitempty"`
+	// PinRecord: v0.5, lockShowMode only: the record to store (CC-12).
+	PinRecord string `json:"pinRecord,omitempty"`
 }
 
 func ptr(v float64) *float64 { return &v }
 
 func resultJSON(r console.Result) gestureResultJSON {
-	out := gestureResultJSON{Version: contractVersion, State: r.State.String(), Written: r.Written}
+	out := gestureResultJSON{Version: contractVersion, State: r.State.String(), Written: r.Written, PinRecord: r.PinRecord}
 	if db, ok := r.Value.DB(); ok {
 		out.Value = levelJSON(db)
 	}
 	if w := r.Window; w != nil {
-		j := &windowJSON{StartDB: levelJSON(w.Start), OpensByRest: w.OpensByRest}
-		if w.HasWall {
-			j.WallUpDB = ptr(w.WallUp)
-		}
+		j := &windowJSON{StartDB: levelJSON(w.Start)}
 		if w.HasCap {
 			j.CapUpDB, j.CapDownDB = ptr(w.CapUp), ptr(w.CapDown)
 		}
@@ -107,5 +105,6 @@ func unlockEventsJSON(evs []console.UnlockEvent) []eventJSON {
 // validated it).
 func (c configJSON) safety() console.SafetyConfig {
 	m, _ := c.Safety.monitor()
-	return console.SafetyConfig{Client: console.ClientSafety{SlipGuard: c.Safety.SlipGuard, Monitor: m}, ShowMode: c.Safety.ShowMode}
+	return console.SafetyConfig{Client: console.ClientSafety{Monitor: m}, ShowMode: c.Safety.ShowMode, // slipGuard: ignored since v0.5
+		ShowModeLock: c.showModeLock()}
 }

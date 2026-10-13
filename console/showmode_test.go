@@ -157,11 +157,8 @@ func TestMonitorCeiling_FollowsTheEngineer(t *testing.T) {
 		sup.SetClientSafety("mon-2", ClientSafety{Monitor: &MonitorCeiling{HeadroomDB: 0}})
 		_, _ = sup.HoldWindow(ch1Fader, musician, true)
 		r, _ := sup.Write(set(ch1Fader, lvl(t, 9), musician))
-		if dbIn(t, r) != 1 || r.Window == nil || r.Window.Ceiling != 1 || r.Window.OpensByRest {
+		if dbIn(t, r) != 1 || r.Window == nil || r.Window.Ceiling != 1 {
 			t.Fatalf("headroom 0: %v %+v", dbIn(t, r), r.Window)
-		}
-		if _, err := sup.OpenWall(ch1Fader, musician); !errors.Is(err, driver.ErrUnsupported) {
-			t.Fatalf("a ceiling never opens: %v", err)
 		}
 		if r, _ := sup.Write(set(ch1Fader, lvl(t, 9), engineerB)); dbIn(t, r) != 9 {
 			t.Fatal("an engineer device has no ceiling")

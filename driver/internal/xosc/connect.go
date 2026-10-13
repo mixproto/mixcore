@@ -70,6 +70,9 @@ func (s *session) capabilities() model.Capabilities {
 	if sh := s.shape(); sh.Sends.Tap {
 		c.TapLabels = s.prof.TapLabels
 	}
+	if bm, ok := s.prof.Meters.(BusMeterCodec); ok {
+		c.BusMeterFirst, c.BusMeters = bm.BusMeters()
+	}
 	if !s.absent[featureMuteGroups] {
 		c.MuteGroups = l.MuteGroups
 		c.MainMuteGroups = l.MainMuteGroups

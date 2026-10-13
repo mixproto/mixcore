@@ -53,6 +53,11 @@ type Options struct {
 	// scene recall push only the changed parameters; true also sets and pushes
 	// /-show/prepos/current and /-undo/time (X32-F61, X32-F62).
 	PushSceneMarkers bool
+	// NoGainPush: [UNVERIFIED] variant of X32-F79 (items 17, 22): a client's
+	// /headamp/NNN/gain write is applied but pushed to nobody, so the client
+	// never sees its echo. False (default) pushes it like any change; a
+	// change at the surface is pushed either way.
+	NoGainPush bool
 	// UnknownAddresses are parameters this console does not know (older
 	// firmware, another model): reads get no reply and writes are not
 	// applied (X32-F06). A test option, not a documented fact.
@@ -112,6 +117,7 @@ type Sim struct {
 	// Guarded by the core lock (Core.Do).
 	levels [inputChannels]float32 // linear input meter levels (X32-F54)
 	mainLR [2]float32             // linear Main L/R meter levels (X32-F55)
+	buses  [busMeters]float32     // linear bus master meter levels, bank 2 values 0..15 (X32-F55)
 }
 
 // New creates a simulator with the documented defaults applied to opts.
@@ -127,15 +133,32 @@ func New(opts Options) *Sim {
 		SubscriptionTTL: opts.SubscriptionTTL, MaxPushClients: opts.MaxPushClients,
 		EvictOldestWhenFull: opts.EvictOldestWhenFull, EchoToSender: opts.EchoToSender,
 		SlotForAnySender: opts.SlotForAnySender, MeterTTL: opts.MeterTTL, MeterInterval: opts.MeterInterval,
-		Logger: opts.Logger, Params: params, Family: (*family)(s),
+		Logger: opts.Logger, Params: params, Family: (*family)(s), SilentWrite: silentGain(opts.NoGainPush),
 	})
 	return s
+}
+
+// silentGain is the SilentWrite of the NoGainPush variant (nil when off).
+func silentGain(on bool) func(string) bool {
+	if !on {
+		return nil
+	}
+	return oscsim.IsHeadampGain
 }
 
 // SetMainLevels sets the linear Main L/R meter levels of bank 2 (X32-F55).
 func (s *Sim) SetMainLevels(l, r float32) {
 	s.Do(func(time.Time) []oscsim.Outgoing {
 		s.mainLR = [2]float32{l, r}
+		return nil
+	})
+}
+
+// SetBusLevels sets the linear meter levels of bus masters 1..n, bank 2
+// values 0..15 (X32-F55).
+func (s *Sim) SetBusLevels(levels []float32) {
+	s.Do(func(time.Time) []oscsim.Outgoing {
+		copy(s.buses[:], levels)
 		return nil
 	})
 }

@@ -30,6 +30,13 @@ type MeterCodec interface {
 	Requests() [][]osc.Arg
 }
 
+// BusMeterCodec is a MeterCodec whose frame also carries bus meters
+// (core-api v0.5, meter-frame.md): bus b at level first + b - 1, buses
+// 1..count.
+type BusMeterCodec interface {
+	BusMeters() (first, count int)
+}
+
 // MeterSink decodes meter packets in the subscription reader goroutine and
 // publishes them. It owns its frame and message; nothing here allocates.
 type MeterSink struct {

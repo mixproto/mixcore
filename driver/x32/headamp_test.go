@@ -265,46 +265,43 @@ func TestHeadamp_WireMaximumReadNeverWritten(t *testing.T) {
 	})
 }
 
+// authoritativeGain returns the first authoritative report of headamp h:
+// since v0.5 the settle re-read (CC-3) sends it within 250 ms of an
+// unechoed write, before any background pass.
+func authoritativeGain(t *testing.T, events <-chan driver.Event, h int) driver.ParamChanged {
+	t.Helper()
+	for {
+		ev, ok := nextOf[driver.ParamChanged](events, settleBudget+DefaultTiming.EchoWindow)
+		if !ok {
+			t.Fatalf("no authoritative report of headamp %d", h)
+		}
+		if ev.Param == headamp(h, model.FieldGain) && ev.Authoritative {
+			return ev
+		}
+	}
+}
+
 // Review pass 4, HIGH 1: a push (here a desk move to another value) must
-// not drop the unconfirmed mark of a Gain we wrote: the next re-read reply
-// is still authoritative, so the console layer's in-flight set ends.
+// not drop the unconfirmed mark of a Gain we wrote: the next read-back
+// reply (v0.5: the settle re-read) is still authoritative, so the console
+// layer's in-flight set ends.
 func TestHeadamp_RereadAuthoritativeAfterADeskPush(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		r := newRig(t, simx32.Options{})
 		sess := r.connect()
 		events, _ := r.run(sess)
-		r.net.SetDropFrom(consoleIP, true) // our write's echo is lost
-		if err := sess.Apply(driver.Command{Param: headamp(1, model.FieldGain), Value: level(t, 6), Origin: gesture}); err != nil {
-			t.Fatal(err)
-		}
-		synctest.Wait()
-		r.net.SetDropFrom(consoleIP, false)
+		writeGainUnechoed(t, r, sess, 1, 6)
 		if err := r.sim.SurfaceSet("/headamp/000/gain", osc.Float(72.0/144)); err != nil { // the desk: +24 dB
 			t.Fatal(err)
 		}
-		synctest.Wait()
-		time.Sleep(DefaultTiming.EchoWindow + time.Second)
-		_ = drain(events)
-		if err := sess.(driver.Rereader).Reread(); err != nil {
-			t.Fatal(err)
-		}
-		for {
-			ev, ok := nextOf[driver.ParamChanged](events, passTime)
-			if !ok {
-				t.Fatal("no authoritative report of headamp 1 after the desk push")
-			}
-			if ev.Param == headamp(1, model.FieldGain) {
-				if !ev.Authoritative || !ev.Value.Equal(level(t, 24)) {
-					t.Fatalf("report %+v, want the authoritative +24 dB", ev)
-				}
-				return
-			}
+		if ev := authoritativeGain(t, events, 1); !ev.Value.Equal(level(t, 24)) || ev.OwnWrite {
+			t.Fatalf("report %+v, want the authoritative +24 dB of the desk", ev)
 		}
 	})
 }
 
-// Follow-up 2: the re-read reply of our own unechoed Gain write is flagged
-// OwnWrite; a desk value is not.
+// Follow-up 2: the read-back reply of our own unechoed Gain write is
+// flagged OwnWrite; a desk value is not.
 func TestHeadamp_RereadFlagsOurOwnValue(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		r := newRig(t, simx32.Options{})
@@ -316,20 +313,8 @@ func TestHeadamp_RereadFlagsOurOwnValue(t *testing.T) {
 				_ = r.sim.SurfaceSet("/headamp/000/gain", osc.Float(72.0/144)) // the desk: +24 dB
 				synctest.Wait()
 			}
-			time.Sleep(DefaultTiming.EchoWindow + time.Second)
-			_ = drain(events)
-			_ = sess.(driver.Rereader).Reread()
-			for {
-				ev, ok := nextOf[driver.ParamChanged](events, DefaultTiming.RereadGap+passTime)
-				if !ok {
-					t.Fatal("no re-read report")
-				}
-				if ev.Param == headamp(1, model.FieldGain) {
-					if !ev.Authoritative || ev.OwnWrite == desk {
-						t.Fatalf("desk %v: %+v", desk, ev)
-					}
-					break
-				}
+			if ev := authoritativeGain(t, events, 1); ev.OwnWrite == desk {
+				t.Fatalf("desk %v: %+v", desk, ev)
 			}
 		}
 	})

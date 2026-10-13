@@ -167,6 +167,10 @@ func TestSimLoopback_ApplyLatency(t *testing.T) {
 	c := percentiles(calls)
 	t.Logf("Apply -> simulator receipt, loopback UDP, n=%d: p50=%v p95=%v p99=%v max=%v", latencySamples, p[0], p[1], p[2], p[3])
 	t.Logf("Apply call duration (caller thread), n=%d: p50=%v p95=%v p99=%v max=%v", latencySamples, c[0], c[1], c[2], c[3])
+	if raceBuild {
+		t.Logf("race build: budgets are asserted by the non-race run of make sim-test")
+		return
+	}
 	if p[1] > latencyBudget {
 		t.Fatalf("p95 %v exceeds the %v budget", p[1], latencyBudget)
 	}

@@ -80,149 +80,34 @@ func lastWrite(drv *fakeDriver) float64 {
 	return db
 }
 
-// AC-PS-01 core part, SR-26: one gesture stops 6 dB above its start; down is
-// never stopped; nothing is written above the wall.
-func TestSlipGuard_StopsSixDBUpNeverDown(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		sup, drv := startSafe(t, SafetyConfig{Client: ClientSafety{SlipGuard: true}}, safetyState(-6))
-		r, err := sup.HoldWindow(ch1Fader, gesture, true)
-		if err != nil || r.Window == nil || !r.Window.HasWall || r.Window.WallUp != 0 || !r.Window.OpensByRest {
-			t.Fatalf("window %+v, %v", r.Window, err)
-		}
-		for _, tc := range []struct {
-			cand, want float64
-			st         GestureState
-		}{{-3, -3, StateFree}, {4, 0, StateAtWall}, {10, 0, StateAtWall}, {-1, -1, StateFree}, {-40, -40, StateFree}} {
-			r, err := sup.Write(set(ch1Fader, lvl(t, tc.cand), gesture))
-			if err != nil || dbIn(t, r) != tc.want || r.State != tc.st {
-				t.Fatalf("candidate %v: %v %s, %v", tc.cand, dbIn(t, r), r.State, err)
-			}
-		}
-		for _, w := range drv.session(0).writes() {
-			if db, _ := w.Value.DB(); db > 0 {
-				t.Fatalf("wrote %v dB above the wall", db)
-			}
-		}
-	})
+// gainState is the safety fixture with headamp 3 at db.
+func gainState(db float64) model.State {
+	st, err := stateWith(-6).WithHeadamps([]model.Headamp{{Index: 1}, {Index: 2}, {Index: 3, GainDB: db}})
+	if err != nil {
+		panic(err)
+	}
+	return st
 }
 
-// AC-PS-08: from -inf the floor makes the first stop -10 dB.
-func TestSlipGuard_FloorFromMinusInf(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		sup, _ := startSafe(t, SafetyConfig{Client: ClientSafety{SlipGuard: true}}, safetyState(math.Inf(-1)))
-		r, _ := sup.HoldWindow(ch1Fader, gesture, true)
-		if r.Window.WallUp != -10 {
-			t.Fatalf("wall %v", r.Window.WallUp)
-		}
-		if r, _ := sup.Write(set(ch1Fader, lvl(t, 10), gesture)); dbIn(t, r) != -10 {
-			t.Fatalf("P2 from -inf ends at %v", dbIn(t, r))
-		}
-	})
-}
-
-// AC-PS-07: after a rest at the wall the value continues from the wall
-// without a jump, and the next stop is 6 dB higher.
-func TestSlipGuard_OpenWallContinuesWithoutJump(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		sup, _ := startSafe(t, SafetyConfig{Client: ClientSafety{SlipGuard: true}}, safetyState(-6))
-		_, _ = sup.HoldWindow(ch1Fader, gesture, true)
-		if r, _ := sup.OpenWall(ch1Fader, gesture); r.State != StateFree || r.Window.WallUp != 0 {
-			t.Fatal("a wall opens only while the value stands at it")
-		}
-		_, _ = sup.Write(set(ch1Fader, lvl(t, 3), gesture)) // the finger is 3 dB past the wall
-		time.Sleep(300 * time.Millisecond)                  // wall.dwell
-		r, err := sup.OpenWall(ch1Fader, gesture)
-		if err != nil || r.Window.WallUp != 6 {
-			t.Fatalf("open: %+v %v", r.Window, err)
-		}
-		for _, tc := range []struct{ cand, want float64 }{{3, 0}, {3.5, 0.5}, {8, 5}, {12, 6}, {2, -1}} {
-			if r, _ := sup.Write(set(ch1Fader, lvl(t, tc.cand), gesture)); math.Abs(dbIn(t, r)-tc.want) > 1e-9 {
-				t.Fatalf("candidate %v -> %v, want %v (no jump)", tc.cand, dbIn(t, r), tc.want)
-			}
-		}
-	})
-}
-
-// AC-PS-09: the slip guard is a per-client setting; off moves freely.
-func TestSlipGuard_PerClientSetting(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		sup, _ := startSafe(t, SafetyConfig{}, safetyState(-6))
-		sup.SetShowMode(true) // show mode never changes how faders feel
-		_, _ = sup.HoldWindow(ch1Fader, gesture, true)
-		if r, _ := sup.Write(set(ch1Fader, lvl(t, 8), gesture)); dbIn(t, r) != 8 || r.State != StateFree {
-			t.Fatalf("slip guard off: %v %s", dbIn(t, r), r.State)
-		}
-		sup.SetSlipGuard("ui", true)
-		_, _ = sup.HoldWindow(ch1Fader, gesture, false)
-		_, _ = sup.HoldWindow(ch1Fader, gesture, true)
-		if r, _ := sup.Write(set(ch1Fader, lvl(t, 20), gesture)); dbIn(t, r) != 0 {
-			t.Fatalf("slip guard on: %v", dbIn(t, r))
-		}
-	})
-}
-
-// AC-PS-18: after stale no wall opens and the gesture stays ended.
-func TestSlipGuard_StaleEndsTheGestureAtTheWall(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		sup, drv := startSafe(t, SafetyConfig{Client: ClientSafety{SlipGuard: true}}, safetyState(-6))
-		_, _ = sup.HoldWindow(ch1Fader, gesture, true)
-		_, _ = sup.Write(set(ch1Fader, lvl(t, 4), gesture))
-		n := len(drv.session(0).writes())
-		drv.session(0).lose()
-		synctest.Wait()
-		time.Sleep(time.Second) // the link returns
-		synctest.Wait()
-		if _, err := sup.OpenWall(ch1Fader, gesture); !errors.Is(err, ErrGestureEnded) {
-			t.Fatalf("open wall after stale: %v", err)
-		}
-		if _, err := sup.Write(set(ch1Fader, lvl(t, 4), gesture)); !errors.Is(err, ErrGestureEnded) {
-			t.Fatalf("write after stale: %v", err)
-		}
-		if got := len(drv.session(len(drv.sessions) - 1).writes()); len(drv.sessions) < 2 || got != 0 || n != 1 {
-			t.Fatalf("writes after the reconnect %d (sessions %d, before %d)", got, len(drv.sessions), n)
-		}
-	})
-}
-
-// AC-PS-03/04 core part, SR-24: a Gain gesture stays in +3 / -6 dB and the
-// cap never opens.
-func TestGain_GestureCaps(t *testing.T) {
+// CC-2, CC-3 (replaces the v0.3 caps of AC-PS-03/04): a pull of the Gain
+// wheel to the bottom moves at most 6 dB per write and stops only at the
+// headamp's minDB. Each write is echoed, as by a console that echoes.
+func TestGain_PullToTheBottomSixPerWrite(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		sup, drv := startSafe(t, SafetyConfig{}, safetyState(-6))
-		r, err := sup.HoldWindow(gain3, gesture, true)
-		if err != nil || !r.Window.HasCap || r.Window.CapUp != 35.5 || r.Window.CapDown != 26.5 || r.Window.OpensByRest {
-			t.Fatalf("window %+v %v", r.Window, err)
-		}
+		_, _ = sup.HoldWindow(gain3, gesture, true)
 		for _, tc := range []struct {
-			cand, want float64
-			st         GestureState
-		}{{33.5, 33.5, StateFree}, {60, 35.5, StateAtCap}, {0, 29.5, StateAtCap}, {0, 26.5, StateAtCap}} {
-			// From +35.5 a pull to 0 first stops 6 dB lower (the per-write bound,
-			// review HIGH 1), then at the -6 dB cap of the gesture. Each write is
-			// echoed, as by a console that echoes, so it leaves the in-flight set.
-			r, _ := sup.Write(set(gain3, lvl(t, tc.cand), gesture))
+			want float64
+			st   GestureState
+		}{{26.5, StateFree}, {20.5, StateFree}, {14.5, StateFree}, {8.5, StateFree}, {2.5, StateFree}, {-3.5, StateFree}, {-9.5, StateFree}, {-12, StateAtCap}} {
+			r, _ := sup.Write(set(gain3, lvl(t, -40), gesture))
 			if dbIn(t, r) != tc.want || r.State != tc.st {
-				t.Fatalf("candidate %v: %v %s", tc.cand, dbIn(t, r), r.State)
+				t.Fatalf("pull: %v %s, want %v %s", dbIn(t, r), r.State, tc.want, tc.st)
 			}
 			drv.session(0).push <- driver.ParamChanged{Param: gain3, Value: lvl(t, tc.want), Origin: gesture}
 			synctest.Wait()
 		}
-		if _, err := sup.OpenWall(gain3, gesture); !errors.Is(err, driver.ErrUnsupported) {
-			t.Fatalf("a Gain cap must never open: %v", err)
-		}
-		if max := maxWrite(drv); max > 35.5 {
-			t.Fatalf("wrote %v", max)
-		}
 	})
-}
-
-func maxWrite(drv *fakeDriver) float64 {
-	m := math.Inf(-1)
-	for _, w := range drv.session(len(drv.sessions) - 1).writes() {
-		db, _ := w.Value.DB()
-		m = math.Max(m, db)
-	}
-	return m
 }
 
 // AC-PS-19, SR-31: every Gain write path is bounded to 6 dB from the console
@@ -382,77 +267,6 @@ func TestShowMode_RaiseAfterPendingLowering(t *testing.T) {
 	})
 }
 
-// Review HIGH 2: each opened wall continues from that wall; opening a second
-// (and third) wall must not count the first offset twice (a jump down).
-func TestSlipGuard_OpenSeveralWallsWithoutJump(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		sup, drv := startSafe(t, SafetyConfig{Client: ClientSafety{SlipGuard: true}}, safetyState(-6))
-		_, _ = sup.HoldWindow(ch1Fader, gesture, true)
-		prev := math.Inf(-1)
-		push := func(cand, want float64, st GestureState) {
-			t.Helper()
-			r, err := sup.Write(set(ch1Fader, lvl(t, cand), gesture))
-			if err != nil || math.Abs(dbIn(t, r)-want) > 1e-9 || r.State != st {
-				t.Fatalf("candidate %v -> %v %s (%v), want %v %s", cand, dbIn(t, r), r.State, err, want, st)
-			}
-			if dbIn(t, r) < prev {
-				t.Fatalf("value fell from %v to %v while the finger only moved up", prev, dbIn(t, r))
-			}
-			prev = dbIn(t, r)
-		}
-		open := func(wantWall float64) {
-			t.Helper()
-			time.Sleep(300 * time.Millisecond) // wall.dwell
-			if r, err := sup.OpenWall(ch1Fader, gesture); err != nil || r.Window.WallUp != wantWall {
-				t.Fatalf("open: wall %v, %v", r.Window.WallUp, err)
-			}
-		}
-		push(4, 0, StateAtWall) // finger 4 dB past the first wall
-		open(6)
-		push(4, 0, StateFree) // resting finger: no jump
-		push(12, 6, StateAtWall)
-		open(12)
-		push(12, 6, StateFree) // the reviewer's probe wrote +2 here
-		push(13, 7, StateFree)
-		push(20, 12, StateAtWall)
-		open(18)
-		push(20, 12, StateFree) // third wall
-		push(21, 13, StateFree)
-		if max := maxWrite(drv); max != 13 {
-			t.Fatalf("highest write %v", max)
-		}
-	})
-}
-
-// Review MEDIUM 4: the core refuses openWall until the value has stood at
-// the wall for wall.dwell (300 ms), so a buggy UI cannot turn the guard off.
-func TestSlipGuard_OpenWallNeedsTheRest(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		sup, _ := startSafe(t, SafetyConfig{Client: ClientSafety{SlipGuard: true}}, safetyState(-6))
-		_, _ = sup.HoldWindow(ch1Fader, gesture, true)
-		_, _ = sup.Write(set(ch1Fader, lvl(t, 3), gesture))
-		for _, wait := range []time.Duration{0, 299 * time.Millisecond} {
-			time.Sleep(wait)
-			r, err := sup.OpenWall(ch1Fader, gesture)
-			if err != nil || r.State != StateAtWall || r.Window.WallUp != 0 {
-				t.Fatalf("open after %s: %s wall %v %v; must stay at the wall", wait, r.State, r.Window.WallUp, err)
-			}
-		}
-		_, _ = sup.Write(set(ch1Fader, lvl(t, 3.3), gesture)) // a tremble within the span: the rest keeps counting
-		time.Sleep(time.Millisecond)
-		if r, _ := sup.OpenWall(ch1Fader, gesture); r.State != StateFree || r.Window.WallUp != 6 {
-			t.Fatalf("open after 300 ms: %s wall %v", r.State, r.Window.WallUp)
-		}
-		_, _ = sup.Write(set(ch1Fader, lvl(t, 10), gesture)) // the next wall
-		_, _ = sup.Write(set(ch1Fader, lvl(t, 0), gesture))  // leaves the wall
-		_, _ = sup.Write(set(ch1Fader, lvl(t, 10), gesture)) // back at the wall: a new rest starts
-		time.Sleep(200 * time.Millisecond)
-		if r, _ := sup.OpenWall(ch1Fader, gesture); r.State != StateAtWall {
-			t.Fatal("a new arrival needs a new 300 ms rest")
-		}
-	})
-}
-
 // Review MEDIUM 5: only a person types. A macro (or any non-gesture origin)
 // claiming typed would skip the Gain bound SR-31 puts on macros.
 func TestTyped_OnlyFromAGesture(t *testing.T) {
@@ -526,30 +340,6 @@ func TestGain_FailedApplyIsNotInFlight(t *testing.T) {
 		r, err := sup.Write(set(gain3, lvl(t, 33.5), gesture))
 		if err != nil || !r.Written || len(drv.session(0).writes()) != 1 {
 			t.Fatalf("33.5 again: written %v, %v", r.Written, err)
-		}
-	})
-}
-
-// Re-review LOW C: the rest is stillness, not time at the wall. A UI that
-// keeps pushing the finger up past the wall (12.5 dB/s in the probe) never
-// opens it; once the finger stays within 2 dB of fader travel (no track
-// length given) for 300 ms it opens.
-func TestSlipGuard_RestMeansStillness(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		sup, _ := startSafe(t, SafetyConfig{Client: ClientSafety{SlipGuard: true}}, safetyState(-6))
-		_, _ = sup.HoldWindow(ch1Fader, gesture, true)
-		finger := 0.0
-		for range 50 { // 400 ms at 12.5 dB/s, 0.1 dB per 8 ms frame, all past the wall
-			finger += 0.1
-			_, _ = sup.Write(set(ch1Fader, lvl(t, finger), gesture))
-			time.Sleep(8 * time.Millisecond)
-		}
-		if r, _ := sup.OpenWall(ch1Fader, gesture); r.State != StateAtWall || r.Window.WallUp != 0 {
-			t.Fatalf("a moving finger opened the wall: %s %v", r.State, r.Window.WallUp)
-		}
-		time.Sleep(300 * time.Millisecond) // now still
-		if r, _ := sup.OpenWall(ch1Fader, gesture); r.State != StateFree || r.Window.WallUp != 6 {
-			t.Fatalf("after 300 ms still: %s %v", r.State, r.Window.WallUp)
 		}
 	})
 }
