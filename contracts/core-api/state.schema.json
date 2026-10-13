@@ -88,8 +88,25 @@
       "description": "v0.5, every message: show mode is locked on by the owner's PIN (README rule 16): setShowMode false and unlock are ERR_ROLE until unlockShowMode. Absent means not locked. The PIN record never appears in a state message."
     },
     "favourites": {
-      "$ref": "common.schema.json#/$defs/favourites",
-      "description": "v0.5: the favourites layer (README rule 17), in every snapshot and in the first message after setFavourites. Absent in a diff: unchanged; absent in a snapshot: empty."
+      "type": "array",
+      "maxItems": 65,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "strips"
+        ],
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "The client whose own layer this is; absent: the default layer (from the config) of every client that has not set its own."
+          },
+          "strips": {
+            "$ref": "common.schema.json#/$defs/favourites"
+          }
+        }
+      },
+      "description": "v0.5: the favourites layers (README rule 17), per client (review sec L4): the default first, then each client's own, by clientId. In every snapshot (when any layer has strips) and in the first message after setFavourites. A hub sends each device only its own layer (hub requirements)."
     },
     "undo": {
       "type": "array",
@@ -422,8 +439,10 @@
                   "idle",
                   "stale",
                   "stopped",
-                  "showModeOff"
-                ]
+                  "showModeOff",
+                  "showModeLocked"
+                ],
+                "description": "showModeLocked (v0.5): the owner locked show mode with a PIN; every unlock and its undo grace end (README rule 16)."
               }
             }
           },

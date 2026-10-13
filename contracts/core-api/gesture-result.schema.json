@@ -64,7 +64,7 @@
     },
     "pinRecord": {
       "type": "string",
-      "description": "v0.5, lockShowMode only: the hashed PIN record to store with this console's settings and pass back in config safety.showModeLock.pinRecord (README rule 16). Never shown to the user."
+      "description": "v0.5, lockShowMode only: the hashed PIN record to store with this console's settings and pass back in config safety.showModeLock.pinRecord (README rule 16). Only Gesture returns it; Apply drops it. Never shown to the user."
     }
   },
   "examples": [

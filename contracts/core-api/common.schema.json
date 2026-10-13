@@ -274,9 +274,20 @@
       "maxItems": 32,
       "uniqueItems": true,
       "items": {
-        "$ref": "#/$defs/stripRef"
+        "allOf": [
+          {
+            "$ref": "#/$defs/stripRef"
+          },
+          {
+            "properties": {
+              "index": {
+                "maximum": 128
+              }
+            }
+          }
+        ]
       },
-      "description": "v0.5 (design CR-33, redesign CC-7): the favourites user layer of this console on this device, in the order the user chose. Kinds input, main, bus, dca and matrix only (headamp and muteGroup are refused: ERR_INVALID_COMMAND / ERR_INVALID_CONFIG); each strip once; at most 32. Never written to the console."
+      "description": "v0.5 (design CR-33, redesign CC-7): a favourites layer, in the order the user chose. Kinds input, main, bus, dca and matrix only (headamp and muteGroup are refused: ERR_INVALID_COMMAND / ERR_INVALID_CONFIG); index at most 128; each strip once; at most 32. Never written to the console."
     },
     "busScope": {
       "type": "object",

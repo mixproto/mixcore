@@ -148,7 +148,7 @@ valid (CC-1 to CC-3); a v0.4 app keeps working, it just never meets a wall or a 
 | Undo | command `undo` (and `confirmed`); state `undo`: the newest entry per client with what an undo of it would ask (rule 14) | CC-6, CC-9, SR-13, SR-29 |
 | Cancel a held move | command `cancelHold`: one write of the grab value, the hold ends, no history entry (rule 14) | CC-9, AC-RD-U04 |
 | Favourites | config `favourites`, command `setFavourites`, state `favourites`: one ordered user layer per console (strip refs, at most 32); never written to the console (rule 17) | CC-7, D-23 |
-| Scene recall | `sceneRecalledAtConsole` gains `sceneNumber` (the loaded scene when the console reports one: xair) and `sceneName` (when the core knows it: no family yet, the name read waits for a lead decision); the undo history is cut at it | CC-10, SR-34 |
+| Scene recall | `sceneRecalledAtConsole` gains `sceneNumber` (the loaded scene when the console reports one: xair) and `sceneName` (when the core knows it: no family yet, the name read waits for a lead decision; the core cleans any name to at most 64 runes without control, format or separator characters); the undo history is cut at it | CC-10, SR-34 |
 | Watch | command `watch` names the bus on screen; event `externalChangeInScope` when anyone else changes it (rule 15) | CC-11, SR-34 |
 | Show mode PIN | commands `lockShowMode` and `unlockShowMode` with a 4-digit `pin`; config `safety.showModeLock`; state `showModeLocked`; the `Gesture` result of `lockShowMode` carries the hashed `pinRecord` to store (rule 16) | CC-12, CR-31 |
 | Bus meters | the meter frame carries the bus meters between the inputs and Main L/R (Main stays last); snapshot `buses[].meterIndex` (`meter-frame.md`) | CC-13, CR-32 |
@@ -228,10 +228,14 @@ Rules of v0.5 (numbered rules below are amended in place):
    change, whether or not that fader's own update has arrived yet. A report of the value the state already has (for
    example the core's re-read of an unchanged Gain) is not a change and never ends a hold; nor is the core's re-read of
    the last Gain value it sent (on a console that does not echo Gain it updates the state, but it is our own write).
-   v0.5 (CC-3): a Gain report that matches (within half a step of the headamp's law) the latest value the hold wrote or
-   any value of ours still in flight is our own write settling, never an external change; one that matches an earlier
-   write than the hold's latest is not published either (the shown value never moves back mid-drag). Only a value that
-   matches none of them ends the hold as `externalChangeOnHeld`.
+   v0.5 (CC-3, review blockers 1 and 2): only two kinds of Gain report can be the drag's own write: the holding
+   client's own echo (its origin) and the core's authoritative read-back (the settle re-read). Such a report that
+   matches (within half a step of the headamp's law) the hold's last write or a value of ours still in flight never
+   ends the hold. The holder's late echo of an earlier write is not published (the shown value never moves back
+   mid-drag); a read-back always is (it is the console's value). Everything else ends the hold as
+   `externalChangeOnHeld`, also when its value matches one of ours: the desk, a scene recall, another client's echo.
+   One finger per preamp: a `holdBegin` on a headamp's Gain that another client holds ends that client's hold
+   (`externalChangeOnHeld`, SR-15).
 5. Echo: a diff caused by the app's own write carries the write's origin (`kind`, `clientId`, `seq`), so the UI can tell
    its own echo from a change made at the desk. A write of another client (another `clientId` through the same engine,
    or a MixLink client) carries that client's origin and is an external change for everyone else's holds.
@@ -263,9 +267,10 @@ Rules of v0.5 (numbered rules below are amended in place):
    (gesture, stepper, undo, macro, another client through the same core): `ERR_GAIN_BOUND`. Only `typed` (after
    `confirmed` for a raise over 6 dB) and a confirmed `undo` (rule 14) may move further; scene recall happens at the
    console and is never refused.
-   **Inside a hold (v0.5, CC-3)** each write is bounded against the previous write of that hold instead: the first
-   against the hold's start (the console value, or the latest value of ours still in flight, which is where the console
-   is going), every later one against the value the hold wrote last. A candidate further than 6 dB is moved to 6 dB from
+   **Inside a hold (v0.5, CC-3)** the first write is bounded like a write outside a hold, against the console value and
+   every value in flight (`fader-and-gain.md` 15: "the first from the console value"); every later one against the
+   value the hold wrote last and the latest value any client sent. The hold's start (`startDB`) is the latest value of
+   ours still in flight, where the console is going, else the console value. A candidate further than 6 dB is moved to 6 dB from
    it (state `free`, `value` says where; at 1 dB per 48 pt a finger never asks for it). The in-flight count of the next
    paragraph never refuses or stalls a hold: values in flight are kept per console step (at most one per step of the
    headamp's grid), so a drag at 40 dB/s is written step by step. On a console that did not echo a Gain write the driver
@@ -347,7 +352,10 @@ Rules of v0.5 (numbered rules below are amended in place):
     message, viewer by default for a paired device (the config's default, owner, is only for the device user on a
     direct connection); on revoke it sets the client to viewer (ending its holds) before closing its sockets; it uses
     `SetShowModeBy` for a client's show-mode request. `SetShowMode` and `SetClientSafety` are unchecked, owner-only Go
-    internals that the hub never exposes to a device.
+    internals that the hub never exposes to a device. v0.5 (review sec L4, L5): the state carries every client's
+    newest `undo` entry, every client's `favourites` layer and every client's `externalChangeInScope` events; the hub
+    sends each device only its own (by its `clientId`) and the default favourites layer, and caps `watch` per
+    authenticated device (one scope each; the core keeps at most 64 watches and 64 favourites layers).
 
 14. **Undo in the core (v0.5, CC-6, CC-9, SR-13, SR-29).** The core keeps an undo history per `clientId` (newest last,
     64 entries per client, the oldest dropped; 64 clients, the one whose newest entry is oldest dropped). Entries:
@@ -373,8 +381,10 @@ Rules of v0.5 (numbered rules below are amended in place):
     (`number`, `name` when known). The core sends a new message whenever they change (a console change, a recall, the
     30 s running out); an `undo` checks them again when it runs.
     `cancelHold` (param of this client's open hold): if the hold wrote, one write of its start, which is exempt from the
-    window and show mode (it is never above the value the console had at `holdBegin`) and, for Gain, within 6 dB of the
-    hold's last write (else `ERR_GAIN_BOUND` and the hold stays open). The hold then ends like an external change: a
+    window and show mode (it is never above the value the console had at `holdBegin`). For Gain a cancel that lowers back
+    to the grab value is always written, however far the drag went (the safe direction is never refused in a feedback
+    emergency); one that would raise Gain more than 6 dB above the hold's last write is `ERR_GAIN_BOUND` and the hold
+    stays open (lead decision, review nit 7). The hold then ends like an external change: a
     further `set` of it is `ERR_GESTURE_ENDED` until `holdBegin` or `holdEnd`. No history entry. Not live: `ERR_STALE`;
     no open hold: `ERR_UNSUPPORTED` (`ERR_GESTURE_ENDED` when it already ended).
 15. **Watch (v0.5, CC-11, SR-34).** `watch` with `scope: {"bus": n}` names the bus this client shows (sends mode, bus
@@ -392,13 +402,19 @@ Rules of v0.5 (numbered rules below are amended in place):
     never stored, logged or sent in a state message, and the record never appears in one either. While locked the state
     says `showModeLocked: true`, `setShowMode` `false` and `unlock` are `ERR_ROLE`, and every live control (faders,
     mutes, sends, lowering Gain) is unchanged. `unlockShowMode` with the right PIN (owner or engineer) unlocks; show mode
-    stays on until `setShowMode` `false`. A wrong PIN is `ERR_ROLE`; after 5 wrong PINs every `unlockShowMode` is
-    `ERR_ROLE` for 30 s. A 4-digit PIN cannot resist an offline guess of the record: the app keeps it in protected
-    storage (Keychain, Keystore, DPAPI).
+    stays on until `setShowMode` `false`. A wrong PIN is `ERR_ROLE`. Online guessing is bounded (review security M1, go
+    S5, sec L3): an attempt is reserved before the PIN is hashed and only one hash runs at a time (`ERR_ROLE` while one
+    does); 5 wrong PINs of one client, or 10 of all clients together, lock attempts out for 30 s, then 60 s, 120 s, ...
+    at most 10 minutes; the owner is never held by a lockout other clients caused. Locking ends every Gain unlock (event
+    `gainUnlockEnded`, reason `showModeLocked`) and its undo grace (review sec M2). `Apply` of `lockShowMode` drops the
+    record: only `Gesture` returns it. A 4-digit PIN cannot resist an offline guess of the record: the app keeps it in
+    protected storage (Keychain, Keystore, DPAPI).
 17. **Favourites (v0.5, CC-7, D-23).** `setFavourites` with `favourites`, an ordered list of strip refs (`input`, `main`,
-    `bus`, `dca`, `matrix`; each once; at most 32), replaces the console's favourites layer for this engine; any role
-    may set it (it changes only this device). Config `favourites` restores it at `Start`; state `favourites` is in every
-    snapshot and in the first message after a change. It is never written to the console. A ref the console does not
+    `bus`, `dca`, `matrix`; index at most 128; each once; at most 32), replaces the favourites layer of the command's
+    `clientId` (per device, review sec L4); any role may set it. Config `favourites` is the default layer of every
+    client without its own, restored at `Start`. State `favourites` lists the layers (`{clientId?, strips}`: the default
+    without `clientId` first, then each client's, at most 64) in every snapshot that has one and in the first message
+    after a change. It is never written to the console. A ref the console does not
     have stays in the list; the UI shows only strips the snapshot has.
 
 ## Error codes
