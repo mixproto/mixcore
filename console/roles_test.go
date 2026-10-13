@@ -10,8 +10,10 @@ import (
 	"math"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/mixproto/mixcore/driver"
+	"github.com/mixproto/mixcore/internal/testkit"
 	"github.com/mixproto/mixcore/meters"
 	"github.com/mixproto/mixcore/model"
 )
@@ -260,5 +262,23 @@ func TestRole_WriteLeavesUnderTheLockOfItsRoleCheck(t *testing.T) {
 		if !locked {
 			t.Fatal("Apply ran after the role check released the lock: a role change could slip in between")
 		}
+	})
+}
+
+// driver.Session's non-blocking contract, seen from the supervisor: it
+// calls Apply under its lock (Sec L4), so a session whose Apply blocks
+// would freeze the supervisor. The guard every driver test uses
+// (testkit.ReturnsWithin) catches exactly that.
+func TestSession_BlockingApplyIsCaughtByTheGuard(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sup, drv := startRole(t, Role{}, busFixture())
+		release := make(chan struct{})
+		drv.session(0).onApply = func() { <-release }
+		err := testkit.ReturnsWithin(time.Second, func() { _, _ = sup.Write(set(sendLevel(1, 2), lvl(t, -9), musician)) })
+		if !errors.Is(err, testkit.ErrBlocked) {
+			t.Fatalf("a blocking Apply was not caught: %v", err)
+		}
+		close(release) // let the write finish before the supervisor stops
+		synctest.Wait()
 	})
 }

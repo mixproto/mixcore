@@ -150,6 +150,17 @@ type Link interface {
 }
 
 // Session is one live connection, owned by exactly one console.Supervisor.
+//
+// Non-blocking contract (every driver, review Sec L4): Apply, SetMeters,
+// Reread and RereadExcept (Rereader, SelectiveRereader) and SetHeld
+// (HeldSetter) return at once. They may take a short internal lock, but
+// they never wait for the session's owner goroutine, the network, a
+// channel with a reader, a timer or the supervisor, and never call back
+// into it. The supervisor calls them while it holds its own lock, so that
+// a role check, a held list or a stale mark and the call they guard are
+// one step; a call that blocked would freeze every other client and the
+// event loop. internal/testkit.ReturnsWithin checks it in each driver's
+// tests (driver/x32, driver/xair: TestSession_CallsNeverBlock).
 type Session interface {
 	Identity() Identity
 	Capabilities() model.Capabilities
@@ -161,7 +172,8 @@ type Session interface {
 	// every change on events.
 	Run(ctx context.Context, events chan<- Event) error
 
-	// Apply hands one write to the session and returns at once.
+	// Apply hands one write to the session and returns at once (it queues;
+	// the owner goroutine sends), see the non-blocking contract above.
 	// Errors: ErrNotUserOrigin, ErrUnsupported, ErrClosed, model.ErrInvalidValue.
 	Apply(cmd Command) error
 
