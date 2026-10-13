@@ -396,8 +396,13 @@ Binding names: Swift `MobileStartDemo(_ json: String?, _ error: NSErrorPointer) 
 signature or error code changes. Behringer WING, WING BK, WING Rack and WING Compact over the native protocol on TCP
 2222 (`docs/protocols/wing.md`); discovery is the UDP probe `WING?` on port 2222; meters are listed in
 `meter-frame.md` (n = 42). What the apps should know (details in the `family` description of `config.schema.json`):
-- Inputs 1..40, one main strip (main 1), 16 DCAs, 8 mute groups. A strip's mute-group membership is not known yet, so
-  strips list none; their effective mute is their own mute plus muted DCAs.
+- Inputs 1..40, one main strip (main 1), 16 DCAs, 8 mute groups. The snapshot says `"muteGroupMembership": false`:
+  the console does not report which mute groups a strip belongs to, so strips have no `muteGroups` field. The core
+  reads the console's own effective mute of each strip (`$mute`, basis `console`).
+- **`effectiveMute.muted` may be `null`** (basis `partial`): the core cannot tell whether the strip is silenced (an
+  engaged mute group with unknown membership, or a console value whose meaning is unverified). A UI must draw null as
+  "mute state unknown" (localized), never as live, and never offer it as a reason to unmute. A strip's own mute
+  (`own: true`) always gives `muted: true`.
 - Headamp indexes: local `n` is `n` (8 on WING, 24 on Rack and Compact), AES50 A `n` is `100 + n`, AES50 B `n` is
   `200 + n` (read-only). The Gain law of each comes from the console itself (2.5 dB steps on local inputs in the
   console's own definition).

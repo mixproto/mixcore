@@ -204,10 +204,21 @@
         "muteGroups",
         "dcas"
       ],
-      "description": "v0.1 (design CR-01, SR-04): whether the strip is silenced toward Main LR, and why. muted = own OR any listed group. muteGroups lists the engaged mute groups the strip belongs to; dcas lists the muted DCAs it belongs to (x32: a muted DCA silences its members toward Main LR only, unless the console preference says otherwise; per-bus effective mute comes with buses; xair: the same rule, XA section 3; its main strip has no membership, so its effective mute is its own mute). UI text: 'MUTED by MG 2', 'DCA 1 muted'.",
+      "description": "v0.1 (design CR-01, SR-04): whether the strip is silenced toward Main LR, and why. muted = own OR any listed group. Additive (wing): muted is null when the core cannot tell (basis partial): a mute group whose membership the console does not report is engaged, or the console reported a value whose meaning is unknown. A UI draws null as 'mute state unknown', never as live. basis: derived (computed from own mute, membership and group states, all known: x32, xair), console (the console reported the strip's effective mute itself: wing $mute), partial (an input is unknown; muted is null). own true always gives muted true. muteGroups lists the engaged mute groups the strip belongs to; dcas lists the muted DCAs it belongs to (x32: a muted DCA silences its members toward Main LR only, unless the console preference says otherwise; per-bus effective mute comes with buses; xair: the same rule, XA section 3; its main strip has no membership, so its effective mute is its own mute). UI text: 'MUTED by MG 2', 'DCA 1 muted'.",
       "properties": {
         "muted": {
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "basis": {
+          "enum": [
+            "derived",
+            "console",
+            "partial"
+          ],
+          "description": "Additive (wing). Absent in older cores means derived."
         },
         "own": {
           "type": "boolean"

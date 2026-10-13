@@ -73,6 +73,10 @@
       },
       "description": "v0.3, every message while show mode is on: headamps whose Gain raise is unlocked ('Gain unlocked for ...'). An unlock ends on relock, 20 s without a command on it, stale, pause or stop (event gainUnlockEnded)."
     },
+    "muteGroupMembership": {
+      "type": "boolean",
+      "description": "Additive (wing), snapshot only: false when the console does not report which mute groups a strip belongs to (wing, docs/protocols/wing.md item 11). Strips then have no muteGroups field, and an unmuted strip's effectiveMute.muted is null while any mute group is engaged. Absent means true."
+    },
     "console": {
       "type": "object",
       "additionalProperties": false,
