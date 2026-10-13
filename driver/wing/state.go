@@ -161,6 +161,10 @@ func (s *session) capabilities() model.Capabilities {
 		MuteGroups: s.tab.groups, DCAs: s.tab.dcas, InputMeters: true, EchoesOwnWrites: true,
 		MaxPushClients: clientsFor(s.ident.Firmware), InputHeadamps: s.hasInputHeadamps(),
 		MuteGroupMembershipUnknown: s.tab.groups > 0, // item 11
+		// core-api v0.4: the fader grid ("-oo..10 in 1024 steps", WG-F60, the
+		// grid of sameFader) and the echo window; no buses, matrices, sends,
+		// DCA masters or colours yet: absent, never faked.
+		FaderSteps: faderSteps, EchoWindow: s.timing.EchoWindow,
 	}
 	for _, h := range s.tab.headamps {
 		if s.absent[h.gain] || h.law.step <= 0 {

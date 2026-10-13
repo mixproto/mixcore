@@ -141,7 +141,21 @@ type rereadState struct {
 var (
 	_ driver.Rereader          = (*session)(nil)
 	_ driver.SelectiveRereader = (*session)(nil)
+	_ driver.HeldSetter        = (*session)(nil)
 )
+
+// SetHeld implements driver.HeldSetter: the parameters a person holds now
+// are left out of every re-read until the next call. It only takes a short
+// lock (the driver.Session non-blocking contract) and never writes.
+func (s *session) SetHeld(held []model.ParamRef) {
+	set := make(map[model.ParamRef]bool, len(held))
+	for _, p := range held {
+		set[p] = true
+	}
+	s.mu.Lock()
+	s.held = set
+	s.mu.Unlock()
+}
 
 // Reread implements driver.Rereader. It returns at once.
 func (s *session) Reread() error { return s.RereadExcept(nil) }
@@ -187,7 +201,13 @@ func (s *session) rereadDue(now time.Time) error {
 // are console changes.
 func (s *session) startReread(now time.Time) error {
 	s.mu.Lock()
-	skip := s.rrSkip
+	skip := make(map[model.ParamRef]bool, len(s.rrSkip)+len(s.held))
+	for p := range s.rrSkip {
+		skip[p] = true
+	}
+	for p := range s.held {
+		skip[p] = true
+	}
 	s.rrSkip = nil
 	s.mu.Unlock()
 	s.own.rr.last = now

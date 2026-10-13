@@ -50,7 +50,8 @@ type session struct {
 	mu      sync.Mutex
 	order   []int
 	pending map[int]pendingWrite
-	rrSkip  map[model.ParamRef]bool
+	rrSkip  map[model.ParamRef]bool // left out of the next pass (RereadExcept)
+	held    map[model.ParamRef]bool // left out of every pass while held (SetHeld)
 
 	done        chan struct{}
 	cmdReady    chan struct{}
