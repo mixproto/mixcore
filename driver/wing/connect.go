@@ -202,9 +202,6 @@ func (s *session) acceptInitial(i int, w wireValue) bool {
 		s.log.Debug("wing: value outside the documented encoding", "path", p.path, "err", err)
 		return false
 	}
-	if p.conv == convTags {
-		s.own.tagMask[p.input-1], _ = v.Mask()
-	}
 	s.remember(i, v)
 	return true
 }

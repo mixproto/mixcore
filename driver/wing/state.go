@@ -37,8 +37,7 @@ type ownerState struct {
 	reads      map[int][]readEntry
 	srcGroup   []string // per input
 	srcIndex   []int32
-	tagMask    []uint32 // DCA membership from tags, before /cfg/dcamgrp
-	headampOf  []int    // the headamp each input reports (0 = none)
+	headampOf  []int // the headamp each input reports (0 = none)
 	dcamgrp    bool
 	aesPresent map[int]bool
 	lastProbe  time.Time
@@ -67,7 +66,7 @@ func newOwnerState(t *table) ownerState {
 	return ownerState{
 		known: make([]model.Value, n), have: make([]bool, n), raw: make([]wireValue, n),
 		sent: map[int][]sentWrite{}, lastSent: map[int]wireValue{}, settleAt: map[int]time.Time{}, reads: map[int][]readEntry{},
-		srcGroup: make([]string, t.inputs), srcIndex: make([]int32, t.inputs), tagMask: make([]uint32, t.inputs),
+		srcGroup: make([]string, t.inputs), srcIndex: make([]int32, t.inputs),
 		headampOf: make([]int, t.inputs), dcamgrp: true, aesPresent: map[int]bool{}, scene: newSceneState(),
 	}
 }
@@ -141,6 +140,7 @@ func (s *session) capabilities() model.Capabilities {
 		InputCount: s.tab.inputs, AbsentInputs: maxInputs - s.tab.inputs, HasMain: s.tab.hasMain,
 		MuteGroups: s.tab.groups, DCAs: s.tab.dcas, InputMeters: true, EchoesOwnWrites: true,
 		MaxPushClients: clientsFor(s.ident.Firmware), InputHeadamps: s.hasInputHeadamps(),
+		MuteGroupMembershipUnknown: s.tab.groups > 0, // item 11
 	}
 	for _, h := range s.tab.headamps {
 		if s.absent[h.gain] || h.law.step <= 0 {
@@ -168,7 +168,7 @@ func (s *session) buildState() (model.State, error) {
 	if err != nil {
 		return model.State{}, err
 	}
-	st = st.WithGroups(s.tab.groups, s.tab.dcas)
+	st = st.WithGroups(s.tab.groups, s.tab.dcas).WithMuteRules(s.muteRules())
 	if st, err = st.WithHeadamps(s.stateHeadamps()); err != nil {
 		return model.State{}, err
 	}
@@ -176,11 +176,7 @@ func (s *session) buildState() (model.State, error) {
 		if p.ref == (model.ParamRef{}) || s.absent[i] || !s.own.have[i] || p.ref.Strip.Kind == model.StripHeadamp {
 			continue
 		}
-		v := s.own.known[i]
-		if p.conv == convTags {
-			v = model.Mask(s.reportedDCAs(p.input))
-		}
-		if st, err = st.With(p.ref, v); err != nil {
+		if st, err = st.With(p.ref, s.own.known[i]); err != nil {
 			return model.State{}, fmt.Errorf("wing: %s: %w", p.path, err)
 		}
 	}
@@ -215,14 +211,15 @@ func (s *session) stateHeadamps() []model.Headamp {
 	return out
 }
 
-// reportedDCAs is the DCA membership of input n as reported to the model:
-// empty while /cfg/dcamgrp = 0, because a DCA mute then does not mute its
-// members (wing.md 3.2) and the model derives effective mute from it.
-func (s *session) reportedDCAs(n int) uint32 {
-	if !s.own.dcamgrp {
-		return 0
+// muteRules are what the effective-mute rule cannot know on WING: mute
+// group membership (item 11), DCA membership when a channel has no tags,
+// and /cfg/dcamgrp (a muted DCA mutes its members only when it is 1).
+func (s *session) muteRules() model.MuteRules {
+	r := model.MuteRules{MuteGroupMembershipUnknown: s.tab.groups > 0, DCAMuteSilent: !s.own.dcamgrp}
+	for _, ti := range s.tab.tags {
+		r.DCAMembershipUnknown = r.DCAMembershipUnknown || ti < 0 || s.absent[ti]
 	}
-	return s.own.tagMask[n-1]
+	return r
 }
 
 // fromWire converts a console value of p to the model (invariant 7).
@@ -249,6 +246,8 @@ func (s *session) fromWire(p *param, w wireValue) (model.Value, error) {
 	case convMute, convPhantom:
 		on, err := switchFromWire(w)
 		return model.Bool(on), err
+	case convConsoleMute:
+		return consoleMuteFromWire(w)
 	case convName:
 		t, err := textFromWire(w)
 		if err != nil {
@@ -328,3 +327,13 @@ func sameWire(p *param, a, b wireValue) bool {
 // faderEchoMinDB: half of a 0.1 dB rounding step (hardware item 10 may show
 // the console rounds dB writes so); below the hearing threshold anyway.
 const faderEchoMinDB = 0.05
+
+// consoleMuteFromWire reads <s>/$mute (wing.md 3.2, WG-F24): 0 not muted,
+// 1 muted, 2 a value whose meaning is unverified (item 12): unknown.
+func consoleMuteFromWire(w wireValue) (model.Value, error) {
+	n, err := intFromWire(w, 0, 2)
+	if err != nil {
+		return model.Value{}, err
+	}
+	return model.Index([...]int{model.ConsoleMuteOff, model.ConsoleMuteOn, model.ConsoleMuteUnknown}[n])
+}

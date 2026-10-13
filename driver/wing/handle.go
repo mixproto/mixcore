@@ -36,7 +36,7 @@ func (s *session) onMessage(m inMsg) {
 		s.onLock(m.val)
 		return
 	case convDCAMgrp:
-		s.onDCAMgrp(m.val, m.at)
+		s.onDCAMgrp(m.val)
 		return
 	case convSrcGroup, convSrcIndex:
 		s.onSource(p, m.val, m.at)
@@ -51,11 +51,6 @@ func (s *session) onMessage(m inMsg) {
 	if err != nil {
 		s.log.Debug("wing: value outside the documented encoding", "path", p.path, "err", err)
 		return
-	}
-	if p.conv == convTags {
-		mask, _ := v.Mask()
-		s.own.tagMask[p.input-1] = mask
-		v = model.Mask(s.reportedDCAs(p.input))
 	}
 	if ev, ok := s.classify(idx, p, v, m.val, m.at); ok {
 		s.emit(ev)
@@ -138,22 +133,15 @@ func (s *session) onLock(w wireValue) {
 	}
 }
 
-// onDCAMgrp follows /cfg/dcamgrp (wing.md 3.2) and re-reports every
-// input's DCA membership when it changes.
-func (s *session) onDCAMgrp(w wireValue, at time.Time) {
+// onDCAMgrp follows /cfg/dcamgrp (wing.md 3.2): it changes the rule (a
+// muted DCA mutes its members or not), never the membership.
+func (s *session) onDCAMgrp(w wireValue) {
 	on, err := switchFromWire(w)
 	if err != nil || on == s.own.dcamgrp {
 		return
 	}
 	s.own.dcamgrp = on
-	for n, ti := range s.tab.tags {
-		if ti < 0 || s.absent[ti] {
-			continue
-		}
-		v := model.Mask(s.reportedDCAs(n + 1))
-		s.remember(ti, v)
-		s.emit(driver.ParamChanged{Param: s.tab.all[ti].ref, Value: v, Origin: consoleOrigin, At: at})
-	}
+	s.emit(driver.MuteRulesChanged{Rules: s.muteRules()})
 }
 
 // onSource follows a channel's source (wing.md 3.4): a new headamp is

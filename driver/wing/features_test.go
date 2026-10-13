@@ -58,26 +58,6 @@ func TestMeters_StreamRenewAndStop(t *testing.T) {
 	})
 }
 
-// TestDCAMgrp: with /cfg/dcamgrp = 0 a DCA mute does not mute its members
-// (wing.md 3.2), so membership is reported empty and comes back with 1.
-func TestDCAMgrp(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		r := newRig(t, simwing.Options{})
-		mustSet(t, r.sim, "/ch/4/tags", "#D3")
-		mustSet(t, r.sim, "/cfg/dcamgrp", 0)
-		s := r.connect()
-		if st, _ := s.Snapshot().Strip(model.StripRef{Kind: model.StripInput, Index: 4}); st.DCAs != 0 {
-			t.Fatalf("dcamgrp 0: membership %b", st.DCAs)
-		}
-		rn := r.run(s)
-		mustSet(t, r.sim, "/cfg/dcamgrp", 1)
-		c, ok := findChange(rn.changes(100*time.Millisecond), ref(model.StripInput, 4, model.FieldDCAs))
-		if m, _ := c.Value.Mask(); !ok || m != 1<<2 {
-			t.Fatalf("dcamgrp 1: %+v", c)
-		}
-	})
-}
-
 // TestSourceChange_AES50Headamp (wing.md 3.4): a channel patched to AES50
 // A 5 reports headamp 105, read-only, and its gain is read (never written).
 func TestSourceChange_AES50Headamp(t *testing.T) {

@@ -199,3 +199,23 @@ func leaves(n *node, out []*node) []*node {
 	}
 	return out
 }
+
+// remove deletes the node at path and everything below it.
+func (t *tree) remove(path string) {
+	n, ok := t.byPath[path]
+	if !ok || n.parent == nil {
+		return
+	}
+	for _, l := range append(leaves(n, nil), n) {
+		delete(t.byPath, l.path)
+		delete(t.byHash, l.hash)
+	}
+	p := n.parent
+	delete(p.byName, n.name)
+	for i, c := range p.children {
+		if c == n {
+			p.children = append(p.children[:i:i], p.children[i+1:]...)
+			break
+		}
+	}
+}

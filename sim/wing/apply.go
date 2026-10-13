@@ -63,8 +63,8 @@ func (s *Sim) set(n *node, v value) (changed, derived []*node) {
 	switch n.name {
 	case "fdr":
 		derived = s.setDerived(parent.child("$fdr"), v)
-	case "mute":
-		derived = s.setDerived(parent.child("$mute"), v)
+	case "mute", "tags", "dcamgrp":
+		derived = s.recomputeMutes() // own, group and DCA mutes all feed $mute (wing.md 3.2)
 	case "name":
 		derived = s.setDerived(parent.child("$name"), textVal(s.shownName(parent)))
 	case "col":

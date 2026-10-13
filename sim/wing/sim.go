@@ -42,6 +42,9 @@ const (
 	LocalGainStepCoarse = 2.5
 	LocalGainStepFine   = 0.5
 	outQueue            = 4096 // queued writes per connection before it is dropped
+	// defaultGroupMuteValue: $mute is 0..2 (wing.md 3.2); what 2 means is
+	// item 12, so the default reports it for a mute by a group.
+	defaultGroupMuteValue = 2
 )
 
 // RefuseMode is how a connection over the limit is refused (item 7).
@@ -89,6 +92,14 @@ type Options struct {
 	// /$ctl/lib/$actidx and $active. Default false.
 	PushSceneMarkers bool
 
+	// GroupMuteValue: [TO-VERIFY] item 12. The $mute a strip reports when
+	// only a mute group or a DCA mutes it: 2 (default, a value whose
+	// meaning the document leaves open) or 1.
+	GroupMuteValue int32
+	// UnknownPaths are leaves this console does not have (a schema
+	// difference, WG-F35): they are not in the tree at all.
+	UnknownPaths []string
+
 	MeterInterval time.Duration // WG-F51
 	MeterTTL      time.Duration // WG-F51
 	Logger        *slog.Logger
@@ -109,6 +120,7 @@ func (o Options) withDefaults() Options {
 	o.LocalGainStep = cmpOr(o.LocalGainStep, LocalGainStepCoarse)
 	o.MeterInterval = cmpOr(o.MeterInterval, DefaultMeterInterval)
 	o.MeterTTL = cmpOr(o.MeterTTL, DefaultMeterTTL)
+	o.GroupMuteValue = cmpOr(o.GroupMuteValue, defaultGroupMuteValue)
 	if o.Logger == nil {
 		o.Logger = slog.New(slog.DiscardHandler)
 	}
@@ -148,12 +160,17 @@ type Sim struct {
 	downUntil time.Time
 	pc        net.PacketConn
 	levels    meterLevels
+	members   map[int]uint32 // channel -> mute groups (bit g-1), test control
 }
 
 // New returns a simulator with the fixture tree.
 func New(opts Options) *Sim {
 	o := opts.withDefaults()
-	return &Sim{opts: o, tree: buildFixture(o), conns: map[*client]struct{}{}, levels: newMeterLevels()}
+	t := buildFixture(o)
+	for _, p := range o.UnknownPaths {
+		t.remove(p)
+	}
+	return &Sim{opts: o, tree: t, conns: map[*client]struct{}{}, levels: newMeterLevels(), members: map[int]uint32{}}
 }
 
 // Serve accepts TCP connections on ln until ctx ends or ln fails.

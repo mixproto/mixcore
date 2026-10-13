@@ -55,10 +55,15 @@
 // (open question 4: mains 2..4 are not modelled yet); DCAs 1..16 and mute
 // groups 1..8 (mute only); headamps LCL 1..8 on WING and 1..24 on Rack and
 // Compact (WG-F03) with writable Gain, AES50 A and B read-only (item 15),
-// phantom read-only. Mute-group membership of strips is unknown (item 11),
-// so strips report none. With /cfg/dcamgrp = 0 a DCA mute does not mute its
-// members (wing.md 3.2), so DCA membership is then reported empty to keep
-// the derived effective mute true.
+// phantom read-only.
+//
+// Effective mute (review H1): each input's and main's $mute is read at
+// connect, on re-reads and on every push (WG-F24) as the console's own
+// report: 0 not muted, 1 muted, 2 unknown until item 12. Mute-group
+// membership of strips is unknown (item 11): capabilities say so and the
+// state's MuteRules make an unmuted strip unknown while a group is
+// engaged, never live. DCA membership is reported as the tags say;
+// /cfg/dcamgrp only changes the rule (MuteRulesChanged).
 package wing
 
 import (

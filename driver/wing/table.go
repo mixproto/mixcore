@@ -40,6 +40,7 @@ const (
 	leafMute      = "mute"
 	leafName      = "name"
 	leafShownName = "$name"
+	leafShownMute = "$mute"
 	leafTags      = "tags"
 	leafGain      = "g"
 	leafPhantom   = "vph"
@@ -61,17 +62,18 @@ var errSchema = errors.New("wing: console schema lacks a required node")
 type conv uint8
 
 const (
-	convFader    conv = iota + 1 // D5 dB (WG-F60)
-	convMute                     // int, 1 = muted / engaged (wing.md 3.2)
-	convName                     // string; read $name, write name (WG-F107)
-	convTags                     // string, DCA membership (wing.md 3.2), read-only
-	convGain                     // D5 dB on the headamp's law (WG-F62)
-	convPhantom                  // int, 1 = on, read-only (wing.md 3.4)
-	convSrcGroup                 // enum, a channel's source group (internal)
-	convSrcIndex                 // int 1..64, a channel's source number (internal)
-	convDCAMgrp                  // int: DCA mute mutes members (wing.md 3.2, internal)
-	convTCPLock                  // int: remote lock for TCP (WG-F26, internal)
-	convIdentity                 // string, identity (wing.md 3.5, internal)
+	convFader       conv = iota + 1 // D5 dB (WG-F60)
+	convMute                        // int, 1 = muted / engaged (wing.md 3.2)
+	convName                        // string; read $name, write name (WG-F107)
+	convTags                        // string, DCA membership (wing.md 3.2), read-only
+	convConsoleMute                 // <s>/$mute: the console's effective mute (WG-F24), read-only
+	convGain                        // D5 dB on the headamp's law (WG-F62)
+	convPhantom                     // int, 1 = on, read-only (wing.md 3.4)
+	convSrcGroup                    // enum, a channel's source group (internal)
+	convSrcIndex                    // int 1..64, a channel's source number (internal)
+	convDCAMgrp                     // int: DCA mute mutes members (wing.md 3.2, internal)
+	convTCPLock                     // int: remote lock for TCP (WG-F26, internal)
+	convIdentity                    // string, identity (wing.md 3.5, internal)
 )
 
 // param is one console parameter the session reads (and maybe writes).
@@ -181,6 +183,8 @@ func (t *table) addStripCore(defs map[string]wingproto.Def, root string, s model
 	}
 	t.add(param{ref: model.ParamRef{Strip: s, Field: model.FieldFader}, path: root + "/" + leafFader, hash: fdr.Hash, conv: convFader, required: true})
 	t.add(param{ref: model.ParamRef{Strip: s, Field: model.FieldMute}, path: root + "/" + leafMute, hash: mute.Hash, conv: convMute, required: true})
+	t.optional(defs, param{ref: model.ParamRef{Strip: s, Field: model.FieldConsoleMute}, path: root + "/" + leafShownMute,
+		conv: convConsoleMute, readOnly: true})
 	t.add(param{ref: model.ParamRef{Strip: s, Field: model.FieldName}, path: root + "/" + leafShownName, hash: shown.Hash,
 		writePath: root + "/" + leafName, writeHash: name.Hash, conv: convName, required: true, maxLen: int(name.MaxLen)})
 	return nil
