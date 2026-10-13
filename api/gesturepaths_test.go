@@ -7,6 +7,7 @@ package api
 import (
 	"encoding/json"
 	"flag"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -41,7 +42,19 @@ type gesturePath struct {
 	Motion       string        `json:"motion"`
 	Why          string        `json:"why"`
 	LargeContact bool          `json:"largeContact,omitempty"` // contact larger than touch.largeContact
+	Start        *pathStart    `json:"start,omitempty"`        // v0.5: where a Gain-row path starts (absent: on the control)
+	Pointer      string        `json:"pointer,omitempty"`      // v0.5: "mouse" for a pointer path (absent: touch)
 	Variants     []pathVariant `json:"variants"`
+}
+
+// pathStart places the touch-down of a Gain-row path (redesign CC-8,
+// AC-RD-G01, G02): on the wheel, from its left end or at its centre, or
+// some pt from a screen edge (where only the steppers are, SR-32).
+type pathStart struct {
+	Control    string   `json:"control"`              // gainWheel or screenEdge
+	FromLeftPt *float64 `json:"fromLeftPt,omitempty"` // gainWheel: pt from the wheel's left end; absent: its centre
+	Edge       string   `json:"edge,omitempty"`       // screenEdge: left or right
+	FromEdgePt float64  `json:"fromEdgePt,omitempty"` // screenEdge: pt from that edge
 }
 
 type pathsFile struct {
@@ -82,37 +95,6 @@ func line(holdMs, dur int, dx, dy float64) []pathPoint {
 
 func any1(pts []pathPoint) []pathVariant { return []pathVariant{{Orientation: "any", Points: pts}} }
 
-// climb repeats n times: up dy in moveMs, then a rest of restMs.
-func climb(n int, dy float64, moveMs, restMs int) []pathPoint {
-	pts := []pathPoint{{}}
-	for i := range n {
-		base, y0 := i*(moveMs+restMs), float64(i)*dy
-		for _, p := range line(0, moveMs, 0, dy)[1:] {
-			pts = append(pts, pathPoint{T: base + p.T, Y: y0 + p.Y})
-		}
-		for t := pathSampleMs; t <= restMs; t += pathSampleMs {
-			pts = append(pts, pathPoint{T: base + moveMs + t, Y: y0 + dy})
-		}
-	}
-	return pts
-}
-
-// rest is a resting finger after a move up dy in moveMs: restMs of a slow
-// sway of +-swayPt at 1.5 Hz (at most 28 pt/s for 3 pt, below wall.restSpeed
-// 30 pt/s; restMs a multiple of 1/3 s ends it at the centre),
-// then up moreDy in 200 ms (review pass 3, MEDIUM 2).
-func rest(dy float64, moveMs, restMs int, swayPt, moreDy float64) []pathPoint {
-	pts := line(0, moveMs, 0, dy)
-	for t := pathSampleMs; t <= restMs; t += pathSampleMs {
-		pts = append(pts, pathPoint{T: moveMs + t, Y: round1(dy + swayPt*math.Sin(2*math.Pi*1.5*float64(t)/1000))})
-	}
-	base := moveMs + restMs
-	for _, p := range line(0, 200, 0, moreDy)[1:] {
-		pts = append(pts, pathPoint{T: base + p.T, Y: round1(dy + p.Y)})
-	}
-	return pts
-}
-
 // buildPaths returns P1..P8, P1D and P1R..P6R as specified (phone-safety
 // acceptance, "Touch paths").
 func buildPaths() pathsFile {
@@ -148,11 +130,6 @@ func buildPaths() pathsFile {
 		{ID: "P8", Motion: "a large contact lands on the cap and moves up 100 in 200 ms", Why: "the hand holding the phone",
 			LargeContact: true, Variants: any1(line(0, 200, 0, 100))},
 		{ID: "P1D", Motion: "down 60 in 40 ms", Why: "the emergency pull must never be stopped", Variants: any1(line(0, 40, 0, -60))},
-		{ID: "P9", Motion: "five times: up 40 in 200 ms, then rest 400 ms", Why: "a deliberate climb that opens several slip-guard walls in one gesture (review HIGH 2)",
-			Variants: any1(climb(5, 40, 200, 400))},
-		{ID: "P10", Motion: "up past the first slip-guard wall (portrait 100, landscape 35) in 300 ms, rest 1000 ms swaying +-3 at 1.5 Hz, then up 40 (landscape 15) in 200 ms",
-			Why:      "a real resting finger trembles: the wall must still open (review pass 3, MEDIUM 2)",
-			Variants: []pathVariant{{"portrait", rest(100, 300, 1000, 3, 40)}, {"landscape", rest(35, 300, 1000, 3, 15)}}},
 	}
 	for _, p := range ps[:6] { // P1R..P6R: rotated 90 degrees clockwise, up becomes right
 		r := gesturePath{ID: p.ID + "R", Motion: p.Motion + ", rotated 90 degrees clockwise", Why: p.Why + " on a horizontal control"}
@@ -165,9 +142,48 @@ func buildPaths() pathsFile {
 		}
 		ps = append(ps, r)
 	}
+	ps = append(ps, gainWheelPaths()...)
 	return pathsFile{Version: contractVersion, SampleMs: pathSampleMs, Paths: ps,
-		Description: "CR-27 touch paths of dybyskz-mix docs/design/acceptance/phone-safety.md; the finger lifts after the last point.",
+		Description: "CR-27 touch paths of dybyskz-mix docs/design/acceptance/phone-safety.md and (v0.5, CC-8) the Gain wheel paths of acceptance/redesign.md; the finger lifts after the last point.",
 		Units:       "t in ms since touch-down; x, y in pt (Apple) or dp (Android) relative to the grab point; +x right, +y up"}
+}
+
+// gainWheelPaths are the Gain wheel paths of the redesign (CC-8, AC-RD-G01,
+// G02): strokes inside and out of the wheel's frame, a mouse drag, the
+// longest stroke and system back-swipes starting near a screen edge.
+func gainWheelPaths() []gesturePath {
+	at := func(x float64) *pathStart { return &pathStart{Control: "gainWheel", FromLeftPt: &x} }
+	centre := &pathStart{Control: "gainWheel"}
+	drift := sample(400, func(u float64) (float64, float64) { // right 400; after 100 pt it drifts up 40
+		x := 400 * u
+		return x, 40 * max(0, x-100) / 300
+	})
+	out := []gesturePath{
+		{ID: "G1", Motion: "from 5 pt inside the wheel's left end, right 230 in 307 ms (750 pt/s), inside the frame",
+			Why: "a deliberate stroke is never capped (AC-RD-G01)", Start: at(5), Variants: any1(line(0, 307, 230, 0))},
+		{ID: "G2", Motion: "from the wheel's centre, right 400 in 400 ms, beyond the frame",
+			Why: "leaving the frame ends the stroke (AC-RD-G02)", Start: centre, Variants: any1(line(0, 400, 400, 0))},
+		{ID: "G2D", Motion: "from the wheel's centre, right 400 in 400 ms, drifting up 40 after the first 100",
+			Why: "a drift out of the frame ends the stroke (AC-RD-G02)", Start: centre, Variants: any1(drift)},
+		{ID: "G2M", Motion: "mouse: from the wheel's centre, right 600 and back 600 with the button held, 1000 ms",
+			Why: "the pointer leaving the frame ends the stroke; coming back writes nothing (AC-RD-G02)", Start: centre, Pointer: "mouse",
+			Variants: any1(sample(1000, func(u float64) (float64, float64) { return 600 * (1 - math.Abs(2*u-1)), 0 }))},
+		{ID: "G3", Motion: "from 1 pt inside the wheel's left end to 1 pt inside its right end (iPhone 6.1 inch portrait: 238), 300 ms",
+			Why: "the longest stroke: at most 5 dB on every device (AC-RD-G02)", Start: at(1), Variants: any1(line(0, 300, 238, 0))},
+	}
+	for _, edge := range []string{"left", "right"} {
+		dx := 200.0
+		if edge == "right" {
+			dx = -200
+		}
+		for _, d := range []float64{10, 20, 30, 40} {
+			out = append(out, gesturePath{ID: fmt.Sprintf("E%.0f%s", d, map[string]string{"left": "L", "right": "R"}[edge]),
+				Motion: fmt.Sprintf("a back swipe on the Gain row from %.0f pt off the %s screen edge, 200 inward in 150 ms", d, edge),
+				Why:    "the screen edges hold only tap targets: zero Gain writes (AC-RD-G02)",
+				Start:  &pathStart{Control: "screenEdge", Edge: edge, FromEdgePt: d}, Variants: any1(line(0, 150, dx, 0))})
+		}
+	}
+	return out
 }
 
 func TestGesturePaths_FixtureIsCurrent(t *testing.T) {

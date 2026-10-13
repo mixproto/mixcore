@@ -113,7 +113,7 @@ func TestTouchPaths_NegativeControl(t *testing.T) {
 		for _, g := range phone {
 			hit := map[string]bool{}
 			for _, p := range paths.Paths {
-				if p.LargeContact || strings.HasPrefix(p.ID, "P1D") || p.ID == "P8" {
+				if p.LargeContact || strings.HasPrefix(p.ID, "P1D") || p.ID == "P8" || p.Start != nil {
 					continue
 				}
 				pts := variantFor(p, g.orientation).Points
@@ -154,7 +154,7 @@ func TestTouchPaths_FaderNeverJumps(t *testing.T) {
 	paths := loadPaths(t)
 	for _, g := range phone {
 		p0 := 0.6 // -6 dB on the x32/xair law (X32-F40, XA-F40)
-		for _, p := range paths.Paths {
+		for _, p := range onControl(paths.Paths) {
 			v := variantFor(p, g.orientation)
 			r := replay(t, ctlFader, g.track, v, p.LargeContact)
 			if r.stops != 0 || r.max() > 10+writeTol {
@@ -216,7 +216,7 @@ func TestTouchPaths_GainNeverJumps(t *testing.T) {
 	paths := loadPaths(t)
 	for _, g := range phone {
 		limit := math.Floor(g.wheel / 2 / encoderPitchPt)
-		for _, p := range paths.Paths {
+		for _, p := range onControl(paths.Paths) {
 			v := variantFor(p, g.orientation)
 			r := replay(t, ctlGain, g.wheel, v, p.LargeContact)
 			if !strings.HasSuffix(p.ID, "R") {
@@ -249,4 +249,67 @@ func sortedKeys(m map[string]bool) []string {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// onControl keeps the paths that start on the control itself (P1..P8, P1D,
+// P1R..P6R); the Gain-row paths (Start set) have their own proof.
+func onControl(ps []gesturePath) []gesturePath {
+	var out []gesturePath
+	for _, p := range ps {
+		if p.Start == nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// iPhone 6.1 inch portrait Gain row (fader-and-gain.md 5.1): screen 393 pt,
+// the wheel 240 pt wide, 76 pt from each screen edge.
+const (
+	screenPortrait  = 393.0
+	wheelEdgeOffset = 76.0
+)
+
+// grabXOf places a Gain-row path's touch-down in wheel coordinates.
+func grabXOf(s *pathStart, wheel float64) float64 {
+	switch {
+	case s.Control == "screenEdge" && s.Edge == "left":
+		return s.FromEdgePt - wheelEdgeOffset
+	case s.Control == "screenEdge":
+		return screenPortrait - s.FromEdgePt - wheelEdgeOffset
+	case s.FromLeftPt != nil:
+		return *s.FromLeftPt
+	}
+	return wheel / 2
+}
+
+// AC-RD-G01, AC-RD-G02 (CC-8): on the iPhone portrait wheel a stroke from
+// near the left end writes four 1 dB steps; leaving the frame (touch or
+// mouse, drift included) ends the stroke after at most floor(120 / 48) dB
+// and coming back writes nothing; the longest stroke is at most 5 dB; a
+// back swipe from 10 to 40 pt off either edge writes no Gain at all.
+func TestTouchPaths_GainWheelFrameRule(t *testing.T) {
+	want := map[string]struct{ writes, maxUp int }{
+		"G1": {4, 4}, "G2": {2, 2}, "G2D": {2, 2}, "G2M": {2, 2}, "G3": {4, 5},
+	}
+	for _, p := range loadPaths(t).Paths {
+		if p.Start == nil {
+			continue
+		}
+		v := variantFor(p, "portrait")
+		r := replayFrom(t, ctlGain, wheelPortrait, grabXOf(p.Start, wheelPortrait), v, false)
+		w, gainRow := want[p.ID]
+		if !gainRow { // E10L..E40R: back swipes over the steppers
+			if len(r.writes) != 0 {
+				t.Errorf("%s: %d Gain writes from a back swipe, want none", p.ID, len(r.writes))
+			}
+			continue
+		}
+		if len(r.writes) != w.writes || r.max() > 32.5+float64(w.maxUp)+writeTol || r.stops != 0 {
+			t.Errorf("%s: writes %v (%d stops), want %d writes up to +%d dB", p.ID, r.writes, r.stops, w.writes, w.maxUp)
+		}
+		if p.ID == "G1" && math.Abs(r.last()-36.5) > writeTol {
+			t.Errorf("G1 ends at %.1f, want +36.5 (AC-RD-G01)", r.last())
+		}
+	}
 }

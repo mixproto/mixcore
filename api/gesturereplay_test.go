@@ -143,8 +143,8 @@ func (u *uiDouble) lockAxis(p pathPoint) {
 
 // play sends one path the way the UI would, sample by sample, in real time.
 func (u *uiDouble) play(v pathVariant, large bool) {
-	if large {
-		return // SR-21: a large contact never grabs
+	if large || (u.kind == ctlGain && (u.grabX < 0 || u.grabX > u.length)) {
+		return // SR-21: a large contact never grabs; a touch on a stepper never grabs the wheel (SR-32)
 	}
 	u.gesture(cmdJSON("holdBegin", u.param(), ""), 0)
 	last, prev := math.NaN(), v.Points[0]
