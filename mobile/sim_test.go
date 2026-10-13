@@ -24,6 +24,9 @@ const (
 	// callBudget is the per-call budget of Apply and MeterFrame through the
 	// binding's Go side (spike S3 target: p95 < 0.5 ms).
 	callBudget = 500 * time.Microsecond
+	// applyCallBudget is the non-race p95 budget of mobile.Apply (review
+	// re-check: 29-39 us measured, about 4x headroom).
+	applyCallBudget = 150 * time.Microsecond
 )
 
 type stateWaiter struct {
@@ -131,8 +134,8 @@ func TestSimLoopback_BindingCallCost(t *testing.T) {
 		t.Logf("race build: budgets are asserted by the non-race run of make sim-test")
 		return
 	}
-	if p := p95(applies); p > callBudget {
-		t.Fatalf("Apply p95 %v exceeds %v", p, callBudget)
+	if p := p95(applies); p > applyCallBudget {
+		t.Fatalf("Apply p95 %v exceeds %v", p, applyCallBudget)
 	}
 	if p := p95(frames); p > callBudget {
 		t.Fatalf("MeterFrame p95 %v exceeds %v", p, callBudget)
