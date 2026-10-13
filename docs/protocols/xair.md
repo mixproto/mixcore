@@ -504,9 +504,10 @@ held gesture; going stale cancels every hold; nothing writes in response to a pu
 
 ## Background re-read
 Identical to `x32.md` "Background re-read" (every 15 s while live, paced 16 reads per second, from the command socket,
-read-only). ОЦЕНКА of pass length for the v1 table: 16 inputs x 5 parameters (name, fader, mute, mute-group bitmap, DCA
-bitmap) + main 2 (fader, mute) + 4 mute groups + 4 DCAs (mute) = 90 reads; at 16 reads per 1 s step a pass takes
-ceil(90 / 16) = 6 s (X32's 32-input table: 32 x 5 + 3 + 6 + 8 = 177 reads, 12 s).
+read-only; every v0.3 parameter each pass, then a rotating slice of 256 v0.4 ones; held parameters skipped from the
+next batch on). Pass length: the 123 v0.3 reads (90 of the v1 table, 16 mic gains and phantoms, the aux gain) + 256 =
+379 reads, about 24 s at 16 reads per 1 s step; a lost push of a fader, mute or Gain is recovered within about 40 s
+(one pass plus the 15 s gap), a v0.4 value within ceil(488 / 256) = 2 passes, about 80 s.
 
 ## As implemented (driver/xair, sim/xair; branch feat/core-xair, 2026-10-12)
 Design choices made when implementing this file. None is a new protocol fact; each `[TO-VERIFY]` item keeps the safe
@@ -542,16 +543,18 @@ behaviour above and has a test that pins it, so a hardware result changes one de
   "yes"); each has name, colour, fader and mute (section 3.2). Every bus and FX send is probed once per link (its fader
   read), so a model with fewer buses (XA-F72, test item 12) connects without them. Sends from inputs 1..16 to slots
   01..10 (section 3.3): `level` with the XA-F40 law in 161 steps (k/160, XA-F41; echoes matched within 0.5/160), `pan`
-  (-100 + 200 f, 101 steps, section 4; **on every slot 01..10, which the 2026-10-13 re-check does not support for the
-  FX-send slots 07..10**, see section 3.3) and `tap` (0..5, read-only, the console words `IN`, `PREEQ`, `POSTEQ`, `PRE`,
-  `POST`, `GRP`), each per send: the sources address every send, and whether tap and pan are really per pair is test
-  item 10 (if it is, the X32 pair rule of `x32.md` X32-F84/F85 applies). `Send.on` is absent (section 3.3), so a set or
+  (-100 + 200 f, 101 steps, section 4) **on slots 01..06 only**: since the 2026-10-13 re-check (section 3.3, item 10)
+  the driver neither reads nor writes `/mix/07..10/pan`, the state has no such field, a set is `ERR_UNSUPPORTED` and
+  the snapshot's FX bus entries carry no `sendPan`; and `tap` (0..5, read-only, the console words `IN`, `PREEQ`,
+  `POSTEQ`, `PRE`, `POST`, `GRP`) on every slot. Which send fields exist comes from this file's table (the family
+  profile in `driver/xair/driver.go`), never from what the mixer answers; a field the table has but the mixer does not
+  answer is absent too. Whether tap and pan are really per pair is test item 10 (if it is, the X32 pair rule of
+  `x32.md` X32-F84/F85 applies). `Send.on` is absent (section 3.3), so a set or
   toggle of `sendOn` is `ERR_UNSUPPORTED`. `grpon`, sends from `/rtn/aux` and `/rtn/N`, and FX-return sends are not
   modelled. Bus links `/config/buslink/1-2`, `/3-4`, `/5-6` (section 3.2) are read-only, on the odd bus. DCA masters
   `/dca/N/fader`, `/dca/N/config/name`, `/dca/N/config/color` (section 3.2) and the colour of inputs, main, buses and
-  DCAs (section 3.2 `config/color`) are read; DCA faders are written, colours never. ОЦЕНКА of a full read: 16 x 10 x 3
-  = 480 send reads + 40 bus + 3 link + 12 DCA + 17 colour reads + the v0.3 table, about 680 reads; the background re-read
-  (16 per second) takes about 45 s per pass.
+  DCAs (section 3.2 `config/color`) are read; DCA faders are written, colours never. Read count: 16 x (10 x 2 + 6) =
+  416 send reads + 40 bus + 3 link + 12 DCA + 17 colour reads = 488 v0.4 reads next to the 123 of the v0.3 table (611).
 - **Simulator defaults** (`sim/xair`, options for every `[TO-VERIFY]`): push to the sender with `/xremote` (H2,
   option `NoEchoToSender` for H1), no reply to a set (option `ReplyToSet` for H3), ninth client ignored
   (`EvictOldestWhenFull`), `/status` always "active" (`StandbyWhenNotServed`), `/-snap/index` not pushed on a load

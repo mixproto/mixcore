@@ -5,7 +5,13 @@
 # Makefile contract (go-core-standards section 3). Heavy targets run under nice.
 GO         ?= go
 NICE       ?= nice -n 15
-BIN        := $(CURDIR)/bin
+# Pinned tools: make tools installs them into ./bin. In a git worktree
+# without its own ./bin the main checkout's bin is used (the same pins);
+# BIN=<dir> on the command line overrides both.
+TOOLS_BIN  := $(CURDIR)/bin
+GIT_COMMON := $(shell git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+MAIN_BIN   := $(if $(GIT_COMMON),$(abspath $(GIT_COMMON)/../bin))
+BIN        ?= $(if $(wildcard $(TOOLS_BIN)/golangci-lint),$(TOOLS_BIN),$(if $(wildcard $(MAIN_BIN)/golangci-lint),$(MAIN_BIN),$(TOOLS_BIN)))
 FUZZTIME   ?= 30s
 FUZZPAR    ?= 2
 BENCHCOUNT ?= 6
@@ -33,18 +39,19 @@ endif
 .PHONY: tools mobile-tools generate lint test sim-test fuzz bench bench-compare mobile-check capi-check xcframework
 
 tools: mobile-tools ## pinned tools into ./bin, never global
-	GOBIN=$(BIN) $(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
-	GOBIN=$(BIN) $(GO) install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
-	GOBIN=$(BIN) $(GO) install golang.org/x/perf/cmd/benchstat@$(BENCHSTAT_VERSION)
+	GOBIN=$(TOOLS_BIN) $(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	GOBIN=$(TOOLS_BIN) $(GO) install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
+	GOBIN=$(TOOLS_BIN) $(GO) install golang.org/x/perf/cmd/benchstat@$(BENCHSTAT_VERSION)
 
 mobile-tools: ## gomobile and gobind into ./bin at the versions pinned by the go.mod tool lines
-	GOBIN=$(BIN) $(GO) install golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind
+	GOBIN=$(TOOLS_BIN) $(GO) install golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind
 
 generate: ## STUB: no generated code yet (MixLink types arrive with link/ and contracts/mixlink)
 	$(GO) generate ./...
 	$(GO) mod tidy
 
 lint:
+	@test -x $(BIN)/golangci-lint -a -x $(BIN)/govulncheck || { echo "lint: no pinned tools in $(BIN); run make tools (or BIN=<checkout>/bin)"; exit 1; }
 	test -z "$$(gofmt -l .)"
 	$(GO) vet ./...
 	$(GO) vet -tags=sim,slow ./...

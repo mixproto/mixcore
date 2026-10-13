@@ -55,7 +55,7 @@
         "noEchoOfOwnWrites",
         "rereadFoundUnpushedChanges"
       ],
-      "description": "v0.1. Present with limited: the evidence. noEchoOfOwnWrites: three writes that changed a value got no confirmation while the console answered. rereadFoundUnpushedChanges: two background re-reads in a row found values that changed without an update."
+      "description": "v0.1. Present with limited: the evidence. noEchoOfOwnWrites: three writes that changed an input or main fader or mute got no confirmation while the console answered. rereadFoundUnpushedChanges: two background re-reads in a row found an input or main fader or mute that changed without an update. v0.4: bus, send, colour, link, group, name and Gain values never count (x32.md \"Client limit detection\")."
     },
     "offline": {
       "type": "boolean",

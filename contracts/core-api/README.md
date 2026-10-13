@@ -105,7 +105,7 @@ Per-family facts for buses and sends:
 | | x32 (`x32.md` X32-F80..F90) | xair (`xair.md` 3.1-3.3, "As implemented") |
 |---|---|---|
 | Buses | `mix` 1..16; pairs 1-2 .. 15-16 can be linked | `mix` 1..6 (pairs 1-2, 3-4, 5-6), `fx` 7..10 (FX send masters, no link) |
-| Send fields | level (161 steps), on, pan and tap on **odd buses only, per pair** | level (161 steps), pan and tap per send; **no send on/off** |
+| Send fields | level (161 steps), on, pan and tap on **odd buses only, per pair** | level (161 steps) and tap per send, pan per send on buses 1..6 only (**none to FX sends 7..10**); **no send on/off** |
 | Tap words | `IN/LC`, `<-EQ`, `EQ->`, `PRE`, `POST`, `GRP` | `IN`, `PREEQ`, `POSTEQ`, `PRE`, `POST`, `GRP` |
 | Matrices | 1..6, read-only | none |
 | Not modelled yet | sends from aux inputs and FX returns, bus-to-matrix sends, `panFollow`, bus pan, bus meters | sends from `/rtn/aux` and `/rtn/N`, `grpon`, bus meters |
@@ -113,14 +113,21 @@ Per-family facts for buses and sends:
 Rules of v0.4:
 - **Linked pairs.** The core writes exactly the parameter it is given; whether the console copies a write on one bus of a
   linked pair (or its send) to the other is unverified (x32.md item 25). A UI that shows a linked pair as one stereo mix
-  writes the odd bus (and, for x32 pan, must: `sendFields.pan` `pair`). A monitor seat of a stereo pair lists both buses.
+  writes the odd bus (and, for x32 pan, must: `sendFields.pan` `pair`). A monitor seat writes into a linked pair, or the
+  x32 pair pan, only with both buses in its role (rule 13).
+- **Which send fields exist** comes from each family's protocol document, encoded in the driver's family profile, never
+  from what the console answers (a field the document lists but the console does not answer is absent as well). The
+  snapshot says it per bus (`buses[].sendPan`) and per send (fields present or absent).
 - **Tap is read-only** in v0.4 (a set is `ERR_UNSUPPORTED`): changing it changes what a musician hears at once and, on x32,
   for both buses of a pair. Colours, links and matrices are read-only too.
 - **A bus that does not answer** at the engine's first connect is absent for the engine session with every send to it
   (xair XA-F72, test item 12); reconnects reuse the answer, like optional inputs.
-- **Background re-read** is unchanged in pace (16 reads per second, X32-F07), so a pass now takes about two minutes on x32
-  (about 1970 reads) and about 45 s on xair (about 680 reads); pushes still carry every change at once. Whether to re-read
-  sends less often or faster is open (handoff of branch `feat/core-sends-buses`).
+- **Background re-read** (lead decision OQ 67): every pass re-reads faders, mutes, names, groups and Gain first, then a
+  rotating slice of 256 v0.4 values (rule 6). A lost push of a fader, mute or Gain is recovered within about 50 s on
+  x32 and 40 s on xair; a send, bus, colour or link value within about 6 minutes on x32 and 80 s on xair (x32.md and
+  xair.md "Background re-read"). Pushes still carry every change at once.
+- **Ceilings for sends** (lead decision OQ 68): an engineer's send (or fader) at `-inf` counts as -60 dB, so a seat's
+  `+1` from `-inf` reaches -60 dB (AC-MV-16) and the ceiling is -60 dB + headroom (rule 11).
 - **Bus meters** (AC-SF-12, the bus master meter) are not in the meter frame yet: the frame rule "Main L/R are the last two
   levels" would break. Follow-up with a meter-frame decision.
 
@@ -195,7 +202,9 @@ Rules of v0.4:
    next pass starts 15 s after the previous one ended, so passes never run back to back. It recovers a
    change whose push was lost. Only values that differ from the last one seen reach the listener, as ordinary diffs with
    origin `console`. v0.3: parameters that are held (`holdBegin` without `holdEnd`, also a resting finger) and parameters with a
-   recent write of ours are left out of a pass; everything else is still re-read. It never writes.
+   recent write of ours are left out of a pass; everything else is still re-read. It never writes. v0.4: each pass
+   reads every v0.3 parameter, then the next 256 of the buses, sends, colours, links, matrices and DCA masters
+   (rotating); a hold that begins during a pass is left out from the next batch of that pass on.
 
 7. **Gesture window (v0.3, CR-22).** `holdBegin` opens a window for that client and parameter; every `set` of that
    client on that parameter until `holdEnd` is a candidate the core clamps, so no value ever moves past the window in
@@ -245,10 +254,15 @@ Rules of v0.4:
     `macro` with the `clientId` of the client that sent them, matched in the driver's echo window) and everything the
     console reports (`console`: the surface, another app, MIDI, a scene recall, power-on). It cannot tell the surface
     from another app, nor another Mixhand device connected directly to the console from the surface. So the monitor
-    ceiling's "engineer's latest value" is every value except the writes of a monitor client of this core; with
-    several monitor devices on one bus that are not behind one hub, one device's writes count as the engineer's for
-    the others. The hub must add: a `clientId` per paired device on every write, the role and `monitorCeiling` per
-    client from the pairing token (`SetClientSafety` in Go), and all monitor devices of a bus behind it.
+    ceiling's "engineer's latest value" is every value except: the writes of a monitor client of this core and their
+    echoes; our own writes read back by the re-read (`OwnWrite`); and, since v0.4, any console report within half a
+    step of the grid of the last value a monitor client of this core sent for that parameter (a late or lost echo, a
+    re-read), which is never credited to the engineer. It covers every fader (channel, main, bus, DCA) and send level,
+    each taken from the console at connect; a parameter without such a value counts from -60 dB, never from its current
+    value. With several monitor devices on one bus that are not behind one hub, one device's writes count as the
+    engineer's for the others. The hub must add: a `clientId` per paired device on every write, the role and ceilings
+    per client from the pairing token (`SetClientRole`; `SetClientSafety` for `safety.monitorCeiling`), and all monitor
+    devices of a bus behind it.
 12. **Scope: one engine.** Client ids, show mode, unlocks and their undo grace, holds and the monitor ceiling live in
     one engine (one `Start`). The core does not authenticate `clientId`: any caller of the engine may name any id.
     Until the hub binds each `clientId` to a paired session (hub requirement, ADR-0008), these are per-device rules,
@@ -262,6 +276,18 @@ Rules of v0.4:
     writes nothing; `holdEnd` and `setSlipGuard` (this device only) are always allowed. The writes of a monitor role
     (or of a client with `safety.monitorCeiling`) never move the engineer's latest value of the ceiling (rule 11).
     Reads are not filtered by the in-process API; the hub must filter what it sends to each device.
+    Pairs and FX (review Sec M2, Sec L3): a write that acts on both buses of a pair needs both buses in the role, else
+    `ERR_ROLE`: any write into a linked pair (the console may copy it to the partner, x32.md item 25) and the x32 send
+    pan, which belongs to the pair whether linked or not (X32-F84). A link made at the console re-checks every hold at
+    once (`holdCancelled`, reason `role`). A write into an FX send master (bus kind `fx`) needs `"fx": true` in that
+    bus's grant. The role is checked and the write handed to the session under one lock, so a role change can never
+    land between the check and the send.
+    **Hub requirements** (the core cannot check them; ADR-0008): the hub derives `clientId` from the device token of the
+    connection, never from the message; it gives every client a role with `SetClientRole` before routing its first
+    message, viewer by default for a paired device (the config's default, owner, is only for the device user on a
+    direct connection); on revoke it sets the client to viewer (ending its holds) before closing its sockets; it uses
+    `SetShowModeBy` for a client's show-mode request. `SetShowMode` and `SetClientSafety` are unchecked, owner-only Go
+    internals that the hub never exposes to a device.
 
 ## Error codes
 `Apply`, `Start`, `Stop`, `Pause`, `Resume` and `RequestSnapshot` return an error whose message is exactly one of

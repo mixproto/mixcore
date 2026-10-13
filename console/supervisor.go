@@ -11,7 +11,25 @@
 // losing the console cancels every hold. It never queues writes: a write that
 // cannot be sent now is rejected, so nothing can be replayed after a reconnect.
 // While live it asks the session for a slow, read-only background re-read
-// (DefaultRereadEvery), skipped while any fader is held.
+// (DefaultRereadEvery); held parameters are left out of it.
+//
+// Roles (roles.go) are checked below every UI: each write, hold, openWall,
+// unlock, relock and SetShowModeBy is refused with ErrRole when the role of
+// its origin's client does not allow it.
+//
+// # Hub
+//
+// A hub (MixLink, ADR-0004/0008) must, for this layer to hold:
+//   - derive Origin.ClientID from the device token of the connection,
+//     never from the message (the core does not authenticate client ids);
+//   - give every client a role with SetClientRole before it routes the
+//     first message of that client; the default for a paired device is
+//     viewer (Config.Role's zero value, owner, is only for the device user
+//     on a direct connection);
+//   - on revoke, set the client to viewer (which also ends its holds)
+//     before closing its sockets;
+//   - use SetShowModeBy for a client's show-mode request; SetShowMode and
+//     SetClientSafety are unchecked owner-only internals it never exposes.
 package console
 
 import (

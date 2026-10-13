@@ -120,6 +120,10 @@ func isHeadampGain(p model.ParamRef) bool {
 
 // SetShowMode turns show mode on or off (SR-27). It writes nothing; turning
 // it off ends every unlock.
+//
+// Unchecked and owner-only (review Sec L5): it checks no role. A hub or an
+// API acting for a client uses SetShowModeBy, which refuses monitor and
+// viewer roles (ERR_ROLE); a hub never exposes SetShowMode itself.
 func (s *Supervisor) SetShowMode(on bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

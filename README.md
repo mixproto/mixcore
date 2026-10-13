@@ -37,6 +37,7 @@ It is the core of [Mixhand](https://mixhand.dybyskz.com), and you can use it in 
 ## Development
 ```bash
 make tools          # pinned golangci-lint, govulncheck, benchstat, gomobile, gobind into ./bin
+                    # (a git worktree without ./bin uses the main checkout's bin; BIN=<dir> overrides)
 make lint test      # unit tests run on an in-memory network with fake time
 make sim-test       # driver and API against the simulator on loopback UDP
 make fuzz           # every parser fuzz target, 30 s each

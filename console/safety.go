@@ -93,6 +93,11 @@ func (s *safety) client(id string) ClientSafety {
 
 // SetClientSafety sets the safety settings of one client (a MixLink device
 // from its pairing token; the in-process UI uses the config and SetSlipGuard).
+//
+// Unchecked and owner-only (review Sec L5): it checks no role, and a
+// client given its own settings could drop its monitor ceiling. Only the
+// owner's side of a hub calls it, from the pairing record; a hub must
+// never route a device's request to it (see the package doc, "Hub").
 func (s *Supervisor) SetClientSafety(clientID string, c ClientSafety) {
 	s.mu.Lock()
 	s.safe.clients[clientID] = c

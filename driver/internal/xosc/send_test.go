@@ -243,3 +243,27 @@ func FuzzSendFromWire(f *testing.F) {
 		}
 	})
 }
+
+// x32.md "Send level reference points" (X32-F83, f = k/160): the wire bits
+// and dB of every row, both directions.
+func TestSendLevelLaw_X32ReferenceTable(t *testing.T) {
+	p := sendParam(t, newParamTable(x32BusLayout), 1, 1, model.FieldSendLevel)
+	for _, row := range []struct {
+		k    int
+		bits uint32
+		db   float64
+	}{
+		{0, 0x00000000, math.Inf(-1)}, {1, 0x3bcccccd, -87}, {10, 0x3d800000, -60}, {11, 0x3d8ccccd, -59},
+		{40, 0x3e800000, -30}, {41, 0x3e833333, -29.5}, {80, 0x3f000000, -10}, {81, 0x3f01999a, -9.75},
+		{119, 0x3f3e6666, -0.25}, {120, 0x3f400000, 0}, {121, 0x3f41999a, 0.25}, {140, 0x3f600000, 5}, {160, 0x3f800000, 10},
+	} {
+		arg, err := toWire(p, mustLevel(t, row.db))
+		if err != nil || math.Float32bits(arg.Float) != row.bits {
+			t.Fatalf("k %d: %v dB -> %#08x, %v; want %#08x", row.k, row.db, math.Float32bits(arg.Float), err, row.bits)
+		}
+		v, err := fromWire(p, osc.Float(math.Float32frombits(row.bits)))
+		if db, _ := v.DB(); err != nil || !approxDB(db, row.db, 1e-9) {
+			t.Fatalf("k %d: %#08x -> %v dB, %v; want %v", row.k, row.bits, db, err, row.db)
+		}
+	}
+}
