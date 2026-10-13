@@ -127,6 +127,9 @@ type Update struct {
 	ShowMode    bool
 	Unlocked    []int
 	UnlockEnded []UnlockEvent
+	// Undo is every client's newest undo entry with what undoing it would
+	// ask (core-api v0.5 rule 14), by client id.
+	Undo []UndoSummary
 }
 
 // Config configures a Supervisor.
@@ -169,6 +172,7 @@ type Supervisor struct {
 	sess       driver.Session
 	holds      holds
 	safe       safety
+	undo       undoHistory // per client (undo.go)
 	changes    []Change
 	eff        effective
 	scenes     []driver.SceneRecalled
@@ -212,7 +216,7 @@ func New(cfg Config) (*Supervisor, error) {
 	}
 	return &Supervisor{
 		cfg: cfg, notify: make(chan struct{}, 1),
-		holds: newHolds(), safe: newSafety(cfg.Safety, cfg.Role),
+		holds: newHolds(), safe: newSafety(cfg.Safety, cfg.Role), undo: newUndoHistory(),
 	}, nil
 }
 
@@ -254,6 +258,7 @@ func (s *Supervisor) halt(closeLink bool) {
 		s.wg.Wait()
 		s.mu.Lock()
 		s.holds.cancelAll(StatusStopped.String())
+		s.closeEndedWindowsLocked()
 		s.safe.unlocks.endAll(UnlockStopped)
 		s.safe.dropAllPending() // nothing of the closed session is in flight
 		s.setStatusLocked(StatusStopped, "stopped")
@@ -296,7 +301,7 @@ func (s *Supervisor) snapshotLocked() Update {
 	s.seq++
 	return Update{Seq: s.seq, Status: s.status, Reason: s.reason, Cause: s.cause, StaleSince: s.staleSince, Offline: s.offline,
 		Limited: s.limited != "", LimitedReason: s.limited, Identity: s.ident, Capabilities: s.caps, State: s.state,
-		ShowMode: s.safe.showMode, Unlocked: s.safe.unlocks.list()}
+		ShowMode: s.safe.showMode, Unlocked: s.safe.unlocks.list(), Undo: s.undoSummariesLocked()}
 }
 
 func (s *Supervisor) signal() {
@@ -418,6 +423,7 @@ func (s *Supervisor) adopt(sess driver.Session) {
 	s.safe.window = s.caps.EchoWindow
 	s.safe.adoptState(s.state, sess.Snapshot(), s.sameLevelLocked)
 	s.safe.dropAllPending() // the fresh read is the console's value (re-review MEDIUM A)
+	s.undo.markAllForeign() // anything may have changed meanwhile: undo checks for conflicts
 	s.state = sess.Snapshot()
 	s.changes = nil
 	s.eff.reset(s.state)
@@ -459,6 +465,7 @@ func (s *Supervisor) markStale(ctx context.Context, cause error) {
 		return // stopping: Stop sets the final status and cancels holds
 	}
 	s.holds.cancelAll(StatusStale.String())
+	s.closeEndedWindowsLocked()
 	s.safe.unlocks.endAll(UnlockStale)
 	reason := "connection lost"
 	if cause != nil {
@@ -500,7 +507,8 @@ func (s *Supervisor) runSession(ctx context.Context, sess driver.Session) error 
 func (s *Supervisor) handleEvent(ev driver.Event) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	defer s.syncHeldLocked() // an external change, a recall or the limit may have ended holds
+	defer s.syncHeldLocked()          // an external change, a recall or the limit may have ended holds
+	defer s.closeEndedWindowsLocked() // and those holds' moves are undo entries
 	switch e := ev.(type) {
 	case driver.ParamChanged:
 		s.applyChangeLocked(Change{Param: e.Param, Value: e.Value, Origin: e.Origin, Authoritative: e.Authoritative, OwnWrite: e.OwnWrite})
@@ -521,6 +529,7 @@ func (s *Supervisor) handleEvent(ev driver.Event) {
 		// SR-15: a recall at the desk ends every held fader, even one whose own
 		// update has not arrived (or was lost); the driver re-reads meanwhile.
 		s.endHeldOnReplaceLocked()
+		s.undo.cut(sceneMarkOf(e)) // the history is cut at a recall (CC-10)
 		if len(s.scenes) < maxPendingEvents {
 			s.scenes = append(s.scenes, e)
 		}
@@ -565,6 +574,7 @@ func (s *Supervisor) applyChangeLocked(c Change) {
 	// our own write read back is not someone else's change (follow-up 2).
 	if (!had || !prev.Equal(c.Value)) && !c.OwnWrite {
 		s.holds.external(c)
+		s.undo.markForeign(c.Param, c.Origin) // a later undo may meet a conflict (CC-6)
 	}
 	s.safe.noteChange(c, s.sameLevelLocked)
 	if c.Param.Field == model.FieldLinked {

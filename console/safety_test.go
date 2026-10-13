@@ -110,15 +110,6 @@ func TestGain_PullToTheBottomSixPerWrite(t *testing.T) {
 	})
 }
 
-func maxWrite(drv *fakeDriver) float64 {
-	m := math.Inf(-1)
-	for _, w := range drv.session(len(drv.sessions) - 1).writes() {
-		db, _ := w.Value.DB()
-		m = math.Max(m, db)
-	}
-	return m
-}
-
 // AC-PS-19, SR-31: every Gain write path is bounded to 6 dB from the console
 // value; only a typed entry may move further, after confirmation.
 func TestGain_PerWriteBound(t *testing.T) {

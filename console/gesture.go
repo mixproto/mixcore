@@ -50,6 +50,13 @@ func (s *Supervisor) Write(w Write) (Result, error) {
 func (s *Supervisor) checkAndApply(w *Write) (Result, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.applyLocked(w, true)
+}
+
+// applyLocked is checkAndApply under mu. A write outside a hold that left
+// for the console becomes an undo entry when record is set (undo.go).
+func (s *Supervisor) applyLocked(w *Write, record bool) (Result, error) {
+	before := s.undoBaseLocked(w.Param)
 	sess, res, err := s.prepareLocked(w)
 	if err != nil || !res.Written {
 		return res, err
@@ -63,8 +70,24 @@ func (s *Supervisor) checkAndApply(w *Write) (Result, error) {
 	s.safe.noteSeatSent(w.Origin, w.Param, dbOf(w.Value), s.sameLevelLocked, time.Now())
 	if iw := s.safe.windows[holdKey{param: w.Param, client: w.Origin.ClientID}]; iw != nil {
 		iw.lastWrite, iw.wrote = dbOf(w.Value), true // the next write of the hold is bounded against it (CC-3)
+	} else if record {
+		s.recordLocked(w.Origin, w.Param, before, w.Value, !w.Typed && undoKindOf(w.Param.Field) == UndoLevel)
 	}
 	return res, nil
+}
+
+// undoBaseLocked is the value an undo entry of p starts from: the console
+// value, for Gain the newest value of ours in flight (where it is going).
+func (s *Supervisor) undoBaseLocked(p model.ParamRef) model.Value {
+	if p.Field == model.FieldGain {
+		if v, ok := s.safe.newestInFlight(p); ok {
+			if lv, err := model.Level(v); err == nil {
+				return lv
+			}
+		}
+	}
+	v, _ := s.state.Value(p)
+	return v
 }
 
 // sameLevelLocked reports whether levels a and b of p are one console
@@ -110,7 +133,7 @@ func (s *Supervisor) prepareLocked(w *Write) (driver.Session, Result, error) {
 		return nil, Result{}, ErrGestureEnded
 	}
 	if _, held := s.holds.active[k]; !held {
-		delete(s.safe.windows, k)
+		s.closeWindowLocked(k)
 	}
 	if !isLevel(w.Param.Field) || w.Value.Kind() != model.KindLevel {
 		return s.sess, Result{Value: w.Value, Written: true}, nil
@@ -197,7 +220,7 @@ func (s *Supervisor) HoldWindow(p model.ParamRef, origin driver.Origin, held boo
 		return Result{}, fmt.Errorf("console: hold %s: read-only: %w", p, driver.ErrUnsupported)
 	}
 	delete(s.holds.ended, k)
-	delete(s.safe.windows, k)
+	s.closeWindowLocked(k) // a hold that wrote is one undo entry (CC-6)
 	if !held {
 		delete(s.holds.active, k)
 		if isHeadampGain(p) {

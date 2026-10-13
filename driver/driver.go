@@ -303,7 +303,10 @@ type SceneRecalled struct {
 	Signals          []string
 	HighlightedScene int // NoScene when unknown; never "the loaded scene"
 	LoadedScene      int // 1-based loaded-or-saved scene the console reported with the burst (xair /-snap/index); NoScene or 0 when unknown
-	At               time.Time
+	// SceneName is the name of LoadedScene when the driver read it (user
+	// content); empty when unknown (core-api v0.5, CC-10).
+	SceneName string
+	At        time.Time
 }
 
 func (ParamChanged) isEvent()       {}
