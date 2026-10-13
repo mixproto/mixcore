@@ -8,7 +8,7 @@
   "required": ["version", "family"],
   "properties": {
     "version": { "$ref": "common.schema.json#/$defs/version" },
-    "family": { "enum": ["x32", "xair"], "description": "The family to look for. Broadcasts and manual hosts without a port go to that family's port; only replies the core classifies as this family are listed (discovery.schema.json)." },
+    "family": { "enum": ["x32", "xair", "wing"], "description": "The family to look for (wing: the UDP probe WING? to port 2222, WG-F11). Broadcasts and manual hosts without a port go to that family's port; only replies the core classifies as this family are listed (discovery.schema.json)." },
     "broadcast": { "type": "boolean", "default": false },
     "hosts": {
       "type": "array",
@@ -19,7 +19,7 @@
         "required": ["host"],
         "properties": {
           "host": { "type": "string", "description": "IPv4 or IPv6 literal, no hostname.", "minLength": 2, "maxLength": 64 },
-          "port": { "type": "integer", "minimum": 1, "maximum": 65535, "description": "Omitted: the family default (x32: 10023, xair: 10024)." }
+          "port": { "type": "integer", "minimum": 1, "maximum": 65535, "description": "Omitted: the family default (x32: 10023, xair: 10024, wing: 2222)." }
         }
       }
     },
@@ -32,6 +32,7 @@
   "examples": [
     { "version": 0, "family": "x32", "broadcast": true },
     { "version": 0, "family": "x32", "hosts": [ { "host": "192.168.1.62" }, { "host": "10.0.0.5", "port": 10023 } ], "waitMs": 800 },
-    { "version": 0, "family": "xair", "broadcast": true, "hosts": [ { "host": "192.168.1.1" } ] }
+    { "version": 0, "family": "xair", "broadcast": true, "hosts": [ { "host": "192.168.1.1" } ] },
+    { "version": 0, "family": "wing", "broadcast": true }
   ]
 }

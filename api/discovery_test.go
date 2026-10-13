@@ -159,7 +159,7 @@ func TestDiscover_RejectsBadRequests(t *testing.T) {
 		{"not json", `{`},
 		{"no version", `{"family":"x32","broadcast":true}`},
 		{"wrong version", `{"version":1,"family":"x32","broadcast":true}`},
-		{"unknown family", `{"version":0,"family":"wing","broadcast":true}`},
+		{"unknown family", `{"version":0,"family":"dlive","broadcast":true}`},
 		{"nothing to probe", `{"version":0,"family":"x32"}`},
 		{"hostname", `{"version":0,"family":"x32","hosts":[{"host":"x32.local"}]}`},
 		{"port out of range", `{"version":0,"family":"x32","hosts":[{"host":"10.0.0.1","port":70000}]}`},

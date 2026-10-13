@@ -45,6 +45,16 @@ func (e *Engine) listenPacket(ctx context.Context, network, address string) (net
 	return lc.ListenPacket(ctx, network, address)
 }
 
+// dial is the engine's driver.DialFunc: OS TCP sockets, passed through the
+// socket binder when one is set (Android binds them to the Wi-Fi network).
+func (e *Engine) dial(ctx context.Context, network, address string) (net.Conn, error) {
+	var d net.Dialer
+	if box := e.binder.Load(); box != nil {
+		d.Control = func(_, _ string, c syscall.RawConn) error { return bindRaw(box.b, c) }
+	}
+	return d.DialContext(ctx, network, address)
+}
+
 func bindRaw(b SocketBinder, c syscall.RawConn) error {
 	var bindErr error
 	err := c.Control(func(fd uintptr) {

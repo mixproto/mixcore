@@ -7,14 +7,14 @@
   "required": ["version", "family", "endpoint", "faderLaw"],
   "properties": {
     "version": { "$ref": "common.schema.json#/$defs/version" },
-    "family": { "enum": ["x32", "xair"] },
+    "family": { "enum": ["x32", "xair", "wing"] },
     "endpoint": {
       "type": "object",
       "additionalProperties": false,
       "required": ["host", "port"],
       "properties": { "host": { "type": "string" }, "port": { "type": "integer" } }
     },
-    "faderLaw": { "enum": ["x32", "xair"], "description": "Which law FaderPosition/FaderDB implement. xair (v0.2) is the same four-segment law as x32, -inf..+10 dB (XA-F40), named after its family." },
+    "faderLaw": { "enum": ["x32", "xair", "wing"], "description": "Which law FaderPosition/FaderDB implement. xair (v0.2) is the same four-segment law as x32, -inf..+10 dB (XA-F40), named after its family. wing (additive) draws the same four-segment scale; WING reads and writes faders in dB (-144 dB = -inf .. +10 dB, WG-F60), so this law only draws the scale and shapes gestures; the console's own raw law below -3 dB is unverified (WG-F61)." },
     "demo": { "type": "boolean", "description": "v0.3 (additive), demo mixer: true when Start targeted the running demo mixer (StartDemo, demo.schema.json), which the core tells by family, host and port. Absent means a real console." }
   }
 }

@@ -77,3 +77,15 @@ func TestNewServer_Families(t *testing.T) {
 		}
 	}
 }
+
+func TestNewWing_DemoSeedsWithoutClientWrites(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	sim, err := newWing(ctx, flags{family: familyWing, demo: true}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if v, _ := sim.Value("/ch/40/name"); v != "Input 40" || sim.WriteCount() != 0 {
+		t.Fatalf("demo seed: %v, %d writes", v, sim.WriteCount())
+	}
+}

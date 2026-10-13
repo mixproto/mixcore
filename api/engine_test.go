@@ -127,7 +127,7 @@ func TestStart_RejectsBadConfig(t *testing.T) {
 	eng := NewEngine()
 	bad := []string{
 		``, `{}`, `{"version":1,"family":"x32","host":"10.0.0.1"}`,
-		`{"version":0,"family":"wing","host":"10.0.0.1"}`,
+		`{"version":0,"family":"dlive","host":"10.0.0.1"}`,
 		`{"version":0,"family":"x32","host":"console.local"}`,
 		`{"version":0,"family":"x32","host":"10.0.0.1","port":70000}`,
 		`{"version":0,"family":"x32","host":"10.0.0.1","extra":1}`,

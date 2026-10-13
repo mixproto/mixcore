@@ -390,3 +390,17 @@ Rules the core keeps:
 Binding names: Swift `MobileStartDemo(_ json: String?, _ error: NSErrorPointer) -> String`,
 `MobileStopDemo(_ error: NSErrorPointer) -> Bool`; Kotlin `Mobile.startDemo(String): String`, `Mobile.stopDemo()` (throw
 `Exception` with the code); C `MixStartDemo` / `MixStopDemo` (`capi.md`).
+
+## Family wing (additive)
+`wing` is a family value of `config`, `discover`, `discovery` and `session` (and `faderLaw`); no call, field, binding
+signature or error code changes. Behringer WING, WING BK, WING Rack and WING Compact over the native protocol on TCP
+2222 (`docs/protocols/wing.md`); discovery is the UDP probe `WING?` on port 2222; meters are listed in
+`meter-frame.md` (n = 42). What the apps should know (details in the `family` description of `config.schema.json`):
+- Inputs 1..40, one main strip (main 1), 16 DCAs, 8 mute groups. A strip's mute-group membership is not known yet, so
+  strips list none; their effective mute is their own mute plus muted DCAs.
+- Headamp indexes: local `n` is `n` (8 on WING, 24 on Rack and Compact), AES50 A `n` is `100 + n`, AES50 B `n` is
+  `200 + n` (read-only). The Gain law of each comes from the console itself (2.5 dB steps on local inputs in the
+  console's own definition).
+- While the console's TCP remote lock is on, every set is `ERR_UNSUPPORTED` (the core cannot tell the UI why yet).
+- `StartDemo` has no `wing` demo.
+- Status: in development until hardware verification.

@@ -58,8 +58,8 @@ func parseDemoRequest(data string) (demoRequestJSON, error) {
 	if r.Version == nil || *r.Version != contractVersion {
 		return r, codeErr(CodeInvalidConfig, errVersion)
 	}
-	if !knownFamily(r.Family) {
-		return r, codeErr(CodeInvalidConfig, fmt.Errorf("unknown family %q", r.Family))
+	if r.Family != demo.FamilyX32 && r.Family != demo.FamilyXAir { // demo.schema.json: no wing demo yet
+		return r, codeErr(CodeInvalidConfig, fmt.Errorf("no demo mixer for family %q", r.Family))
 	}
 	return r, nil
 }
