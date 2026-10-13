@@ -62,8 +62,9 @@ test: ## unit: memnet + synctest, no real sockets
 	$(NICE) $(GO) test -race -count=1 -short -covermode=atomic -coverprofile=coverage.out ./...
 	$(GO) tool cover -func=coverage.out | tail -1
 
-sim-test: ## drivers and API against the simulators on real loopback sockets
+sim-test: ## drivers and API against the simulators on real loopback sockets; then the latency budgets without -race, one package at a time
 	$(NICE) $(GO) test -race -count=1 -tags=sim,slow -timeout=15m ./...
+	$(GO) test -count=1 -p 1 -tags=sim -run 'TestSimLoopback_(BindingCallCost|ApplyLatency)' ./mobile ./api
 
 fuzz: ## every Fuzz target, one at a time (-fuzz accepts one package and one target)
 	@for p in $$($(GO) list ./...); do for t in $$($(GO) test -list '^Fuzz' $$p | grep '^Fuzz'); do \

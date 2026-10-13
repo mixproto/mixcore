@@ -127,6 +127,10 @@ func TestSimLoopback_BindingCallCost(t *testing.T) {
 	}
 	t.Logf("mobile.Apply, n=%d: %s", callSamples, quantiles(applies))
 	t.Logf("mobile.MeterFrame, n=%d: %s", callSamples, quantiles(frames))
+	if raceBuild {
+		t.Logf("race build: budgets are asserted by the non-race run of make sim-test")
+		return
+	}
 	if p := p95(applies); p > callBudget {
 		t.Fatalf("Apply p95 %v exceeds %v", p, callBudget)
 	}
