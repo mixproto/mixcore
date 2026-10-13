@@ -161,6 +161,9 @@ func TestSnapshot_X32BusesSendsAndTaps(t *testing.T) {
 				t.Fatalf("snapshot lacks %s\n...%s", want, raw[max(0, len(raw)-2500):])
 			}
 		}
+		if errs := loadSchemas(t).validate("state.schema.json", raw); len(errs) != 0 {
+			t.Fatalf("the live snapshot violates state.schema.json: %v", errs) // review Go S4
+		}
 		st := e.rec.last()
 		if len(st.Buses) != 16 || len(st.Strips[4].Sends) != 16 || st.Strips[4].Sends[1].On == nil || *st.Strips[4].Sends[1].On {
 			t.Fatalf("bus count %d, ch 5 sends %+v", len(st.Buses), st.Strips[4].Sends)
@@ -234,6 +237,9 @@ func TestSnapshot_XAirSendsHaveNoOn(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := newXAirEnv(t, simxair.Options{})
 		e.startLive(t)
+		if errs := loadSchemas(t).validate("state.schema.json", e.rec.raw[len(e.rec.raw)-1]); len(errs) != 0 {
+			t.Fatalf("the live snapshot violates state.schema.json: %v", errs)
+		}
 		st := e.rec.last()
 		if st.SendFields == nil || st.SendFields.On || st.SendFields.Pan != "send" || st.SendFields.Tap != "send" {
 			t.Fatalf("sendFields %+v", st.SendFields)

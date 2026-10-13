@@ -489,6 +489,10 @@
           "linked": {
             "type": "boolean",
             "description": "Present on the odd bus of each pair the console can link (x32 1-2 .. 15-16, X32-F81; xair 1-2, 3-4, 5-6): true = the pair is one stereo bus, the odd bus is left, the even bus right. Show the pair as one mix ('Mon 1 (stereo)'). Read-only. Whether the console copies a write on one side to the other is unverified (x32.md item 25): the core writes exactly the parameter it is given."
+          },
+          "sendPan": {
+            "type": "boolean",
+            "description": "Present (true) when inputs have a send pan into this bus, in the scope sendFields.pan gives. The family's protocol doc decides, not the console's answer: x32 every bus, the pan living on the odd send of each pair (X32-F84); xair buses 1..6, never the FX sends 7..10 (xair.md 3.3, item 10). Absent: no pan bar for sends into this bus."
           }
         }
       }
@@ -528,7 +532,7 @@
     "sendFields": {
       "type": "object",
       "additionalProperties": false,
-      "description": "v0.4, snapshot only, present when inputs carry sends: which send fields this console has. level is always there. on: the console has a send on/off (x32 yes, xair no: show no SEND ON/OFF switch and never send sendOn). pan and tap: 'send' = every send has its own; 'pair' = only the odd bus of each pair has it and it belongs to the pair (x32, X32-F84/F85: the tap shown under an even bus's send is the one of the odd bus below it, and a sendPan set must name the odd bus); absent = the console has none or did not answer.",
+      "description": "v0.4, snapshot only, present when inputs carry sends: which send fields this console has. level is always there. on: the console has a send on/off (x32 yes, xair no: show no SEND ON/OFF switch and never send sendOn). pan and tap: 'send' = every send has its own; 'pair' = only the odd bus of each pair has it and it belongs to the pair (x32, X32-F84/F85: the tap shown under an even bus's send is the one of the odd bus below it, and a sendPan set must name the odd bus); absent = the console has none or did not answer. A bus without sendPan in its buses entry has no send pan whatever sendFields.pan says.",
       "properties": {
         "on": {
           "type": "boolean"
