@@ -67,6 +67,9 @@ func ParseRoleKind(s string) (RoleKind, bool) {
 type BusGrant struct {
 	Bus     int
 	Ceiling *MonitorCeiling
+	// FX: the grant may reach an FX send master (bus kind fx); without
+	// it a monitor seat writes only into mix buses (review Sec L3).
+	FX bool
 }
 
 // Role is what one client may write.
@@ -123,16 +126,74 @@ func mixBus(p model.ParamRef) int {
 	return 0
 }
 
-// allows reports whether r may write p.
-func (r Role) allows(p model.ParamRef) bool {
+// allowsLocked reports whether role r may write p on the current console:
+// a monitor needs a grant for p's bus, an FX grant for an FX bus (review
+// Sec L3), and a grant for the partner bus too when p acts on both buses
+// of a pair: the pair is linked (the console may mirror the write, X32-F81
+// item 25) or p is the pair's shared send pan (X32-F84) (review Sec M2).
+func (s *Supervisor) allowsLocked(r Role, p model.ParamRef) bool {
 	switch r.Kind {
 	case RoleOwner, RoleEngineer:
 		return true
 	case RoleMonitor:
-		_, ok := r.grant(mixBus(p))
-		return ok
 	default:
 		return false
+	}
+	b := mixBus(p)
+	g, ok := r.grant(b)
+	if !ok {
+		return false
+	}
+	info, known := s.busInfoLocked(b)
+	if known && info.Kind == model.BusFX && !g.FX {
+		return false
+	}
+	if partner, shared := s.pairPartnerLocked(p, b, info); shared {
+		_, ok = r.grant(partner)
+	}
+	return ok
+}
+
+// busInfoLocked describes bus b of the current state.
+func (s *Supervisor) busInfoLocked(b int) (model.BusInfo, bool) {
+	for _, info := range s.state.BusInfos() {
+		if info.Index == b {
+			return info, true
+		}
+	}
+	return model.BusInfo{}, false
+}
+
+// pairPartnerLocked returns the other bus of b's pair when a write of p
+// acts on both: the pair is linked, or p is a pair-scoped send pan.
+func (s *Supervisor) pairPartnerLocked(p model.ParamRef, b int, info model.BusInfo) (int, bool) {
+	if !info.Linkable {
+		return 0, false
+	}
+	odd := b - (1 - b%2)
+	partner := odd + 1
+	if b == partner {
+		partner = odd
+	}
+	if _, ok := s.busInfoLocked(partner); !ok {
+		return 0, false
+	}
+	linked, _ := s.state.Value(model.ParamRef{Strip: model.StripRef{Kind: model.StripBus, Index: odd}, Field: model.FieldLinked})
+	on, _ := linked.Bool()
+	return partner, on || (p.Field == model.FieldSendPan && s.state.Shape().Sends.PairScoped)
+}
+
+// recheckHoldsLocked ends every hold its client's role no longer allows
+// (a role change, or a pair linked at the console).
+func (s *Supervisor) recheckHoldsLocked(only func(client string) bool) {
+	for k := range maps.Clone(s.holds.active) {
+		if only != nil && !only(k.client) {
+			continue
+		}
+		if !s.allowsLocked(s.safe.role(k.client), k.param) {
+			s.holds.cancel(k, ReasonRole)
+			delete(s.safe.windows, k)
+		}
 	}
 }
 
@@ -160,16 +221,9 @@ func (s *Supervisor) SetClientRole(clientID string, r Role) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.safe.roles[clientID] = r
-	for k := range maps.Clone(s.holds.active) {
-		if k.client != clientID {
-			continue
-		}
-		if !r.allows(k.param) {
-			s.holds.cancel(k, ReasonRole)
-			delete(s.safe.windows, k)
-			continue
-		}
-		if _, ok := s.safe.windows[k]; ok {
+	s.recheckHoldsLocked(func(c string) bool { return c == clientID })
+	for k := range s.holds.active {
+		if _, ok := s.safe.windows[k]; ok && k.client == clientID {
 			s.openWindowLocked(k)
 		}
 	}
@@ -179,7 +233,7 @@ func (s *Supervisor) SetClientRole(clientID string, r Role) error {
 
 // checkRoleLocked refuses a write, hold or setting outside the client's role.
 func (s *Supervisor) checkRoleLocked(p model.ParamRef, origin driver.Origin) error {
-	if !s.safe.role(origin.ClientID).allows(p) {
+	if !s.allowsLocked(s.safe.role(origin.ClientID), p) {
 		return fmt.Errorf("%w: %s may not change %s", ErrRole, s.safe.role(origin.ClientID).Kind, p)
 	}
 	return nil

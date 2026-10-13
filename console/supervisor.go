@@ -500,6 +500,9 @@ func (s *Supervisor) applyChangeLocked(c Change) {
 		s.holds.external(c)
 	}
 	s.safe.noteChange(c, s.sameLevelLocked)
+	if c.Param.Field == model.FieldLinked {
+		s.recheckHoldsLocked(nil) // a pair linked at the console (review Sec M2)
+	}
 	if c.Param.Field == model.FieldGain {
 		s.safe.noteReport(c, s.halfStepDB(c.Param.Strip.Index)) // review pass 3, HIGH 1
 	}

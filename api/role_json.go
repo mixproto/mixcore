@@ -25,6 +25,7 @@ type roleJSON struct {
 type busGrantJSON struct {
 	Bus            int             `json:"bus"`
 	MonitorCeiling json.RawMessage `json:"monitorCeiling,omitempty"`
+	FX             bool            `json:"fx,omitempty"` // may reach an FX send master (review Sec L3)
 }
 
 // role parses config role: absent is the owner (a direct connection); null
@@ -54,7 +55,7 @@ func (c configJSON) role() (console.Role, error) {
 		if err != nil {
 			return console.Role{}, fmt.Errorf("role bus %d: %w", g.Bus, err)
 		}
-		r.Buses = append(r.Buses, console.BusGrant{Bus: g.Bus, Ceiling: ceiling})
+		r.Buses = append(r.Buses, console.BusGrant{Bus: g.Bus, Ceiling: ceiling, FX: g.FX})
 	}
 	return r, r.Validate()
 }

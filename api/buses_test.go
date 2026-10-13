@@ -271,3 +271,25 @@ func TestSnapshot_NoBusesNoKeys(t *testing.T) {
 		}
 	}
 }
+
+// Sec L3 on X Air: FX send 1 is bus 7; a monitor role reaches it only with
+// "fx": true in its grant.
+func TestRole_XAirFXBusNeedsFXGrant(t *testing.T) {
+	for _, tc := range []struct {
+		grant string
+		code  string
+	}{{`{"bus":7}`, CodeRole}, {`{"bus":7,"fx":true}`, ""}} {
+		synctest.Test(t, func(t *testing.T) {
+			e := newXAirEnv(t, simxair.Options{})
+			cfg := `{"version":0,"family":"xair","host":"10.0.0.1","role":{"kind":"monitor","buses":[` + tc.grant + `]}}`
+			if _, err := e.eng.Start(cfg); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(time.Second)
+			synctest.Wait()
+			if err := e.eng.Apply(sendCmd("set", "sendLevel", 1, 7, "-10", "m")); CodeOf(err) != tc.code {
+				t.Fatalf("grant %s: %v, want %q", tc.grant, err, tc.code)
+			}
+		})
+	}
+}

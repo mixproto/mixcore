@@ -84,7 +84,7 @@
       "required": [
         "kind"
       ],
-      "description": "v0.4, roles enforced below the UI (docs/product/roles.md, invariant 4): the role of every client of this engine (a hub sets one per paired device with the Go call SetClientRole). Absent: owner, the device user on a direct connection. owner and engineer: every write the core offers. monitor: only sends (sendLevel, sendOn, sendPan) into the listed buses and those buses' fader and mute; a stereo pair is two buses, list both. viewer: no write at all. Anything else is ERR_ROLE and writes nothing; settings that only change this device (setSlipGuard) stay allowed, show mode and Gain unlocks are ERR_ROLE for monitor and viewer. Reads are not filtered in the in-process API (the app draws only its mix); per-client filtering is a hub requirement.",
+      "description": "v0.4, roles enforced below the UI (docs/product/roles.md, invariant 4): the role of every client of this engine (a hub sets one per paired device with the Go call SetClientRole). Absent: owner, the device user on a direct connection. owner and engineer: every write the core offers. monitor: only sends (sendLevel, sendOn, sendPan) into the listed buses and those buses' fader and mute; a write that acts on both buses of a pair needs both in the list (ERR_ROLE otherwise): any write into a linked pair (the console may copy it to the partner, x32.md X32-F81 item 25) and the x32 send pan, which belongs to the pair whether linked or not (X32-F84); a link made at the console re-checks the roles at once and ends holds the seat may no longer move (holdCancelled, reason role). viewer: no write at all. Anything else is ERR_ROLE and writes nothing; settings that only change this device (setSlipGuard) stay allowed, show mode and Gain unlocks are ERR_ROLE for monitor and viewer. Reads are not filtered in the in-process API (the app draws only its mix); per-client filtering is a hub requirement.",
       "properties": {
         "kind": {
           "enum": [
@@ -130,6 +130,11 @@
                     "const": "off"
                   }
                 ]
+              },
+              "fx": {
+                "type": "boolean",
+                "default": false,
+                "description": "v0.4: this grant may reach an FX send master (snapshot bus kind fx, xair FX 1..4 = buses 7..10). Without it a monitor seat writes only into mix buses: a write into an FX bus is ERR_ROLE (review Sec L3)."
               }
             }
           }

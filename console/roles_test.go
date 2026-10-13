@@ -91,7 +91,6 @@ func TestRole_MonitorWritesOnlyItsMix(t *testing.T) {
 		pan, _ := model.Pan(-20)
 		for _, w := range []Write{
 			set(sendLevel(1, 2), lvl(t, -9), musician), set(sendOn(1, 2), model.Bool(false), musician),
-			set(model.ParamRef{Strip: sendLevel(1, 1).Strip, Field: model.FieldSendPan, Bus: 2}, pan, musician),
 			set(busFader(2), lvl(t, -4), musician), set(busMute(2), model.Bool(true), musician),
 		} {
 			if _, err := sup.Write(w); err != nil && !errors.Is(err, driver.ErrUnsupported) {
@@ -105,6 +104,7 @@ func TestRole_MonitorWritesOnlyItsMix(t *testing.T) {
 			set(busFader(1), lvl(t, -20), musician), set(busMute(3), model.Bool(true), musician),
 			set(model.ParamRef{Strip: model.MainRef, Field: model.FieldMute}, model.Bool(true), musician),
 			set(gain3, lvl(t, 30), musician),
+			set(model.ParamRef{Strip: sendLevel(1, 1).Strip, Field: model.FieldSendPan, Bus: 2}, pan, musician), // the pair's pan acts on bus 1 too (X32-F84)
 			set(model.ParamRef{Strip: model.StripRef{Kind: model.StripBus, Index: 2}, Field: model.FieldName}, mustText(t, "Mine"), musician),
 		} {
 			if _, err := sup.Write(w); !errors.Is(err, ErrRole) {
@@ -118,7 +118,7 @@ func TestRole_MonitorWritesOnlyItsMix(t *testing.T) {
 			t.Fatalf("hold of another bus's send: %v", err)
 		}
 		if n := len(drv.session(0).writes()); n != allowed || allowed != 4 {
-			t.Fatalf("console got %d writes, want only the %d allowed ones (pan of an even bus is the pair's)", n, allowed)
+			t.Fatalf("console got %d writes, want only the %d allowed ones", n, allowed)
 		}
 	})
 }
