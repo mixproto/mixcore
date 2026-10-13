@@ -5,10 +5,10 @@
 package wing
 
 import (
-	"slices"
 	"time"
 
 	"github.com/mixproto/mixcore/driver"
+	"github.com/mixproto/mixcore/driver/internal/burst"
 )
 
 // Scene-recall heuristic (wing.md section 7): the X32 burst rule. Whether
@@ -22,31 +22,20 @@ const (
 	sceneMaxWindow = time.Second            // ... or this long after the burst began
 )
 
-type burstEntry struct {
-	idx int
-	at  time.Time
-}
-
 // sceneState is the owner-goroutine state of the heuristic.
 type sceneState struct {
-	recent      []burstEntry
-	seen        map[int]struct{}
+	burst       *burst.Window // distinct console pushes within burstWindow
 	open        bool
 	first, last time.Time
 }
 
-func newSceneState() sceneState { return sceneState{seen: map[int]struct{}{}} }
+func newSceneState() sceneState { return sceneState{burst: burst.New(burstWindow)} }
 
-// onConsolePush records a console-origin push (never our echo or a read reply).
+// onConsolePush records a console-origin push (never our echo or a read
+// reply) in amortized O(1) (review sec M3).
 func (s *session) onConsolePush(idx int, at time.Time) {
 	sc := &s.own.scene
-	sc.recent = slices.DeleteFunc(append(sc.recent, burstEntry{idx: idx, at: at}),
-		func(e burstEntry) bool { return at.Sub(e.at) > burstWindow })
-	clear(sc.seen)
-	for _, e := range sc.recent {
-		sc.seen[e.idx] = struct{}{}
-	}
-	if len(sc.seen) < burstParams {
+	if sc.burst.Add(idx, at) < burstParams {
 		return
 	}
 	if !sc.open {
@@ -66,6 +55,7 @@ func (s *session) sceneTick(now time.Time) error {
 	s.log.Info("wing: scene recalled at the console", "confidence", driver.ConfidenceLow)
 	s.emit(driver.SceneRecalled{Confidence: driver.ConfidenceLow, Signals: []string{driver.SignalBurst},
 		HighlightedScene: driver.NoScene, LoadedScene: driver.NoScene, At: sc.first})
-	*sc = sceneState{seen: sc.seen}
+	sc.burst.Reset()
+	sc.open = false
 	return s.startReread(now)
 }

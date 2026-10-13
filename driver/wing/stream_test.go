@@ -134,3 +134,27 @@ func TestAssembler_DefinitionsOutsideAWalkAreSkipped(t *testing.T) {
 		t.Fatalf("messages %+v", got)
 	}
 }
+
+// TestSceneBurst_BoundedUnderFlood (review sec M3): a flood of pushes of a
+// few parameters within one burst window keeps the window's bookkeeping
+// bounded (no growth with the number of pushes) and raises no recall.
+func TestSceneBurst_BoundedUnderFlood(t *testing.T) {
+	s := &session{}
+	s.own.scene = newSceneState()
+	at := time.Unix(1000, 0)
+	for i := range 5000 {
+		s.onConsolePush(i%3, at)
+	}
+	if n := s.own.scene.burst.Len(); n > 2*3+16 { // bounded by the distinct parameters, not the pushes
+		t.Fatalf("window holds %d entries for 3 parameters", n)
+	}
+	if s.own.scene.open {
+		t.Fatal("3 parameters are no burst")
+	}
+	for i := range 8 {
+		s.onConsolePush(100+i, at)
+	}
+	if !s.own.scene.open {
+		t.Fatal("8 distinct parameters within 250 ms are a burst")
+	}
+}
