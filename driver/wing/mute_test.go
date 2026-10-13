@@ -36,6 +36,8 @@ func (r *rig) supervise(t *testing.T) *console.Supervisor {
 
 var ch1Ref = model.StripRef{Kind: model.StripInput, Index: 1}
 
+func groupMute(v int32) *int32 { return &v }
+
 // TestMuteGroup_MemberIsNeverShownLive: review H1. Ch 1 is in mute group 2
 // (the console knows, mixcore cannot read it, item 11); engaging the group
 // must never leave ch 1 reported as not muted.
@@ -46,7 +48,8 @@ func TestMuteGroup_MemberIsNeverShownLive(t *testing.T) {
 		wantKnown bool
 	}{
 		{"$mute 2 for a group mute (meaning unknown, item 12)", simwing.Options{}, false},
-		{"$mute 1 for a group mute", simwing.Options{GroupMuteValue: 1}, true},
+		{"$mute 1 for a group mute", simwing.Options{GroupMuteValue: groupMute(1)}, true},
+		{"$mute stays 0 for a group mute (go-reviewer H1)", simwing.Options{GroupMuteValue: groupMute(0)}, false},
 		{"no $mute in the schema: derived, partial", simwing.Options{UnknownPaths: []string{"/ch/1/$mute", "/ch/2/$mute"}}, false},
 	}
 	for _, tc := range cases {

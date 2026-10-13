@@ -52,7 +52,9 @@ func TestEffectiveMute_TriState(t *testing.T) {
 		{"unknown membership, nothing engaged: false", false, false, false, ConsoleMuteNone, unknownMG, true, false, BasisDerived},
 		{"unknown dca membership, dca muted: null", false, false, true, ConsoleMuteNone, MuteRules{DCAMembershipUnknown: true}, false, false, BasisPartial},
 		{"console says muted", false, true, false, ConsoleMuteOn, unknownMG, true, true, BasisConsole},
-		{"console says not muted", false, true, false, ConsoleMuteOff, unknownMG, true, false, BasisConsole},
+		{"console says not muted, a group of unknown membership engaged: null (go-reviewer H1)", false, true, false, ConsoleMuteOff, unknownMG, false, false, BasisPartial},
+		{"console says not muted, no group engaged", false, false, false, ConsoleMuteOff, unknownMG, true, false, BasisConsole},
+		{"console says not muted, membership known", false, false, false, ConsoleMuteOff, MuteRules{}, true, false, BasisConsole},
 		{"console value not understood: null", false, true, false, ConsoleMuteUnknown, unknownMG, false, false, BasisPartial},
 		{"console value not understood, own mute: true", true, false, false, ConsoleMuteUnknown, unknownMG, true, true, BasisDerived},
 	}

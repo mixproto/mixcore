@@ -78,8 +78,15 @@ func (s State) effectiveOf(st Strip) EffectiveMute {
 	switch {
 	case e.Own:
 		e.Muted, e.Known = true, true
-	case st.ConsoleMute == ConsoleMuteOn || st.ConsoleMute == ConsoleMuteOff:
-		e.Muted, e.Known, e.Basis = st.ConsoleMute == ConsoleMuteOn, true, BasisConsole
+	case st.ConsoleMute == ConsoleMuteOn:
+		e.Muted, e.Known, e.Basis = true, true, BasisConsole
+	case st.ConsoleMute == ConsoleMuteOff && s.rules.MuteGroupMembershipUnknown && anyOn(s.muteGroups):
+		// The console says not muted, but a group whose members we cannot
+		// read is engaged: what its "not muted" covers is item 12. Unknown,
+		// never live (go-reviewer H1), until a [CAPTURE] says otherwise.
+		e.Basis = BasisPartial
+	case st.ConsoleMute == ConsoleMuteOff:
+		e.Known, e.Basis = true, BasisConsole
 	case st.ConsoleMute == ConsoleMuteUnknown:
 		e.Basis = BasisPartial
 	case e.MuteGroups != 0 || e.DCAs != 0:

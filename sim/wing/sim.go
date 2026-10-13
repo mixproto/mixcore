@@ -93,9 +93,9 @@ type Options struct {
 	PushSceneMarkers bool
 
 	// GroupMuteValue: [TO-VERIFY] item 12. The $mute a strip reports when
-	// only a mute group or a DCA mutes it: 2 (default, a value whose
-	// meaning the document leaves open) or 1.
-	GroupMuteValue int32
+	// only a mute group or a DCA mutes it: nil is 2 (default, a value whose
+	// meaning the document leaves open); 1 and 0 are the other readings.
+	GroupMuteValue *int32
 	// MaxPipelined: [TO-VERIFY] item 3. How many data or definition
 	// requests of one received burst the console answers; the rest are
 	// dropped. 0 (default): all.
@@ -127,7 +127,10 @@ func (o Options) withDefaults() Options {
 	o.LocalGainStep = cmpOr(o.LocalGainStep, LocalGainStepCoarse)
 	o.MeterInterval = cmpOr(o.MeterInterval, DefaultMeterInterval)
 	o.MeterTTL = cmpOr(o.MeterTTL, DefaultMeterTTL)
-	o.GroupMuteValue = cmpOr(o.GroupMuteValue, defaultGroupMuteValue)
+	if o.GroupMuteValue == nil {
+		v := int32(defaultGroupMuteValue)
+		o.GroupMuteValue = &v
+	}
 	if o.Logger == nil {
 		o.Logger = slog.New(slog.DiscardHandler)
 	}

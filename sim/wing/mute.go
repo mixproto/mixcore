@@ -51,7 +51,7 @@ func (s *Sim) muteOf(strip *node) int32 {
 		return 1
 	}
 	if s.groupMuted(strip) || s.dcaMuted(strip) {
-		return s.opts.GroupMuteValue
+		return *s.opts.GroupMuteValue
 	}
 	return 0
 }
