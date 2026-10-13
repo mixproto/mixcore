@@ -554,6 +554,25 @@ WING Edit or on the console unless an item says "probe", which means a one-off r
 the 0 dB write), 16, 19 and the probe part of 17; items 5, 6, 8, 11-13, 15, 18 and 20 need a person, a second console or
 a tone source.
 
+## 14. Implementation status (driver/wing, sim/wing; 2026-10-13)
+Both are written from this file; none of the rows below is a new protocol fact, they are the design choices the code
+makes where this file leaves a gap. Family status: in development until the hardware session of section 13.
+
+| Area | What the code does | Facts |
+|---|---|---|
+| Hashes | No hash table ships. At the first connect of a link the driver walks the nodes it models with `DA DD` and `D7 <hash> DD` only and maps paths to hashes from the definitions' names; the walk is cached per link and repeated only when `$firmware` changes. Open question 5 is therefore moot for the driver; the simulator uses the eight hashes of this file and placeholders for the rest. | WG-F31..F33, WG-F35 |
+| Definition answers | A definition belongs to the requested node whose hash is its parent; a level ends after one `DE` per request, or after 1 s of silence once every node that answered has its `DE`. Data requests are never in flight while a walk level runs (a `DE` after data, item 3). | WG-F30, WG-F31, WG-F33 |
+| Undefined bytes | A token starting with `E0`..`FF` (not in WG-F30) ends the connection (stale, reconnect, full re-read) instead of a guessed length that could misread payload bytes as a hash and a value. The simulator ignores such bytes. | WG-F30 |
+| Receive channel | Bytes before the console's first `DF Dn` count as data-channel bytes. | WG-F13, WG-F14 |
+| Echo | Section 2.4 as written: echo window 2 s, read-back 150 ms after the last write, `EchoesOwnWrites` true. Fader values match within half of a 1024-step display position or 0.05 dB (item 10: a console that rounds to 0.1 dB). | WG-F24, WG-F60, WG-F61 |
+| Fader law (UI) | The X32 four-segment law, which contains every raw point of WG-F61; it only draws the scale (the wire carries dB). | WG-F60, WG-F61 |
+| Gain | Law from the console's definition of `/io/in/<grp>/<n>/g`; writable on `LCL` only, never the wire maximum; AES50 A and B read-only (open question 2 default); AES50 C not modelled yet. Local count: 24 when the model string contains `rack` or `compact`, else 8. | WG-F03, WG-F62, 3.4 |
+| Membership | DCA membership from `#D1`..`#D16` in `tags`, any non-digit ends a tag (item 11); reported empty while `/cfg/dcamgrp` = 0. Mute-group membership of strips is not read (item 11). | 3.2 |
+| Mains | `/main/1` is the model's main (open question 4 default); mains 2..4 are not modelled yet. | 3.1 |
+| Remote lock | `/$syscfg/tcplock` = 1: every write is refused in the driver (`ErrUnsupported`). | WG-F26 |
+| Scene recall | Burst rule only (low confidence); `$actidx` and `$active` are not used until item 17. | section 7 |
+| Firmware | Firmware below 2.0 is not special-cased: its definitions lack the parent field (WG-F05), so the walk fails and the connect error says so; open question 1 stays open. | WG-F05, WG-F06 |
+
 ## Open questions for the lead (with recommended defaults)
 1. Firmware below 2.0 (WG-F05, WG-F06): connect read-only with an "update the console" hint? Default: yes.
 2. Gain on AES50 sources before item 15: Default: read-only (same rule as X32).
