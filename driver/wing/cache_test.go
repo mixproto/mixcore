@@ -8,7 +8,6 @@ import (
 	"errors"
 	"testing"
 	"testing/synctest"
-	"time"
 
 	"github.com/mixproto/mixcore/driver"
 	simwing "github.com/mixproto/mixcore/sim/wing"
@@ -22,59 +21,6 @@ func (r *rig) link(t *testing.T) *link {
 	}
 	t.Cleanup(func() { _ = l.Close() })
 	return l.(*link)
-}
-
-func (l *link) cached() *schemaCache {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.cache
-}
-
-// TestCache_DroppedOnConnectFailure (review M2): a failed connect never
-// leaves a schema behind for the next one.
-func TestCache_DroppedOnConnectFailure(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		r := newRig(t, simwing.Options{})
-		l := r.link(t)
-		if _, err := l.Connect(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-		r.sim.Reboot(time.Minute) // refuses every connection
-		if _, err := l.Connect(t.Context()); err == nil {
-			t.Fatal("connect to a rebooting console succeeded")
-		}
-		if l.cached() != nil {
-			t.Fatal("the schema cache survived a failed connect")
-		}
-	})
-}
-
-// TestCache_PoisonedIsCaughtByAFreshChannelList (review M2): a cache that
-// no longer matches the console's /ch definitions is walked again.
-func TestCache_PoisonedIsCaughtByAFreshChannelList(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		r := newRig(t, simwing.Options{})
-		l := r.link(t)
-		if _, err := l.Connect(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-		c := l.cached()
-		bad := c.defs["/ch/1"]
-		bad.Hash ^= 0x5A5A5A5A
-		c.defs["/ch/1"] = bad
-		defs := countClass(r.sim, simwing.ClassDefs)
-		s, err := l.Connect(t.Context())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if countClass(r.sim, simwing.ClassDefs) < defs+10 {
-			t.Fatal("a poisoned cache was used without a new walk")
-		}
-		if l.cached().defs["/ch/1"].Hash == bad.Hash {
-			t.Fatal("the poisoned entry is still cached")
-		}
-		_ = s.Close()
-	})
 }
 
 // TestProtocolMismatch_StopsDialing (review M2, go L1): the same schema

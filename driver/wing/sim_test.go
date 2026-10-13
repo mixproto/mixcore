@@ -83,3 +83,5 @@ func TestLoopback_ConnectWriteAndClientLimit(t *testing.T) {
 	<-done
 	_ = sess.Close()
 }
+
+func optsNone() driver.Options { return driver.Options{} }

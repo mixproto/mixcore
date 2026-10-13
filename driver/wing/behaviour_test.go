@@ -199,10 +199,10 @@ func TestIdleSession_NoWritesForAnHour(t *testing.T) {
 	})
 }
 
-// TestReconnect_ReadsTheConsoleAndReusesSchema: rule 3. After a drop the
-// link's next session reads the state (changed during the outage) without
-// walking the schema again. No-replay proof: TestReconnect_NoReplay.
-func TestReconnect_ReadsTheConsoleAndReusesSchema(t *testing.T) {
+// TestReconnect_ReadsTheConsoleAgain: rule 3. After a drop the link's next
+// session walks the schema and reads the state (changed during the
+// outage). No-replay proof: TestReconnect_NoReplay.
+func TestReconnect_ReadsTheConsoleAgain(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		r := newRig(t, simwing.Options{})
 		l, err := r.drv.OpenLink(t.Context(), driver.Endpoint{Host: consoleIP}, r.opts())
@@ -232,8 +232,8 @@ func TestReconnect_ReadsTheConsoleAndReusesSchema(t *testing.T) {
 		if st, _ := sess2.Snapshot().Strip(model.StripRef{Kind: model.StripInput, Index: 1}); st.FaderDB != -7 {
 			t.Fatalf("reconnect read %v, want the console's -7", st.FaderDB)
 		}
-		if countClass(r.sim, simwing.ClassDefs) != defsBefore+1 { // one /ch request verifies the cache (review M2)
-			t.Fatal("same firmware: the schema must not be walked again")
+		if countClass(r.sim, simwing.ClassDefs) <= defsBefore+1 {
+			t.Fatal("every connect walks the schema again (security re-check 1)")
 		}
 		if w := r.sim.Writes(); len(w) != 0 {
 			t.Fatalf("writes replayed: %+v", w)

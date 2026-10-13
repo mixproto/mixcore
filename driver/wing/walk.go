@@ -6,6 +6,7 @@ package wing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -99,13 +100,16 @@ func (s *session) walk(ctx context.Context) (map[string]wingproto.Def, error) {
 			}
 		}
 		if depth >= len(walkLevels) {
-			return defs, nil
+			break
 		}
-		level = expandLevel(walkLevels[depth], defs)
-		if len(level) == 0 {
-			return defs, nil
+		if level = expandLevel(walkLevels[depth], defs); len(level) == 0 {
+			break
 		}
 	}
+	if err := checkDocumented(defs); err != nil {
+		return nil, err
+	}
+	return defs, nil
 }
 
 // expandLevel turns patterns into the nodes the schema has.
@@ -265,4 +269,21 @@ func (s *session) next(ctx context.Context, wait time.Duration) (inMsg, bool, er
 	case <-ctx.Done():
 		return inMsg{}, false, fmt.Errorf("%w: %w", ErrNoReply, context.Cause(ctx))
 	}
+}
+
+// errDocumentedHash: a walked node's hash differs from the one the
+// protocol document lists for its path (WG-F32; security re-check 1).
+var errDocumentedHash = errors.New("a hash differs from the protocol document")
+
+// checkDocumented refuses a walk in which any documented path has another
+// hash: such a console is not the documented tree, and its other hashes
+// cannot be trusted either.
+func checkDocumented(defs map[string]wingproto.Def) error {
+	for _, path := range wingproto.DocumentedPaths() {
+		want, _ := wingproto.DocumentedHash(path)
+		if d, ok := defs[path]; ok && d.Hash != want {
+			return fmt.Errorf("%w: %w: %s is %08x, documented %08x", errSchema, errDocumentedHash, path, d.Hash, want)
+		}
+	}
+	return nil
 }

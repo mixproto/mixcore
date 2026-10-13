@@ -13,10 +13,11 @@
 // per console, which mixcore would steal from other tools (WG-F21).
 //
 // Addressing: hashes (WG-F32). The session learns them from the console:
-// at the first connect of a link it walks the nodes it models with
-// definition requests only (D7 <hash> DD, WG-F31, WG-F33) and keeps the
-// result for the link; a later connect re-walks only when the firmware
-// string changed. A node the console does not define is absent, never
+// every connect walks the nodes it models with definition requests only
+// (D7 <hash> DD, WG-F31, WG-F33; about 280 requests), and nothing a session
+// read is kept for the next (security re-check 1). A walk in which a path
+// the document lists has another hash is refused. A node the console does
+// not define is absent, never
 // faked; laws (headamp gain) come from the console's own definition
 // (wing.md 3.0), which also covers 3.0 versus 3.1 differences as data.
 //
@@ -97,7 +98,7 @@ type Timing struct {
 	StaleAfter      time.Duration // no message for this long: input locked, ConsoleSilent (wing.md 2.4)
 	DeadAfter       time.Duration // no message for this long (or StaleAfter with meters silent too): connection closed
 	Tick            time.Duration // how often timers are checked
-	ConnectTimeout  time.Duration // schema walk (first connect) and initial read
+	ConnectTimeout  time.Duration // schema walk and initial read
 	WalkQuiet       time.Duration // a definition level without DE ends after this silence (WG-F31, item 3)
 	OptionalWait    time.Duration // after the required values, wait this long for the rest
 	EchoWindow      time.Duration // a written value is matched against pushes this long (wing.md 2.4)
@@ -167,7 +168,7 @@ func (d *Driver) Family() driver.Family { return Family }
 // dB on the wire (WG-F60), so the law never reaches the console.
 func (d *Driver) FaderLaw() driver.FaderLaw { return faderLaw{} }
 
-// Connect implements driver.Driver: it dials, walks or reuses the schema
+// Connect implements driver.Driver: it dials, walks the schema
 // and reads every modelled parameter. It never writes a parameter. The
 // session owns its sockets; a supervisor uses OpenLink instead.
 func (d *Driver) Connect(ctx context.Context, ep driver.Endpoint, opts driver.Options) (_ driver.Session, err error) {

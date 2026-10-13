@@ -206,7 +206,7 @@ func (s *wingSession) dropAndReconnect(t *testing.T) {
 	err := s.eng.Apply(`{"version":0,"type":"set","param":{"strip":{"kind":"input","index":5},"field":"fader"},"value":-3,"origin":{"kind":"gesture","clientId":"ui","seq":10}}`)
 	s.logf("stale after %d ms (%s); Apply while stale -> %v", stale.at.Sub(t0).Milliseconds(), stale.st.Reason, err)
 	live := s.mustReach(t, stale.at, 5*time.Second, func(m stateJSON) bool { return m.Status == "live" && m.Type == "snapshot" }, "live again")
-	s.logf("live again %d ms after the drop; schema reused (definition requests still %d); ch 4 fader read from the console: %v dB",
+	s.logf("live again %d ms after the drop; schema walked again (definition requests now %d); ch 4 fader read from the console: %v dB",
 		live.at.Sub(t0).Milliseconds(), countWing(s.wsim, simwing.ClassDefs), live.st.Strips[3].FaderDB)
 	if v, _ := s.wsim.Value("/ch/5/fdr"); v != -144.0 || err == nil {
 		t.Errorf("a write while stale reached the console or was accepted: %v %v", v, err)

@@ -12,7 +12,6 @@ import (
 
 	"github.com/mixproto/mixcore/driver"
 	"github.com/mixproto/mixcore/internal/safe"
-	"github.com/mixproto/mixcore/internal/wingproto"
 )
 
 // Errors of Connect.
@@ -32,16 +31,10 @@ var (
 // maxSchemaFailures is how many schema failures in a row stop the link.
 const maxSchemaFailures = 3
 
-// schemaCache is the result of a schema walk, kept for the link: the same
-// firmware has the same tree (WG-F32: hashes are stable), so a reconnect
-// only reads values.
-type schemaCache struct {
-	firmware string
-	defs     map[string]wingproto.Def
-}
-
 // link keeps the meter socket for a whole engine session (its port is in
-// every meter request, wing.md 2.4) and the schema cache. Each Connect
+// every meter request, wing.md 2.4). It keeps no schema: every Connect
+// walks the console again (security re-check 1: nothing one session read
+// is trusted by the next). Each Connect
 // dials a new TCP connection after closing the previous one with a FIN, so
 // a lost session never holds one of the console's 16 (24) slots (WG-F22).
 type link struct {
@@ -53,7 +46,6 @@ type link struct {
 	mu     sync.Mutex
 	cur    *session
 	closed bool
-	cache  *schemaCache
 	// schemaFails counts schema failures in a row; mismatch is set once
 	// they reach maxSchemaFailures.
 	schemaFails int
@@ -84,8 +76,7 @@ func (d *Driver) openLink(ctx context.Context, ep driver.Endpoint, opts driver.O
 // Connect implements driver.Link.
 func (l *link) Connect(ctx context.Context) (_ driver.Session, err error) {
 	defer safe.RecoverAsError(&err)
-	cache, err := l.begin()
-	if err != nil {
+	if err := l.begin(); err != nil {
 		return nil, err
 	}
 	defer func() {
@@ -105,18 +96,17 @@ func (l *link) Connect(ctx context.Context) (_ driver.Session, err error) {
 			_ = s.Close() // also after a recovered panic
 		}
 	}()
-	walked, err := s.connect(ctx, cache)
-	if err != nil {
+	if err := s.connect(ctx); err != nil {
 		return nil, fmt.Errorf("wing: connect %s: %w", l.addr, err)
 	}
-	if err := l.adopt(s, walked); err != nil {
+	if err := l.adopt(s); err != nil {
 		return nil, err
 	}
 	return s, nil
 }
 
-// begin closes the previous session and returns the schema cache.
-func (l *link) begin() (*schemaCache, error) {
+// begin closes the previous session.
+func (l *link) begin() error {
 	l.mu.Lock()
 	prev := l.cur
 	l.cur = nil
@@ -125,44 +115,38 @@ func (l *link) begin() (*schemaCache, error) {
 		_ = prev.Close()
 	}
 	if err := l.Err(); err != nil {
-		return nil, err
+		return err
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.closed {
-		return nil, driver.ErrClosed
-	}
-	if l.mismatch != nil {
-		return nil, l.mismatch
-	}
-	return l.cache, nil
-}
-
-// adopt makes s current and keeps its schema.
-func (l *link) adopt(s *session, walked *schemaCache) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.closed {
 		return driver.ErrClosed
 	}
-	if walked != nil {
-		l.cache = walked
+	if l.mismatch != nil {
+		return l.mismatch
+	}
+	return nil
+}
+
+// adopt makes s current.
+func (l *link) adopt(s *session) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return driver.ErrClosed
 	}
 	l.cur = s
 	l.schemaFails = 0
 	return nil
 }
 
-// failed drops the schema cache after any failed connect (review M2: a
-// cache is only ever what a successful connect read) and counts schema
-// failures.
+// failed counts schema failures.
 func (l *link) failed(err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if errors.Is(err, ErrProtocolMismatch) {
 		return
 	}
-	l.cache = nil
 	if !errors.Is(err, errSchema) {
 		l.schemaFails = 0
 		return

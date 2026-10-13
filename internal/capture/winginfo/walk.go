@@ -184,19 +184,6 @@ func items(d wingproto.Def) string {
 	return strings.Join(parts, "|")
 }
 
-// DocumentedHashes are the hashes docs/protocols/wing.md lists (WG-F32,
-// section 3.6, WG-F24); the report says whether this console agrees.
-var DocumentedHashes = map[string]uint32{
-	"/ch":                0x70B10139,
-	"/ch/1/fdr":          0x38AE75C2,
-	"/ch/1/mute":         0xF50F69F8,
-	"/ch/1/name":         0xC6AD548D,
-	"/ch/1/$fdr":         0x7E463474,
-	"/ch/1/$mute":        0x26855CD3,
-	"/$ctl/lib/$active":  0xDF6A06E2,
-	"/$syscfg/$firmware": 0x9E69815D,
-}
-
 // Markdown summarises a walk for introspect.md.
 func Markdown(console, privacy, stopped string, nodes []Node) string {
 	var b strings.Builder
@@ -214,12 +201,13 @@ func Markdown(console, privacy, stopped string, nodes []Node) string {
 		}
 	}
 	b.WriteString("\nDocumented hashes (WG-F32):\n\n| path | document | console |\n|---|---|---|\n")
-	for _, p := range []string{"/ch", "/ch/1/fdr", "/ch/1/mute", "/ch/1/name", "/ch/1/$fdr", "/ch/1/$mute", "/$ctl/lib/$active", "/$syscfg/$firmware"} {
+	for _, p := range wingproto.DocumentedPaths() {
 		got := "not walked"
 		if n, ok := byPath[p]; ok {
 			got = fmt.Sprintf("%08x", n.Def.Hash)
 		}
-		fmt.Fprintf(&b, "| %s | %08x | %s |\n", p, DocumentedHashes[p], got)
+		doc, _ := wingproto.DocumentedHash(p)
+		fmt.Fprintf(&b, "| %s | %08x | %s |\n", p, doc, got)
 	}
 	return b.String()
 }

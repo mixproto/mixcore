@@ -100,6 +100,9 @@ type Options struct {
 	// requests of one received burst the console answers; the rest are
 	// dropped. 0 (default): all.
 	MaxPipelined int
+	// HashOverrides gives paths other hashes than the fixture's (a fault:
+	// a console whose tree is not the one documented, or a hostile one).
+	HashOverrides map[string]uint32
 	// UnknownPaths are leaves this console does not have (a schema
 	// difference, WG-F35): they are not in the tree at all.
 	UnknownPaths []string

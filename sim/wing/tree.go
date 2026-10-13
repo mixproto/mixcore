@@ -136,9 +136,10 @@ func (n *node) appendTypeFields(body []byte) []byte {
 
 // tree is the whole parameter tree with a hash index.
 type tree struct {
-	root   *node
-	byHash map[uint32]*node
-	byPath map[string]*node
+	overrides map[string]uint32 // Options.HashOverrides
+	root      *node
+	byHash    map[uint32]*node
+	byPath    map[string]*node
 }
 
 func newTree() *tree {
@@ -170,6 +171,9 @@ func (t *tree) add(path string, leaf node) *node {
 
 // hashFor is the documented hash, else a placeholder unique in the tree.
 func (t *tree) hashFor(path string) uint32 {
+	if h, ok := t.overrides[path]; ok {
+		return h
+	}
 	if h, ok := documentedHashes[path]; ok {
 		return h
 	}

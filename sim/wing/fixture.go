@@ -61,6 +61,7 @@ func ro(n node) node { n.readOnly = true; return n }
 // buildFixture makes the tree of wing.md section 12 ("Tree fixture").
 func buildFixture(o Options) *tree {
 	t := newTree()
+	t.overrides = o.HashOverrides
 	colours := int32(colours30)
 	if o.is31() {
 		colours = colours31
